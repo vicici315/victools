@@ -18,6 +18,7 @@
 // PBR_Mobile4.1    添加禁用环境光选项
 // PBR_Mobile4.2 取消反射颜色
 // PBR_Mobile5.0 添加SpotLight支持
+// PBR_Mobile5.1 添加聚光灯纹理彩色光环
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -562,7 +563,7 @@ Shader "Custom/PBR_Mobile"
                     
                     half3 lightColor = light.color.rgb * light.color.a * _SpotLightIntensity * distanceAttenuation * spotAttenuation;
                     
-                    half textureModulation = 1.0;
+                    half3 textureModulation = half3(1.0, 1.0, 1.0);
                     #ifdef _USESPOTTEXTURE
                         
                         float3 lightToSurface = normalize(worldPos - light.position);
@@ -580,9 +581,9 @@ Shader "Custom/PBR_Mobile"
                         float textureScale = 1.0 / _SpotTextureSize;
                         spotUV = (spotUV - 0.5) * textureScale + 0.5;
                         
-                        half spotTexture = SAMPLE_TEXTURE2D_LOD(_SpotTexture, sampler_SpotTexture, spotUV, 0).r;
+                        half3 spotTexture = SAMPLE_TEXTURE2D_LOD(_SpotTexture, sampler_SpotTexture, spotUV, 0).rgb;
                         
-                        half contrastAdjusted = saturate((spotTexture - 0.5) * _SpotTextureContrast + 0.5);
+                        half3 contrastAdjusted = saturate((spotTexture - 0.5) * _SpotTextureContrast + 0.5);
                         
                         textureModulation = contrastAdjusted * _SpotTextureIntensity;
                     #endif
