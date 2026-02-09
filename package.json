@@ -2,5 +2,8 @@
   "name": "com.youdoo.victools",
   "version": "1.5.0",
   "displayName": "VicTools",
-  "description": "VicTools(YD) 是一个Unity编辑器工具集，提供高效的场景管理、材质查找、资源批量处理等功能，能显著提升美术及程序员在Unity引擎中的开发效率。并包含自定义着色器PBR_Mobile及相关辅助脚本工具。"
+  "description": "VicTools(YD) 是一个Unity编辑器工具集，提供高效的场景管理、材质查找、资源批量处理等功能，能显著提升美术及程序员在Unity引擎中的开发效率。并包含自定义着色器PBR_Mobile及相关辅助脚本工具。",
+  "category": "Editor",
+  "documentationUrl": "https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d"
 }
+
