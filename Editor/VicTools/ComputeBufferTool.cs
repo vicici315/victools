@@ -1,4 +1,4 @@
-// Compute Buffer Tool v3.0 支持最高2盏SpotLight
+// Compute Buffer Tool v3.0 支持最高2盏SpotLight，优化UI界面
 // Compute Buffer Tool v2.0.3 编辑器模式实时更新优化 - 增强Compute Buffer系统与编辑器集成，支持非运行模式下点光效果预览
 
 // Compute Buffer Tool v2.0
@@ -18,7 +18,7 @@
 // - 动态点光源管理
 // - 材质批量操作
 // - 场景对象快速选择
-
+#if UNITY_EDITOR
 using UnityEditor;
 using UnityEngine;
 using System.Collections.Generic;
@@ -101,8 +101,11 @@ public class ComputeBufferTool : EditorWindow
 
     private void OnEnable()
     {
-        // 检查ComputeBuffer.cs文件是否存在 - 使用绝对路径
-        var computeBufferPath = Path.Combine(Application.dataPath, "GameMain/Scripts/Shader/ComputeBuffer.cs");
+        // 检查ComputeBuffer.cs文件是否存在 - 使用 Unity 的包虚拟路径
+        string packageRelativePath = "Runtime/Scripts/Shader/ComputeBuffer.cs";
+        string computeBufferPath = Path.GetFullPath(
+            Path.Combine("Packages/com.youdoo.victools", packageRelativePath)   //名字取package.json中的name:
+        );
         _computeBufferFileExists = File.Exists(computeBufferPath);
 
         if (_computeBufferFileExists)
@@ -206,7 +209,7 @@ public class ComputeBufferTool : EditorWindow
                         EditorGUILayout.Space();
 
                         EditorGUILayout.BeginHorizontal();
-                        if (GUILayout.Button("获取管理器材质列表", GUILayout.Height(30)))
+                        if (GUILayout.Button(new GUIContent("获取材质列表", "获取管理器材质列表"), GUILayout.Height(30)))
                         {
                             try
                             {
@@ -226,7 +229,7 @@ public class ComputeBufferTool : EditorWindow
                             }
                         }
                         // 添加查找PBR_Mobile材质的按钮
-                        if (GUILayout.Button("●收集材质到管理器", GUILayout.Height(30)))
+                        if (GUILayout.Button(new GUIContent("●收集材质", "收集场景中所有PBR_Mobile材质到管理器"), GUILayout.Height(30)))
                         {
                             try
                             {
@@ -253,7 +256,7 @@ public class ComputeBufferTool : EditorWindow
                             }
                         }
 
-                        if (GUILayout.Button("●收集点光源到管理器", GUILayout.Height(30)))
+                        if (GUILayout.Button(new GUIContent("●收集点光源", "收集场景中所有点光源到管理器"), GUILayout.Height(30)))
                         {
                             try
                             {
@@ -282,7 +285,7 @@ public class ComputeBufferTool : EditorWindow
                             }
                         }
                         
-                        if (GUILayout.Button("●收集聚光灯到管理器", GUILayout.Height(30)))
+                        if (GUILayout.Button(new GUIContent("●收集聚光灯", "收集场景中所有聚光灯到管理器"), GUILayout.Height(30)))
                         {
                             try
                             {
@@ -325,7 +328,13 @@ public class ComputeBufferTool : EditorWindow
                                 var material = _targetMaterials[i];
                                 if (!material) continue;
                                 EditorGUILayout.BeginHorizontal();
+                                // 保存当前标签宽度
+                                float originalLabelWidth = EditorGUIUtility.labelWidth;
+                                // 设置标签宽度像素
+                                EditorGUIUtility.labelWidth = 80;
                                 EditorGUILayout.ObjectField($"管理器材质 {i}", material, typeof(Material), false);
+                                // 恢复原始标签宽度
+                                EditorGUIUtility.labelWidth = originalLabelWidth;
                                 GUI.backgroundColor = Color.cyan;
                                 if (GUILayout.Button("选择模型", GUILayout.Width(80)))
                                 {
@@ -388,7 +397,12 @@ public class ComputeBufferTool : EditorWindow
                 var material = _toolTargetMaterials[i];
                 if (!material) continue;
                 EditorGUILayout.BeginHorizontal();
+                // 保存当前标签宽度
+                float originalLabelWidth = EditorGUIUtility.labelWidth;
+                EditorGUIUtility.labelWidth = 80;
                 EditorGUILayout.ObjectField($"场景材质 {i + 1}", material, typeof(Material), false);
+                // 恢复原始标签宽度
+                EditorGUIUtility.labelWidth = originalLabelWidth;
                 GUI.backgroundColor = Color.cyan;
                 if (GUILayout.Button("选择模型", GUILayout.Width(80)))
                 {
@@ -412,7 +426,7 @@ public class ComputeBufferTool : EditorWindow
         // 获取材质选项参数 - 默认不勾选
         // 是否提取选中对象材质选项
         bool previousExtractMaterial = _extractMaterial;
-        _extractMaterial = EditorGUILayout.Toggle("获取选中对象材质", _extractMaterial);
+        _extractMaterial = EditorGUILayout.Toggle("获取选中对象材质", _extractMaterial, GUILayout.Width(170));
         _tempMaterial = EditorGUILayout.ObjectField("", _tempMaterial, typeof(Material), false) as Material;
         EditorGUILayout.EndHorizontal();
 
@@ -964,3 +978,4 @@ public class ComputeBufferTool : EditorWindow
         ToolFindPbrMobileMaterials();
     }
 }
+#endif

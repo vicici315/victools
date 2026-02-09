@@ -630,8 +630,15 @@ public class ComputeBufferLightManager : MonoBehaviour
         // ● 安全检查：确保Compute Buffer已正确初始化
         if (_spotLightsBuffer == null || _spotLightsData == null)
         {
-            Debug.LogWarning("SpotLight Compute Buffer未正确初始化，跳过更新");
-            return _currentSpotLightCount;
+            Debug.LogWarning("SpotLight Compute Buffer未正确初始化，重新初始化");
+            InitializeComputeBuffer();
+            
+            // 重新检查初始化是否成功
+            if (_spotLightsBuffer == null || _spotLightsData == null)
+            {
+                Debug.LogWarning("SpotLight Compute Buffer重新初始化失败，跳过更新");
+                return _currentSpotLightCount;
+            }
         }
         
         _currentSpotLightCount = 0;
@@ -1833,10 +1840,13 @@ public class ComputeBufferLightManager : MonoBehaviour
             }
             
             // ● 强制在编辑器模式下立即初始化Compute Buffer
-            if (_lightsBuffer == null && pointLights.Count > 0)
+            // 检查点光源和聚光灯缓冲区，确保两者都正确初始化
+            if ((_lightsBuffer == null && pointLights.Count > 0) || 
+                (_spotLightsBuffer == null && spotLights.Count > 0))
             {
                 InitializeComputeBuffer();
                 UpdateLightsBuffer(); // 立即更新一次
+                UpdateSpotLightsBuffer(); // 立即更新聚光灯
             }
             
             // ● 标记编辑器模式为激活状态
