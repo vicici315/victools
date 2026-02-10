@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
+// using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using UnityEngine.SceneManagement;
@@ -86,9 +87,29 @@ public class ResourceBoxFileItem
             
             // 初始化选中对象状态
             UpdateSelectedObjectsInResourceBox();
+            // 加载lightDir图标 - 使用Unity包路径（兼容开发环境和打包发布）
+            // 方法1：直接使用包路径（推荐，因为package.json中的name是固定的）
+            string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
+            
+            // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
+            // #if UNITY_2019_3_OR_NEWER
+            // var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath("Packages/com.youdoo.victools");
+            // if (packageInfo != null)
+            // {
+            //     lightDirIcon = System.IO.Path.Combine(packageInfo.resolvedPath, "Editor/VicTools/lightDir.png");
+            //     // 注意：resolvedPath是绝对路径，需要转换为相对路径或使用其他方式加载
+            // }
+            // #endif
             
             // 加载lightDir图标
-            _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>("Assets/Editor/VicTools/lightDir.png");
+            _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
+            
+            // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
+            if (_lightDirIcon == null)
+            {
+                Debug.LogWarning($"无法加载lightDir图标，路径: {lightDirIcon}");
+                // 可以尝试其他备用路径或使用默认图标
+            }
         }
 
         public override void OnDisable()
