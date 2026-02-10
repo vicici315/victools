@@ -25,6 +25,52 @@ namespace VicTools
         }
     }
     
+    /// 路径工具类，用于处理正确的Library目录路径
+    public static class PathHelper
+    {
+        /// 获取项目根目录的Library目录路径
+        /// <example>
+        /// 示例：如果Application.dataPath为 ".../yd_gqsj/Assets"
+        /// 则返回 ".../yd_gqsj/Library"
+        /// </example>
+        public static string GetLibraryPath()
+        {
+            // Application.dataPath 返回 Assets 目录的路径
+            // 通过返回上一级目录再进入Library目录
+            return System.IO.Path.GetFullPath(System.IO.Path.Combine(Application.dataPath, "..", "Library"));
+        }
+        
+        /// 获取VicTools在Library目录中的完整路径
+        /// <example>
+        /// 示例：如果GetLibraryPath()返回 ".../yd_gqsj/Library"
+        /// 则返回 ".../yd_gqsj/Library/VicTools"
+        /// </example>
+        public static string GetVicToolsLibraryPath()
+        {
+            return System.IO.Path.Combine(GetLibraryPath(), "VicTools");
+        }
+        
+        /// 获取全局资源箱文件的完整路径
+        /// <example>
+        /// 示例：如果GetVicToolsLibraryPath()返回 ".../yd_gqsj/Library/VicTools"
+        /// 则返回 ".../yd_gqsj/Library/VicTools/GlobalResourceBox.json"
+        /// </example>
+        public static string GetGlobalResourceBoxPath()
+        {
+            return System.IO.Path.Combine(GetVicToolsLibraryPath(), "GlobalResourceBox.json");
+        }
+        
+        /// 获取项目Assets/Editor目录的完整路径
+        /// <example>
+        /// 示例：如果Application.dataPath为 ".../yd_gqsj/Assets"
+        /// 则返回 ".../yd_gqsj/Assets/Editor"
+        /// </example>
+        public static string GetAssetsEditorPath()
+        {
+            return System.IO.Path.Combine(Application.dataPath, "Editor/VicTools/ResourceBox");
+        }
+    }
+    
 /// 资源箱文件项目序列化类
 [Serializable]
 public class ResourceBoxFileItem
@@ -52,7 +98,8 @@ public class ResourceBoxFileItem
         private string _resourceBoxFileName = ""; // 当前资源箱文件名
         private int _selectedFileIndex; // 选中的文件索引
         private readonly List<string> _availableFiles = new List<string>(); // 可用的资源箱文件列表
-        private const string ResourceBoxDirectory = "Editor/VicTools/data/ResourceBox"; // 资源箱文件存储目录
+        // 注意：ResourceBoxDirectory和GlobalResourceBoxPath现在通过PathHelper类获取
+        private bool _useGlobalArchive = true; // 是否使用全局存档
 
         // 搜索历史记录管理器
         private readonly SearchHistoryManager _searchHistoryManager;
@@ -60,7 +107,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.6]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.7]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -1270,7 +1317,7 @@ public class ResourceBoxFileItem
 
         
 
-        /// 保存资源箱数据到EditorPrefs（优化版本，解决重名问题）
+        /// 保存资源箱数据到全局文件（优化版本，解决重名问题）
         /// <param name="showConfirmation">是否显示确认提示框</param>
         private void SaveResourceBox(bool showConfirmation = true)
         {
@@ -1377,19 +1424,78 @@ public class ResourceBoxFileItem
                 }
             }
 
-            // 序列化并保存到EditorPrefs
+            // 序列化数据
             var jsonData = JsonUtility.ToJson(new ResourceBoxData { 
                 items = resourceBoxData
             });
-            EditorPrefs.SetString("VicTools_ScenesTools_ResourceBox", jsonData);
             
-            Debug.Log($"资源箱数据已保存，包含 {resourceBoxData.Count} 个对象（包括 {resourceBoxData.Count(item => item.guid == "NULL:OBJECT")} 个null对象）");
+            // 保存到全局文件
+            SaveResourceBoxToGlobalFile(jsonData);
+            
+            Debug.Log($"资源箱数据已保存到全局文件，包含 {resourceBoxData.Count} 个对象（包括 {resourceBoxData.Count(item => item.guid == "NULL:OBJECT")} 个null对象）");
+        }
+        
+        /// <summary>
+        /// 保存资源箱数据到全局文件
+        /// </summary>
+        /// <param name="jsonData">JSON格式的资源箱数据</param>
+        private void SaveResourceBoxToGlobalFile(string jsonData)
+        {
+            try
+            {
+                // 使用PathHelper获取正确的全局文件路径
+                var globalResourceBoxPath = PathHelper.GetGlobalResourceBoxPath();
+                
+                // 确保目录存在
+                var directoryPath = System.IO.Path.GetDirectoryName(globalResourceBoxPath);
+                if (!string.IsNullOrEmpty(directoryPath) && !System.IO.Directory.Exists(directoryPath))
+                {
+                    System.IO.Directory.CreateDirectory(directoryPath);
+                }
+                
+                // 保存到文件
+                System.IO.File.WriteAllText(globalResourceBoxPath, jsonData);
+                Debug.Log($"资源箱数据已保存到全局文件: {globalResourceBoxPath}");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"保存资源箱数据到全局文件时出错: {e.Message}");
+                // 如果保存到文件失败，回退到EditorPrefs
+                EditorPrefs.SetString("VicTools_ScenesTools_ResourceBox", jsonData);
+                Debug.LogWarning($"已回退到EditorPrefs保存资源箱数据");
+            }
         }
 
-        /// 从EditorPrefs加载资源箱数据（优化版本，解决重名问题）
+        /// 从全局文件加载资源箱数据（优化版本，解决重名问题）
         private void LoadResourceBox()
         {
-            var jsonData = EditorPrefs.GetString("VicTools_ScenesTools_ResourceBox", "");
+            string jsonData = "";
+            
+            // 使用PathHelper获取正确的全局文件路径
+            var globalResourceBoxPath = PathHelper.GetGlobalResourceBoxPath();
+            
+            // 首先尝试从全局文件加载
+            if (System.IO.File.Exists(globalResourceBoxPath))
+            {
+                try
+                {
+                    jsonData = System.IO.File.ReadAllText(globalResourceBoxPath);
+                    Debug.Log($"从全局文件加载资源箱数据: {globalResourceBoxPath}");
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"读取全局文件时出错: {e.Message}");
+                    // 如果读取文件失败，回退到EditorPrefs
+                    jsonData = EditorPrefs.GetString("VicTools_ScenesTools_ResourceBox", "");
+                    Debug.LogWarning($"已回退到EditorPrefs加载资源箱数据");
+                }
+            }
+            else
+            {
+                // 如果全局文件不存在，尝试从EditorPrefs加载（向后兼容）
+                jsonData = EditorPrefs.GetString("VicTools_ScenesTools_ResourceBox", "");
+                Debug.Log($"全局文件不存在，从EditorPrefs加载资源箱数据");
+            }
             
             if (string.IsNullOrEmpty(jsonData))
             {
@@ -1449,85 +1555,85 @@ public class ResourceBoxFileItem
                                 obj = FindGameObjectByIdentifier(item.guid);
                                 debugInfo = $"场景对象: {item.name} (标识符: {item.guid})";
                                 
-                            // 检查是否需要更新标识符
-                            if (obj)
-                            {
-                                var currentIdentifier = GetGameObjectUniqueIdentifier(obj as GameObject);
-                                if (currentIdentifier != item.guid)
+                                // 检查是否需要更新标识符
+                                if (obj)
                                 {
-                                    // 标识符发生变化，标记需要更新
-                                    hasSceneObjectChanges = true;
-                                    debugInfo += $" → 标识符已更新: {currentIdentifier}";
-                                }
-                                // else
-                                // {
-                                //     Debug.Log($"场景对象标识符匹配: {currentIdentifier}");
-                                // }
-                                
-                                // 检查场景对象类型是否匹配
-                                if (obj.GetType().FullName != item.type)
-                                {
-                                    Debug.LogWarning($"场景对象类型不匹配: 期望={item.type}, 实际={obj.GetType().FullName}");
-                                    hasDataInconsistency = true;
-                                }
-                            }
-                                
-                            if (obj == null)
-                            {
-                                // 如果通过标识符找不到，尝试通过实例ID查找
-                                var parts = item.guid.Split(':');
-                                if (parts.Length >= 4 && int.TryParse(parts[3], out int instanceID))
-                                {
-                                    // 使用InstanceIDToObject查找对象
-                                    var instanceObj = EditorUtility.InstanceIDToObject(instanceID);
-                                    if (instanceObj && instanceObj is GameObject gameObject)
+                                    var currentIdentifier = GetGameObjectUniqueIdentifier(obj as GameObject);
+                                    if (currentIdentifier != item.guid)
                                     {
-                                        // 验证场景匹配
-                                        var currentScene = SceneManager.GetActiveScene();
-                                        if (gameObject.scene == currentScene)
+                                        // 标识符发生变化，标记需要更新
+                                        hasSceneObjectChanges = true;
+                                        debugInfo += $" → 标识符已更新: {currentIdentifier}";
+                                    }
+                                    // else
+                                    // {
+                                    //     Debug.Log($"场景对象标识符匹配: {currentIdentifier}");
+                                    // }
+                                    
+                                    // 检查场景对象类型是否匹配
+                                    if (obj.GetType().FullName != item.type)
+                                    {
+                                        Debug.LogWarning($"场景对象类型不匹配: 期望={item.type}, 实际={obj.GetType().FullName}");
+                                        hasDataInconsistency = true;
+                                    }
+                                }
+                                    
+                                if (obj == null)
+                                {
+                                    // 如果通过标识符找不到，尝试通过实例ID查找
+                                    var parts = item.guid.Split(':');
+                                    if (parts.Length >= 4 && int.TryParse(parts[3], out int instanceID))
+                                    {
+                                        // 使用InstanceIDToObject查找对象
+                                        var instanceObj = EditorUtility.InstanceIDToObject(instanceID);
+                                        if (instanceObj && instanceObj is GameObject gameObject)
                                         {
-                                            obj = gameObject;
-                                            debugInfo += $" → 通过实例ID找到: {obj.name} (InstanceID: {instanceID})";
-                                            // 使用实例ID找到说明标识符系统有问题
+                                            // 验证场景匹配
+                                            var currentScene = SceneManager.GetActiveScene();
+                                            if (gameObject.scene == currentScene)
+                                            {
+                                                obj = gameObject;
+                                                debugInfo += $" → 通过实例ID找到: {obj.name} (InstanceID: {instanceID})";
+                                                // 使用实例ID找到说明标识符系统有问题
+                                            }
+                                            else
+                                            {
+                                                debugInfo += $" → 实例ID对象场景不匹配: {instanceID}";
+                                            }
+
+                                            hasDataInconsistency = true; // 使用实例ID找到说明标识符系统有问题
                                         }
                                         else
                                         {
-                                            debugInfo += $" → 实例ID对象场景不匹配: {instanceID}";
+                                            // 如果InstanceIDToObject失败，尝试在场景中查找具有相同实例ID的对象
+                                            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+                                            foreach (var sceneObj in allObjects)
+                                            {
+                                                if (sceneObj.GetInstanceID() == instanceID)
+                                                {
+                                                    // 验证场景匹配
+                                                    var currentScene = SceneManager.GetActiveScene();
+                                                    if (sceneObj.scene == currentScene)
+                                                    {
+                                                        obj = sceneObj;
+                                                        debugInfo += $" → 通过场景遍历找到: {obj.name} (InstanceID: {instanceID})";
+                                                        hasDataInconsistency = true; // 使用实例ID找到说明标识符系统有问题
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                            if (obj == null)
+                                            {
+                                                debugInfo += $" → 实例ID查找失败: {instanceID}";
+                                                hasDataInconsistency = true;
+                                            }
                                         }
-
-                                        hasDataInconsistency = true; // 使用实例ID找到说明标识符系统有问题
                                     }
                                     else
                                     {
-                                        // 如果InstanceIDToObject失败，尝试在场景中查找具有相同实例ID的对象
-                                        var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
-                                        foreach (var sceneObj in allObjects)
-                                        {
-                                            if (sceneObj.GetInstanceID() == instanceID)
-                                            {
-                                                // 验证场景匹配
-                                                var currentScene = SceneManager.GetActiveScene();
-                                                if (sceneObj.scene == currentScene)
-                                                {
-                                                    obj = sceneObj;
-                                                    debugInfo += $" → 通过场景遍历找到: {obj.name} (InstanceID: {instanceID})";
-                                                    hasDataInconsistency = true; // 使用实例ID找到说明标识符系统有问题
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        if (obj == null)
-                                        {
-                                            debugInfo += $" → 实例ID查找失败: {instanceID}";
-                                            hasDataInconsistency = true;
-                                        }
+                                        hasDataInconsistency = true;
                                     }
                                 }
-                                else
-                                {
-                                    hasDataInconsistency = true;
-                                }
-                            }
                             }
                             else if (item.guid.StartsWith("INSTANCE:"))
                             {
@@ -1565,34 +1671,34 @@ public class ResourceBoxFileItem
                                     hasDataInconsistency = true;
                                 }
                             }
-                        else if (item.guid == "NULL:OBJECT")
-                        {
-                            // 处理null对象
-                            obj = null;
-                            debugInfo = $"null对象: {item.displayName}";
-                        }
-                        else
-                        {
-                            // 向后兼容：处理旧的SCENE:格式标识符
-                            if (item.guid.StartsWith("SCENE:"))
+                            else if (item.guid == "NULL:OBJECT")
                             {
-                                var parts = item.guid.Split(':');
-                                if (parts.Length >= 3)
-                                {
-                                    var fullPath = parts[2];
-                                    
-                                    // 尝试使用旧的方法查找
-                                    obj = FindGameObjectByPath(fullPath);
-                                    debugInfo = $"旧格式场景对象: {item.name} (路径: {fullPath})";
-                                    hasDataInconsistency = true; // 旧格式需要更新
-                                }
+                                // 处理null对象
+                                obj = null;
+                                debugInfo = $"null对象: {item.displayName}";
                             }
                             else
                             {
-                                debugInfo = $"未知标识符格式: {item.name} (标识符: {item.guid})";
-                                hasDataInconsistency = true;
+                                // 向后兼容：处理旧的SCENE:格式标识符
+                                if (item.guid.StartsWith("SCENE:"))
+                                {
+                                    var parts = item.guid.Split(':');
+                                    if (parts.Length >= 3)
+                                    {
+                                        var fullPath = parts[2];
+                                        
+                                        // 尝试使用旧的方法查找
+                                        obj = FindGameObjectByPath(fullPath);
+                                        debugInfo = $"旧格式场景对象: {item.name} (路径: {fullPath})";
+                                        hasDataInconsistency = true; // 旧格式需要更新
+                                    }
+                                }
+                                else
+                                {
+                                    debugInfo = $"未知标识符格式: {item.name} (标识符: {item.guid})";
+                                    hasDataInconsistency = true;
+                                }
                             }
-                        }
                         }
 
                         // 即使对象为null，也添加到资源箱，以便显示对象名称
@@ -1971,8 +2077,8 @@ public class ResourceBoxFileItem
         {
             _availableFiles.Clear();
             
-            // 确保目录存在
-            var fullDirectoryPath = System.IO.Path.Combine(Application.dataPath, ResourceBoxDirectory);
+            // 使用PathHelper获取正确的资源箱目录路径
+            var fullDirectoryPath = PathHelper.GetAssetsEditorPath();
             if (!System.IO.Directory.Exists(fullDirectoryPath))
             {
                 System.IO.Directory.CreateDirectory(fullDirectoryPath);
@@ -2085,7 +2191,9 @@ public class ResourceBoxFileItem
 
             // 序列化并保存到文件
             var jsonData = JsonUtility.ToJson(fileData, true);
-            var filePath = System.IO.Path.Combine(Application.dataPath, ResourceBoxDirectory, _resourceBoxFileName + ".json");
+            // 使用PathHelper获取正确的资源箱目录路径
+            var resourceBoxDirectoryPath = PathHelper.GetAssetsEditorPath();
+            var filePath = System.IO.Path.Combine(resourceBoxDirectoryPath, _resourceBoxFileName + ".json");
             
             try
             {
@@ -2142,7 +2250,9 @@ public class ResourceBoxFileItem
                 }
             }
 
-            var filePath = System.IO.Path.Combine(Application.dataPath, ResourceBoxDirectory, fileName + ".json");
+            // 使用PathHelper获取正确的资源箱目录路径
+            var resourceBoxDirectoryPath = PathHelper.GetAssetsEditorPath();
+            var filePath = System.IO.Path.Combine(resourceBoxDirectoryPath, fileName + ".json");
             
             if (!System.IO.File.Exists(filePath))
             {

@@ -4,11 +4,15 @@
 
 VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的场景管理、材质查找、资源批量处理等功能，能显著提升美术及程序员在 Unity 引擎中的开发效率。该工具集包含自定义着色器 PBR_Mobile 及相关辅助脚本工具。
 
-**版本**: 2.5.0  
+**版本**: 2.6.0  
 **类别**: Editor  
 **文档链接**: [飞书文档](https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d)
 
 ## <更新日志>
+
+### 版本 2.6.0
+
+- 2.6.0【场景工具2.7-资源箱】全局存档改为本地Library\VicTools；创建PathHelper类路径管理
 
 ### 版本 2.5.0
 
