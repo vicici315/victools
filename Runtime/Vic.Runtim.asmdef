@@ -1,3 +1,4 @@
 {
-	"name": "Vic.Runtim"
+	"name": "Vic.Runtim",
+	"references":[ "UnityEngine.UI" ]
 }

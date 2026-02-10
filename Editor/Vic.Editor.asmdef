@@ -2,7 +2,8 @@
     "name": "Vic.Editor",
     "rootNamespace": "",
     "references": [
-        "GUID:d19acc8f799c98d4bbbf12a946df1741"
+        "Vic.Runtim",
+        "UnityEngine.UI"
     ],
     "includePlatforms": [
         "Editor"

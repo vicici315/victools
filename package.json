@@ -1,9 +1,10 @@
 {
   "name": "com.youdoo.victools",
-  "version": "1.5.1",
+  "version": "2.5.0",
   "displayName": "VicTools",
-  "description": "VicTools(YD) 是一个Unity编辑器工具集，提供高效的场景管理、材质查找、资源批量处理等功能，能显著提升美术及程序员在Unity引擎中的开发效率。并包含自定义着色器PBR_Mobile及相关辅助脚本工具。",
+  "description": "VicTools(YD) \u662f\u4e00\u4e2aUnity\u7f16\u8f91\u5668\u5de5\u5177\u96c6\uff0c\u63d0\u4f9b\u9ad8\u6548\u7684\u573a\u666f\u7ba1\u7406\u3001\u6750\u8d28\u67e5\u627e\u3001\u8d44\u6e90\u6279\u91cf\u5904\u7406\u7b49\u529f\u80fd\uff0c\u80fd\u663e\u8457\u63d0\u5347\u7f8e\u672f\u53ca\u7a0b\u5e8f\u5458\u5728Unity\u5f15\u64ce\u4e2d\u7684\u5f00\u53d1\u6548\u7387\u3002\u5e76\u5305\u542b\u81ea\u5b9a\u4e49\u7740\u8272\u5668PBR_Mobile\u53ca\u76f8\u5173\u8f85\u52a9\u811a\u672c\u5de5\u5177\u3002",
   "category": "Editor",
-  "documentationUrl": "https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d"
+  "documentationUrl": "https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d",
+  "licensesUrl": "https://github.com/vicici315/victools/blob/main/LICENSE"
+  
 }
-
