@@ -47,7 +47,7 @@ public class ComputeBufferTool : EditorWindow
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度
-        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.0");
+        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.2");
         window.minSize = new Vector2(400, 600);  // 最小宽度，最小高度
         window.maxSize = new Vector2(1000, 1200); // 最大宽度1200，最大高度1000
         
@@ -124,7 +124,9 @@ public class ComputeBufferTool : EditorWindow
 
     private void OnGUI()
     {
-        _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
+        // 使用垂直布局，将内容分为两部分：可滚动区域和底部固定区域
+        EditorGUILayout.BeginVertical();
+        
 
         // GUILayout.Label("Compute Buffer Tool", EditorStyles.boldLabel);
 
@@ -166,42 +168,42 @@ public class ComputeBufferTool : EditorWindow
                     EditorGUIUtility.PingObject(_manager.gameObject);
                 }
 
-                    // 添加额外的null检查，确保manager对象仍然有效
-                    if (_manager && !_manager.Equals(null))
+                // 添加额外的null检查，确保manager对象仍然有效
+                if (_manager && !_manager.Equals(null))
+                {
+                    EditorGUILayout.LabelField($"控制材质数量: {_manager.GetControlledMaterialCount()}");
+                    
+                    // 计算总活动光源数量（点光源 + 聚光灯）
+                    int pointLightCount = _manager.UpdateLightsBuffer();
+                    int spotLightCount = _manager.UpdateSpotLightsBuffer();
+                    int totalLightCount = pointLightCount + spotLightCount;
+                    EditorGUILayout.LabelField($"活动光源数量: {totalLightCount} (点光: {pointLightCount}, 聚光: {spotLightCount})");
+
+
+                    // 添加其他编辑器工具按钮 - 并排排列
+                    EditorGUILayout.BeginHorizontal();
+                    if (GUILayout.Button("更新材质参数"))
                     {
-                        EditorGUILayout.LabelField($"控制材质数量: {_manager.GetControlledMaterialCount()}");
-                        
-                        // 计算总活动光源数量（点光源 + 聚光灯）
-                        int pointLightCount = _manager.UpdateLightsBuffer();
-                        int spotLightCount = _manager.UpdateSpotLightsBuffer();
-                        int totalLightCount = pointLightCount + spotLightCount;
-                        EditorGUILayout.LabelField($"活动光源数量: {totalLightCount} (点光: {pointLightCount}, 聚光: {spotLightCount})");
-
-
-                        // 添加其他编辑器工具按钮 - 并排排列
-                        EditorGUILayout.BeginHorizontal();
-                        if (GUILayout.Button("更新材质参数"))
+                        if (_manager && !_manager.Equals(null))
                         {
-                            if (_manager && !_manager.Equals(null))
-                            {
-                                _manager.UpdateAllMaterials();
-                            }
+                            _manager.UpdateAllMaterials();
                         }
+                    }
 
-                        if (GUILayout.Button("重置到默认值"))
+                    if (GUILayout.Button("重置到默认值"))
+                    {
+                        if (_manager && !_manager.Equals(null))
                         {
-                            if (_manager && !_manager.Equals(null))
-                            {
-                                _manager.ResetMaterialToDefaults();
-                            }
+                            _manager.ResetMaterialToDefaults();
                         }
+                    }
 
-                        if (GUILayout.Button("删除管理器载体（仅对象）"))
-                        {
-                            DeleteManagerObject();
+                    if (GUILayout.Button("删除管理器载体（仅对象）"))
+                    {
+                        DeleteManagerObject();
 
-                        }
-                        EditorGUILayout.EndHorizontal();
+                    }
+                    EditorGUILayout.EndHorizontal();
 
                     // [SEARCH: 编辑器工具] - 编辑器工具按钮区域
                     if (_computeBufferFileExists)
@@ -314,7 +316,20 @@ public class ComputeBufferTool : EditorWindow
                             }
                         }
                         EditorGUILayout.EndHorizontal();
-
+//选择按钮行
+                        EditorGUILayout.BeginHorizontal();
+                        GUI.backgroundColor = Color.magenta;
+                        if (GUILayout.Button(new GUIContent("添加材质 ↓", "向管理器添加Project中选择的材质球"), GUILayout.Height(22)))
+                        {
+                            AddMaterialsToManager();
+                        }
+                        GUI.backgroundColor = Color.cyan;
+                        if (GUILayout.Button(new GUIContent("选择材质", "选择管理器中收集的所有材质球"), GUILayout.Height(22)))
+                        {
+                            SelectAllMaterialsInManager();
+                        }
+                        GUI.backgroundColor = Color.white;
+                        EditorGUILayout.EndHorizontal();
 
                         EditorGUILayout.LabelField("管理器材质列表", EditorStyles.miniBoldLabel != null ? EditorStyles.miniBoldLabel : new GUIStyle());
                         // [SEARCH: 材质列表显示] - 材质列表显示和选择区域
@@ -323,6 +338,8 @@ public class ComputeBufferTool : EditorWindow
                         {
                             EditorGUILayout.HelpBox($"管理器有 {_targetMaterials.Count} 个 PBR_Mobile 材质在列表中。选择一个材质来查找使用它的模型：", MessageType.Info);
 
+        // 第一部分：可滚动区域
+                            _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition, GUILayout.ExpandHeight(true));
                             for (var i = 0; i < _targetMaterials.Count; i++)
                             {
                                 var material = _targetMaterials[i];
@@ -332,7 +349,7 @@ public class ComputeBufferTool : EditorWindow
                                 float originalLabelWidth = EditorGUIUtility.labelWidth;
                                 // 设置标签宽度像素
                                 EditorGUIUtility.labelWidth = 80;
-                                EditorGUILayout.ObjectField($"管理器材质 {i}", material, typeof(Material), false);
+                                EditorGUILayout.ObjectField($"材质: {i+1}", material, typeof(Material), false);
                                 // 恢复原始标签宽度
                                 EditorGUIUtility.labelWidth = originalLabelWidth;
                                 GUI.backgroundColor = Color.cyan;
@@ -343,6 +360,8 @@ public class ComputeBufferTool : EditorWindow
                                 GUI.backgroundColor = Color.white;
                                 EditorGUILayout.EndHorizontal();
                             }
+        // 结束滚动视图
+                            EditorGUILayout.EndScrollView();
                         }
                         else
                         {
@@ -370,56 +389,23 @@ public class ComputeBufferTool : EditorWindow
                 }
             }
         }
-
-
+        
+        
+        // 第二部分：底部固定区域 - 自定义材质选择工具
+        // 这个区域始终显示在窗口底部，不会被_toolTargetMaterials列表顶没
         EditorGUILayout.Space();
-        EditorGUILayout.LabelField("编辑器工具", EditorStyles.boldLabel != null ? EditorStyles.boldLabel : new GUIStyle());
-        if (GUILayout.Button("查找场景中 PBR_Mobile 材质", GUILayout.Height(22)))
-        {
-            try
-            {
-                ToolFindPbrMobileMaterials();
-
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogError($"查找PBR_Mobile材质时出错: {e.Message}");
-                Debug.LogException(e);
-                EditorUtility.DisplayDialog("错误", $"查找PBR_Mobile材质时出错: {e.Message}", "确定");
-            }
-        }
-        if (_toolTargetMaterials != null && _toolTargetMaterials.Count > 0)
-        {
-            EditorGUILayout.HelpBox($"当前场景有 {_toolTargetMaterials.Count} 个材质在列表中，选择一个材质来查找使用它的模型：", MessageType.Info);
-
-            for (var i = 0; i < _toolTargetMaterials.Count; i++)
-            {
-                var material = _toolTargetMaterials[i];
-                if (!material) continue;
-                EditorGUILayout.BeginHorizontal();
-                // 保存当前标签宽度
-                float originalLabelWidth = EditorGUIUtility.labelWidth;
-                EditorGUIUtility.labelWidth = 80;
-                EditorGUILayout.ObjectField($"场景材质 {i + 1}", material, typeof(Material), false);
-                // 恢复原始标签宽度
-                EditorGUIUtility.labelWidth = originalLabelWidth;
-                GUI.backgroundColor = Color.cyan;
-                if (GUILayout.Button("选择模型", GUILayout.Width(80)))
-                {
-                    SelectObjectsUsingMaterial(material);
-                }
-                GUI.backgroundColor = Color.white;
-                EditorGUILayout.EndHorizontal();
-            }
-        }
-        else
-        {
-            EditorGUILayout.HelpBox("材质列表为空，请先点击【查找PBR_Mobile材质】按钮来填充列表。", MessageType.Warning);
-        }
-
+        
+        // 添加分隔线，区分可滚动区域和固定区域
+        GUIStyle separatorStyle = new GUIStyle();
+        separatorStyle.normal.background = CreateColorTexture(1, 1, new Color(0.7f, 0.5f, 0.0f)); // 黄色分隔线
+        separatorStyle.normal.background.hideFlags = HideFlags.HideAndDontSave;
+        GUILayout.Box("", separatorStyle, GUILayout.Height(2), GUILayout.ExpandWidth(true));
+        
+        
         // [SEARCH: 自定义材质选择工具] - 自定义材质选择工具区域
         // 自定义材质选择功能 - 始终显示，不依赖于管理器状态
-        EditorGUILayout.Space();
+        EditorGUILayout.BeginVertical(GUI.skin.box);
+        
         EditorGUILayout.LabelField("自定义材质选择工具", EditorStyles.boldLabel != null ? EditorStyles.boldLabel : new GUIStyle());
 
         EditorGUILayout.BeginHorizontal();
@@ -456,8 +442,11 @@ public class ComputeBufferTool : EditorWindow
 
         // 显示选择的对象数量
         EditorGUILayout.LabelField($"选中对象数量: 【 {_selectedObjectsCount} 】", EditorStyles.miniLabel != null ? EditorStyles.miniLabel : new GUIStyle());
-
-        EditorGUILayout.EndScrollView();
+        
+        EditorGUILayout.EndVertical();
+        
+        // 结束整个垂直布局
+        EditorGUILayout.EndVertical();
     }
 
     // 删除管理器载体
@@ -976,6 +965,184 @@ public class ComputeBufferTool : EditorWindow
     {
         // 默认实现为空，子类可以重写此方法以在工具启动时执行自定义逻辑
         ToolFindPbrMobileMaterials();
+    }
+    
+    private void AddMaterialsToManager()
+    {
+        if (!_computeBufferFileExists)
+        {
+            Debug.LogWarning("ComputeBuffer.cs文件不存在，无法添加材质");
+            EditorUtility.DisplayDialog("错误", "ComputeBuffer.cs文件不存在，无法添加材质。", "确定");
+            return;
+        }
+
+        if (!_manager || _manager.Equals(null))
+        {
+            Debug.LogWarning("无法添加材质：未找到ComputeBufferLightManager实例");
+            EditorUtility.DisplayDialog("错误", "未找到ComputeBufferLightManager实例，请先创建或查找管理器。", "确定");
+            return;
+        }
+
+        // 获取Project中选择的对象
+        Object[] selectedObjects = Selection.objects;
+        
+        if (selectedObjects == null || selectedObjects.Length == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "请先在Project窗口中选择材质球。", "确定");
+            return;
+        }
+
+        // 筛选出材质对象
+        List<Material> selectedMaterials = new List<Material>();
+        foreach (var obj in selectedObjects)
+        {
+            if (obj is Material material)
+            {
+                selectedMaterials.Add(material);
+            }
+        }
+
+        if (selectedMaterials.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "选择的对象中没有材质球，请选择材质球后再试。", "确定");
+            return;
+        }
+
+        // 检查并添加材质
+        List<Material> addedMaterials = new List<Material>();
+        List<Material> existingMaterials = new List<Material>();
+
+        foreach (var material in selectedMaterials)
+        {
+            if (_manager.targetMaterials.Contains(material))
+            {
+                existingMaterials.Add(material);
+            }
+            else
+            {
+                _manager.targetMaterials.Add(material);
+                addedMaterials.Add(material);
+            }
+        }
+
+        // 显示结果
+        string message = "";
+        if (addedMaterials.Count > 0)
+        {
+            message += $"成功添加 {addedMaterials.Count} 个材质到管理器。\n";
+        }
+        
+        if (existingMaterials.Count > 0)
+        {
+            message += $"\n以下 {existingMaterials.Count} 个材质已存在于管理器中：\n";
+            foreach (var mat in existingMaterials)
+            {
+                message += $"  • {mat.name}\n";
+            }
+        }
+
+        if (addedMaterials.Count > 0 || existingMaterials.Count > 0)
+        {
+            EditorUtility.DisplayDialog("添加材质结果", message, "确定");
+            
+            // 刷新材质列表显示
+            if (addedMaterials.Count > 0)
+            {
+                RefreshTargetMaterials();
+            }
+        }
+    }
+    /// <summary>
+    /// 选择管理器中收集的所有材质球
+    /// 这个方法会从ComputeBufferLightManager的targetMaterials列表中获取所有材质，
+    /// 并在Project窗口中选择这些材质球
+    private void SelectAllMaterialsInManager()
+    {
+        if (!_computeBufferFileExists)
+        {
+            Debug.LogWarning("ComputeBuffer.cs文件不存在，无法选择材质");
+            EditorUtility.DisplayDialog("错误", "ComputeBuffer.cs文件不存在，无法选择材质。", "确定");
+            return;
+        }
+
+        if (!_manager || _manager.Equals(null))
+        {
+            Debug.LogWarning("无法选择材质：未找到ComputeBufferLightManager实例");
+            EditorUtility.DisplayDialog("错误", "未找到ComputeBufferLightManager实例，请先创建或查找管理器。", "确定");
+            return;
+        }
+
+        try
+        {
+            // 获取管理器中的材质列表
+            var materials = _manager.targetMaterials;
+            
+            if (materials == null || materials.Count == 0)
+            {
+                Debug.LogWarning("管理器中的材质列表为空，无法选择材质");
+                EditorUtility.DisplayDialog("提示", "管理器中的材质列表为空，请先点击【收集材质】按钮来填充列表。", "确定");
+                return;
+            }
+
+            // 清理null材质引用
+            var validMaterials = materials.Where(material => material != null).ToList();
+            
+            if (validMaterials.Count == 0)
+            {
+                Debug.LogWarning("管理器中的材质列表全部为空，无法选择材质");
+                EditorUtility.DisplayDialog("提示", "管理器中的材质列表全部为空，请先点击【收集材质】按钮来填充列表。", "确定");
+                return;
+            }
+
+            // 选择所有材质球
+            Selection.objects = validMaterials.ToArray();
+            
+            // 聚焦到Project窗口
+            EditorUtility.FocusProjectWindow();
+            
+            // 如果只有一个材质，聚焦到该材质
+            if (validMaterials.Count == 1)
+            {
+                EditorGUIUtility.PingObject(validMaterials[0]);
+            }
+            
+            Debug.Log($"已选择 {validMaterials.Count} 个材质球");
+            
+            // 显示成功消息
+            // EditorUtility.DisplayDialog("选择完成", 
+            //     $"已成功选择 {validMaterials.Count} 个材质球。\n\n" +
+            //     "材质球已在Project窗口中被选中，可以对其进行批量操作。", 
+            //     "确定");
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogError($"选择材质时出错: {e.Message}");
+            Debug.LogException(e);
+            EditorUtility.DisplayDialog("错误", $"选择材质时出错: {e.Message}", "确定");
+        }
+    }
+    
+    /// <summary>
+    /// 创建纯色纹理
+    /// </summary>
+    /// <param name="width">纹理宽度</param>
+    /// <param name="height">纹理高度</param>
+    /// <param name="color">纹理颜色</param>
+    /// <returns>创建的纹理</returns>
+    private Texture2D CreateColorTexture(int width, int height, Color color)
+    {
+        Texture2D texture = new Texture2D(width, height);
+        Color[] pixels = new Color[width * height];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = color;
+        }
+        texture.SetPixels(pixels);
+        texture.Apply();
+        // 正确设置HideFlags.HideAndDontSave，避免Unity编辑器试图持久化临时纹理
+        // 这解决了断言失败：'!(o->TestHideFlag(Object::kDontSaveInEditor) && (options & kAllowDontSaveObjectsToBePersistent) == 0)'
+        texture.hideFlags = HideFlags.HideAndDontSave;
+        return texture;
     }
 }
 #endif

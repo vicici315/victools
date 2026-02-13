@@ -2,9 +2,10 @@ using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic; // 用于List、HashSet等集合类型
 using System.Linq; // 用于LINQ操作，如Count()等
-using UnityEngine.SceneManagement; // 用于场景管理，如Scene类、场景操作等
+// using UnityEngine.SceneManagement; // 用于场景管理，如Scene类、场景操作等
 using UnityEditor.SceneManagement;
-using System.Xml;
+// using UnityEngine.Rendering; // 用于VertexAttribute枚举
+// using System.Xml;
 // using System.Diagnostics; // 用于编辑器场景管理，如EditorSceneManager、OpenSceneMode等
 
 namespace VicTools
@@ -90,7 +91,12 @@ namespace VicTools
         // 已处理贴图列表滚动位置
         private Vector2 _processedTexturesScrollPosition;
 
-        public ProjectTools(string name, EditorWindow parent) : base("[资源工具 v1.3]", parent)
+        // 批量设置模型相关变量
+        private bool _showMeshProcessResult;
+        private readonly List<string> _processedMeshes = new List<string>();
+        private Vector2 _processedMeshesScrollPosition;
+
+        public ProjectTools(string name, EditorWindow parent) : base("[资源工具 v1.4]", parent)
         {
             // 初始化路径历史管理器，使用唯一的键名避免与场景工具冲突
             _searchHistoryManager = new SearchHistoryManager("ProjectTools_PathHistory", 10);
@@ -193,6 +199,10 @@ namespace VicTools
             GUIStyle separatorStyle = new GUIStyle();
             separatorStyle.normal.background = CreateColorTexture(1, 1, new Color(0.7f, 0.5f, 0.0f)); // 黄色
             separatorStyle.normal.background.hideFlags = HideFlags.HideAndDontSave;
+            // 批量设置模型
+            DrawBatchModelSection();
+            EditorGUILayout.Space();
+            // 创建更醒目的黄色分隔线
             GUILayout.Box("", separatorStyle, GUILayout.Height(2), GUILayout.ExpandWidth(true));
             // 批量重命名
             DrawBatchRenameSection();
@@ -2251,5 +2261,405 @@ namespace VicTools
             }
         }
 
+        /// 绘制批量设置模型界面
+        private void DrawBatchModelSection()
+        {
+            var style = EditorStyle.Get;
+            
+            EditorGUILayout.LabelField("- 批量设置模型", style.subheading);
+            
+            // 使用紧凑布局让两个Toggle控件向左靠拢且没有间隔
+            EditorGUILayout.BeginHorizontal();
+            
+            // 添加弹性空间将控件推到左侧
+            GUILayout.FlexibleSpace();
+            
+            EditorGUILayout.EndHorizontal();
+            
+            EditorGUILayout.Space();
+            
+            // 操作按钮
+            EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button("批量设置LightmapUVs", style.normalButton))
+            {
+                BatchCheckAndSetModelUV();
+            }
+            GUI.backgroundColor = Color.yellow;
+            if (GUILayout.Button("检查模型UV状态", style.normalButton))
+            {
+                CheckModelUVStatus();
+            }
+            GUI.backgroundColor = Color.white;
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.Space();
+            
+            // 显示处理结果
+            if (_showMeshProcessResult && _processedMeshes.Count > 0)
+            {
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField($"已处理 {_processedMeshes.Count} 个模型:", style.subheading2);
+                // 添加关闭处理结果的按钮
+                GUILayout.FlexibleSpace();
+                GUI.backgroundColor = Color.red;
+                if (GUILayout.Button("关闭处理结果", GUILayout.Width(100)))
+                {
+                    _showMeshProcessResult = false;
+                    _processedMeshes.Clear();
+                }
+                GUI.backgroundColor = Color.white;
+                EditorGUILayout.EndHorizontal();
+                
+                // 使用滚动视图显示已处理模型列表
+                GUI.backgroundColor = Color.gray;
+                _processedMeshesScrollPosition = EditorGUILayout.BeginScrollView(_processedMeshesScrollPosition, GUILayout.ExpandHeight(true));
+                EditorGUILayout.BeginVertical(EditorStyles.textArea);
+                GUI.backgroundColor = Color.cyan;
+                // 使用自定义GUIStyle实现真正的右对齐，并设置最小宽度
+                GUIStyle rightAlignedLabel = new GUIStyle(EditorStyles.label);
+                rightAlignedLabel.alignment = TextAnchor.MiddleRight;
+                rightAlignedLabel.clipping = TextClipping.Clip;
+                foreach (var meshPath in _processedMeshes)
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField(meshPath, rightAlignedLabel, GUILayout.ExpandWidth(true));
+                    if (GUILayout.Button("选择", GUILayout.Width(50)))
+                    {   
+                        // 检查是否按住Ctrl键
+                        Event currentEvent = Event.current;
+                        bool isCtrlPressed = currentEvent.control || currentEvent.command; // command键用于Mac
+
+                        if (isCtrlPressed)
+                        {
+                            // Ctrl+点击：添加到当前选择
+                            Object fbxObject = AssetDatabase.LoadMainAssetAtPath(meshPath);
+                            if (fbxObject != null)
+                            {
+                                // 检查是否有 DontSaveInEditor 标志，记录警告但不跳过
+                                bool hasDontSaveFlag = (fbxObject.hideFlags & HideFlags.DontSaveInEditor) != 0;
+                                if (hasDontSaveFlag)
+                                {
+                                    Debug.LogWarning($"FBX文件 '{fbxObject.name}': 带有 DontSaveInEditor 标志，尝试选择但可能有限制");
+                                }
+                                
+                                List<Object> currentSelection = new List<Object>(Selection.objects);
+                                if (!currentSelection.Contains(fbxObject))
+                                {
+                                    currentSelection.Add(fbxObject);
+                                    Selection.objects = currentSelection.ToArray();
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // 选择FBX文件本身
+                            Object fbxObject = AssetDatabase.LoadMainAssetAtPath(meshPath);
+                            if (fbxObject != null)
+                            {
+                                // 检查是否有 DontSaveInEditor 标志，记录警告但不跳过
+                                bool hasDontSaveFlag = (fbxObject.hideFlags & HideFlags.DontSaveInEditor) != 0;
+                                if (hasDontSaveFlag)
+                                {
+                                    Debug.LogWarning($"FBX文件 '{fbxObject.name}': 带有 DontSaveInEditor 标志，尝试选择但可能有限制");
+                                }
+                            }
+                            Selection.activeObject = null; // 先取消所有选择
+                            Selection.activeObject = AssetDatabase.LoadMainAssetAtPath(meshPath);
+                        }
+                    }
+                    EditorGUILayout.EndHorizontal();
+                }
+                GUI.backgroundColor = Color.white;
+                EditorGUILayout.EndVertical();
+                EditorGUILayout.EndScrollView();
+            }
+        }
+
+        /// 批量检查并设置模型UV
+        private void BatchCheckAndSetModelUV()
+        {
+            // 检查模式：路径模式或选中模式
+            if (_workPath && !string.IsNullOrEmpty(_filePath))
+            {
+                var godo = EditorUtility.DisplayDialog("提示", $"确定批量处理路径\n{_filePath}\n中的FBX模型文件？", "确定", "取消");
+                if (!godo)
+                {
+                    return;
+                }
+                
+                // 路径模式：处理路径中的FBX模型
+                ProcessPathModels(_filePath);
+            }
+            else
+            {
+                // 选中模式：需要检查是否有选中对象
+                var selectedObjects = Selection.objects;
+                if (selectedObjects == null || selectedObjects.Length == 0)
+                {
+                    EditorUtility.DisplayDialog("提示", "请先在Project窗口中选择FBX模型文件", "确定");
+                    return;
+                }
+                
+                // 处理选中的对象
+                ProcessSelectedModels(selectedObjects);
+            }
+        }
+
+        /// 处理路径中的模型
+        private void ProcessPathModels(string path)
+        {
+            var modelCount = 0;
+            var successCount = 0;
+            var skippedCount = 0;
+            
+            // 使用HashSet来跟踪已处理的模型路径，避免重复计数
+            var processedPaths = new HashSet<string>();
+            ProcessPathModelsRecursive(path, ref modelCount, ref successCount, ref skippedCount, processedPaths);
+            
+            // 刷新数据库
+            AssetDatabase.Refresh();
+            
+            // 显示结果
+            if (modelCount > 0)
+            {
+                var resultMessage = $"处理完成!\n找到FBX模型: {modelCount} 个\n成功处理: {successCount} 个\n跳过处理: {skippedCount} 个";
+                _showMeshProcessResult = true;
+                EditorUtility.DisplayDialog("完成", resultMessage, "确定");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("提示", "未找到FBX模型文件！", "确定");
+            }
+        }
+
+        /// 递归处理路径中的模型（内部方法）
+        private void ProcessPathModelsRecursive(string path, ref int modelCount, ref int successCount, ref int skippedCount, HashSet<string> processedPaths)
+        {
+            // 获取路径中的所有FBX模型文件
+            var modelPaths = AssetDatabase.FindAssets("t:Model", new[] { path });
+            
+            foreach (var guid in modelPaths)
+            {
+                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                
+                // 只处理.fbx文件
+                if (!assetPath.EndsWith(".fbx", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                
+                // 检查模型是否在当前路径下（不包含子文件夹）
+                if (!_includeSubfolders)
+                {
+                    // 获取模型所在的目录
+                    var modelDirectory = System.IO.Path.GetDirectoryName(assetPath);
+                    // 如果模型目录不等于当前路径，说明在子文件夹中，跳过
+                    if (modelDirectory != path)
+                    {
+                        continue; // 跳过子文件夹中的模型
+                    }
+                }
+                
+                // 检查是否已经处理过这个模型（避免重复计数）
+                if (processedPaths.Contains(assetPath))
+                {
+                    continue;
+                }
+                
+                modelCount++;
+                
+                // 处理FBX模型的GenerateLightmapUVs选项
+                var result = ProcessModelGenerateLightmapUVs(assetPath);
+                if (result)
+                {
+                    successCount++;
+                    processedPaths.Add(assetPath); // 标记为已处理
+                    
+                    // 检查是否已存在，避免重复添加
+                    if (!_processedMeshes.Contains(assetPath))
+                    {
+                        _processedMeshes.Add(assetPath);
+                    }
+                }
+                else
+                {
+                    skippedCount++;
+                    processedPaths.Add(assetPath); // 标记为已处理
+                }
+            }
+            
+            // 只有当包含子文件夹选项勾选时，才递归处理子文件夹
+            if (!_includeSubfolders) return;
+            var subFolders = AssetDatabase.GetSubFolders(path);
+            foreach (var subFolder in subFolders)
+            {
+                ProcessPathModelsRecursive(subFolder, ref modelCount, ref successCount, ref skippedCount, processedPaths);
+            }
+        }
+
+        /// 处理选中的模型
+        private void ProcessSelectedModels(Object[] selectedObjects)
+        {
+            var modelCount = 0;
+            var successCount = 0;
+            var skippedCount = 0;
+            
+            foreach (var obj in selectedObjects)
+            {
+                // 检查是否有 DontSaveInEditor 标志，记录警告但不跳过
+                bool hasDontSaveFlag = obj != null && (obj.hideFlags & HideFlags.DontSaveInEditor) != 0;
+                if (hasDontSaveFlag)
+                {
+                    Debug.LogWarning($"对象 '{obj?.name}': 带有 DontSaveInEditor 标志，尝试处理但可能有限制");
+                }
+                
+                // 检查是否是FBX模型文件
+                var assetPath = AssetDatabase.GetAssetPath(obj);
+                if (assetPath.EndsWith(".fbx", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    modelCount++;
+                    
+                    // 处理FBX模型的GenerateLightmapUVs选项
+                    var result = ProcessModelGenerateLightmapUVs(assetPath);
+                    if (result)
+                    {
+                        successCount++;
+                        
+                        // 检查是否已存在，避免重复添加
+                        if (!_processedMeshes.Contains(assetPath))
+                        {
+                            _processedMeshes.Add(assetPath);
+                        }
+                    }
+                    else
+                    {
+                        skippedCount++;
+                    }
+                }
+                else if (obj.GetType() == typeof(DefaultAsset)) // 文件夹
+                {
+                    EditorUtility.DisplayDialog("提示", "请选择FBX模型文件！", "确定");
+                }
+            }
+            
+            // 刷新数据库
+            AssetDatabase.Refresh();
+            
+            // 显示结果
+            if (modelCount > 0)
+            {
+                var resultMessage = $"处理完成!\n找到FBX模型: {modelCount} 个\n成功处理: {successCount} 个\n跳过处理: {skippedCount} 个";
+                _showMeshProcessResult = true;
+                EditorUtility.DisplayDialog("完成", resultMessage, "确定");
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("提示", "未找到FBX模型文件！", "确定");
+            }
+        }
+
+        /// 处理FBX模型的GenerateLightmapUVs选项
+        private bool ProcessModelGenerateLightmapUVs(string assetPath)
+        {
+            try
+            {
+                // 获取ModelImporter
+                ModelImporter modelImporter = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                if (modelImporter == null)
+                {
+                    Debug.LogWarning($"无法获取ModelImporter: {assetPath}");
+                    return false;
+                }
+                
+                // var fileName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
+                var currentGenerateLightmapUVs = modelImporter.generateSecondaryUV;
+                
+
+                // 如果当前已经启用，则跳过
+                if (currentGenerateLightmapUVs)
+                {
+                    // Debug.Log($"FBX模型 {fileName} 已启用GenerateLightmapUVs，无需修改");
+                    return false;
+                }
+                
+                // 启用GenerateLightmapUVs
+                modelImporter.generateSecondaryUV = true;
+                
+                // 应用更改
+                EditorUtility.SetDirty(modelImporter);
+                modelImporter.SaveAndReimport();
+                
+                // Debug.Log($"已为FBX模型 {fileName} 启用GenerateLightmapUVs");
+                return true;
+                
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"处理FBX模型GenerateLightmapUVs失败 {assetPath}: {e.Message}");
+                Debug.LogError($"堆栈跟踪: {e.StackTrace}");
+                return false;
+            }
+        }
+
+        /// 检查模型UV状态
+        private void CheckModelUVStatus()
+        {
+            if (string.IsNullOrEmpty(_filePath))
+            {
+                EditorUtility.DisplayDialog("提示", "请先设置要检查的路径", "确定");
+                return;
+            }
+            
+            // 查找路径中的所有FBX模型文件
+            var modelPaths = AssetDatabase.FindAssets("t:Model", new[] { _filePath });
+            var modelCount = 0;
+            var hasLightmapUVCount = 0;
+            var noLightmapUVCount = 0;
+            
+            foreach (var guid in modelPaths)
+            {
+                var assetPath = AssetDatabase.GUIDToAssetPath(guid);
+                
+                // 只处理.fbx文件
+                if (!assetPath.EndsWith(".fbx", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                
+                // 检查模型是否在当前路径下（不包含子文件夹）
+                if (!_includeSubfolders)
+                {
+                    var modelDirectory = System.IO.Path.GetDirectoryName(assetPath);
+                    if (modelDirectory != _filePath)
+                    {
+                        continue; // 跳过子文件夹中的模型
+                    }
+                }
+                
+                modelCount++;
+                
+                // 获取ModelImporter并检查GenerateLightmapUVs设置
+                ModelImporter modelImporter = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                if (modelImporter != null)
+                {
+                    var fileName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
+                    var hasLightmapUV = modelImporter.generateSecondaryUV;
+                    
+                    if (hasLightmapUV)
+                    {
+                        hasLightmapUVCount++;
+                        Debug.Log($"✓ FBX模型 {fileName} 已启用GenerateLightmapUVs");
+                    }
+                    else
+                    {
+                        noLightmapUVCount++;
+                        Debug.LogWarning($"✗ FBX模型 {fileName} 未启用GenerateLightmapUVs");
+                    }
+                }
+            }
+            
+            // 显示结果
+            var resultMessage = $"检查完成!\n找到FBX模型: {modelCount} 个\n已启用GenerateLightmapUVs: {hasLightmapUVCount} 个\n未启用GenerateLightmapUVs: {noLightmapUVCount} 个";
+            EditorUtility.DisplayDialog("模型UV状态检查", resultMessage, "确定");
+        }
     }
 }

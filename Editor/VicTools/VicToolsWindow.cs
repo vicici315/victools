@@ -10,7 +10,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.1";
+        public const string Ver = "2.7.3";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.4]";
@@ -169,6 +169,30 @@ namespace VicTools
                                         GUIStyle toggleStyle = null, GUIStyle labelStyle = null, GUIStyle activeLabelStyle = null,
                                         float labelWidth = 80, float toggleWidth = 20)
         {
+            // 将string转换为GUIContent，调用支持GUIContent的重载方法
+            return CreateToggleWithStyle(new GUIContent(label), value, onValueChanged, toggleStyle, labelStyle, activeLabelStyle, labelWidth, toggleWidth);
+        }
+
+        // ReSharper disable Unity.PerformanceAnalysis
+        /// 创建带自定义样式的Toggle控件 - 内置选中时颜色变化功能，支持点击标签切换状态，支持带ToolTip的GUIContent
+        /// <param name="labelContent">Toggle标签内容（支持ToolTip）</param>
+        /// <param name="value">当前Toggle状态</param>
+        /// <param name="onValueChanged">值变化时的回调函数</param>
+        /// <param name="toggleStyle">Toggle自定义GUI样式（可选）</param>
+        /// <param name="labelStyle">标签自定义GUI样式（可选）</param>
+        /// <param name="activeLabelStyle">Toggle选中时的标签样式（可选）</param>
+        /// <param name="labelWidth">标签宽度（可选，默认80）</param>
+        /// <param name="toggleWidth">Toggle宽度（可选，默认20）</param>
+        /// <returns>更新后的Toggle状态</returns>
+        /// 使用方法：
+            // includeSubfolders = base.CreateToggleWithStyle(new GUIContent("包含子文件夹", "包含子文件夹的ToolTip提示"), includeSubfolders, 
+            // (newValue) => {
+            //     Debug.Log($"Toggle状态变化: {includeSubfolders} → {newValue}");
+            // });
+            protected bool CreateToggleWithStyle(GUIContent labelContent, bool value, Action<bool> onValueChanged = null, 
+                                        GUIStyle toggleStyle = null, GUIStyle labelStyle = null, GUIStyle activeLabelStyle = null,
+                                        float labelWidth = 80, float toggleWidth = 20)
+        {
             EditorGUI.BeginChangeCheck();
             
             var newValue = value;
@@ -204,7 +228,7 @@ namespace VicTools
             var labelRect = EditorGUILayout.GetControlRect(GUILayout.Width(labelWidth));
             // Toggle未选中时使用labelStyle
             // Toggle选中时使用activeLabelStyle
-            EditorGUI.LabelField(labelRect, label, value ? activeLabelStyle : labelStyle);
+            EditorGUI.LabelField(labelRect, labelContent, value ? activeLabelStyle : labelStyle);
 
             // 检测标签点击事件
             var currentEvent = Event.current;

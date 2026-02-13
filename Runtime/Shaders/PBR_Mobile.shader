@@ -48,7 +48,7 @@ Shader "Custom/PBR_Mobile"
 
         [Header(3  (Normal Map))]
         [Space(5)]
-        [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 1
+        [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0.001, 3)) = 1.0
         [Toggle(_FILPG)] _FilpG("Filp Green Channel", Float) = 0

@@ -93,13 +93,21 @@ public class ResourceBoxFileItem
         private string _searchText = ""; // 搜索文本
         private Material _selectedMaterial; // 用于存储用户手动选择的材质
         private Texture2D _lightDirIcon; // lightDir.png图标
-
+        private bool _selPrefab = false;
+        private bool _selMesh = false;
+        private bool _selLODGroup = false;
+        private bool _selMissMat = false;
+        private bool _selMissScript = false;
+        // 二级选项
+        private bool _selAct = false;
+        private bool _selMeshObj = true;
+        private bool _selParticleObj = false;
+        private bool _selParent = false;
         // 资源箱文件管理相关变量
         private string _resourceBoxFileName = ""; // 当前资源箱文件名
         private int _selectedFileIndex; // 选中的文件索引
         private readonly List<string> _availableFiles = new List<string>(); // 可用的资源箱文件列表
         // 注意：ResourceBoxDirectory和GlobalResourceBoxPath现在通过PathHelper类获取
-        private bool _useGlobalArchive = true; // 是否使用全局存档
 
         // 搜索历史记录管理器
         private readonly SearchHistoryManager _searchHistoryManager;
@@ -107,7 +115,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.7]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.11]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -126,6 +134,17 @@ public class ResourceBoxFileItem
             _searchText = _searchHistoryManager.LoadLastSearchText();
             _resourceBoxFileName = EditorPrefs.GetString("ProjectTools_RBFileName", "");
             _selectedFileIndex = EditorPrefs.GetInt("ProjectTools_RBnewSelectedFileIndex", 0);
+            // 加载五个挑选选项的存档设置
+            _selPrefab = EditorPrefs.GetBool("ScenesTools_selPrefab", false);
+            _selMesh = EditorPrefs.GetBool("ScenesTools_selMesh", false);
+            _selLODGroup = EditorPrefs.GetBool("ScenesTools_selLODGroup", false);
+            _selMissMat = EditorPrefs.GetBool("ScenesTools_selMissMat", false);
+            _selMissScript = EditorPrefs.GetBool("ScenesTools_selMissScript", false);
+            // 加载二级选项的存档设置
+            _selAct = EditorPrefs.GetBool("ScenesTools_selAct", false);
+            _selMeshObj = EditorPrefs.GetBool("ScenesTools_selMeshObj", true);
+            _selParticleObj = EditorPrefs.GetBool("ScenesTools_selParticleObj", false);
+            _selParent = EditorPrefs.GetBool("ScenesTools_selParent", false);
             // 加载保存的资源箱数据
             LoadResourceBox();
             
@@ -171,6 +190,17 @@ public class ResourceBoxFileItem
             _searchHistoryManager.SaveLastSearchText(_searchText);
             EditorPrefs.SetString("ProjectTools_RBFileName", _resourceBoxFileName);
             EditorPrefs.SetInt("ProjectTools_RBnewSelectedFileIndex", _selectedFileIndex);
+            // 保存五个挑选选项的存档设置
+            EditorPrefs.SetBool("ScenesTools_selPrefab", _selPrefab);
+            EditorPrefs.SetBool("ScenesTools_selMesh", _selMesh);
+            EditorPrefs.SetBool("ScenesTools_selLODGroup", _selLODGroup);
+            EditorPrefs.SetBool("ScenesTools_selMissMat", _selMissMat);
+            EditorPrefs.SetBool("ScenesTools_selMissScript", _selMissScript);
+            // 保存二级选项的存档设置
+            EditorPrefs.SetBool("ScenesTools_selAct", _selAct);
+            EditorPrefs.SetBool("ScenesTools_selMeshObj", _selMeshObj);
+            EditorPrefs.SetBool("ScenesTools_selParticleObj", _selParticleObj);
+            EditorPrefs.SetBool("ScenesTools_selParent", _selParent);
             // 保存资源箱数据（自动保存，不显示提示框）
             // SaveResourceBox();
         }
@@ -920,17 +950,67 @@ public class ResourceBoxFileItem
                 EditorGUILayout.Space(30);
                 EditorGUILayout.LabelField("> 资源箱为空 <", style.normalfont_Hui_Cen);
             }
+            
             // 添加层级设置按钮 - 紧靠在资源箱列表的底部
+            // 参数设置
+            EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
+            // 一级选项
+            _selPrefab = base.CreateToggleWithStyle(new GUIContent("Prefab", "挑选 预设 对象"), _selPrefab, null, null, null, null, 50, 20);
+            _selMesh = base.CreateToggleWithStyle(new GUIContent("Mesh", "挑选 非预设 对象"), _selMesh, null, null, null, null, 40, 20);
+            _selLODGroup = base.CreateToggleWithStyle(new GUIContent("LOD", "挑选带 LODGroup 对象"), _selLODGroup, null, null, null, null, 30, 20);
+            _selMissMat = base.CreateToggleWithStyle(new GUIContent("Miss Mat", "挑选 丢失材质球 的模型对象"), _selMissMat, null, null, null, null, 60, 20);
+            _selMissScript = base.CreateToggleWithStyle(new GUIContent("Miss Scirpt", "挑选 丢失脚本 的对象"), _selMissScript, null, null, null, null, 75, 20);
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
+            // 二级选项
+            _selAct = base.CreateToggleWithStyle(new GUIContent("Active", "勾选时只挑选 激活 的对象，取消时只挑选 未激活 的对象"), _selAct, null, null, null, null, 50, 20);
+            
+            // _selMeshObj和_selParticleObj的自动勾选逻辑
+            _selMeshObj = base.CreateToggleWithStyle(new GUIContent("isMesh", "挑选 模型 对象"), _selMeshObj, null, null, null, null, 50, 20);
+            _selParticleObj = base.CreateToggleWithStyle(new GUIContent("Particle", "挑选 粒子 对象"), _selParticleObj, null, null, null, null, 55, 20);
+            _selParent = base.CreateToggleWithStyle(new GUIContent("Parent", "挑选 父对象"), _selParent, null, null, null, null, 50, 20);
+            if (GUILayout.Button("Off", GUILayout.Width(40), GUILayout.ExpandWidth(false)))
+            {
+                _selPrefab = false;
+                _selMesh = false;
+                _selLODGroup = false;
+                _selMissMat = false;
+                _selMissScript = false;
+            }
+            // 处理自动勾选逻辑
+            /*
+            if (newSelMeshObj != _selMeshObj || newSelParticleObj != _selParticleObj)
+            {
+                // 如果取消勾选一项且另一项未勾选，则自动勾选另一项
+                if (!newSelMeshObj && !newSelParticleObj)
+                {
+                    // 如果两个都取消了，根据哪个被取消来决定勾选哪个
+                    if (!newSelMeshObj && _selMeshObj) // 刚刚取消了isMesh
+                    {
+                        newSelParticleObj = true;
+                    }
+                    else if (!newSelParticleObj && _selParticleObj) // 刚刚取消了Particle
+                    {
+                        newSelMeshObj = true;
+                    }
+                }
+                
+                _selMeshObj = newSelMeshObj;
+                _selParticleObj = newSelParticleObj;
+            }
+            */
+            EditorGUILayout.EndHorizontal();
+            
             EditorGUILayout.BeginHorizontal();
             // 添加lightDir图标按钮 - 在"设置层级"按钮左边
             if (_lightDirIcon != null)
             {
-                GUI.backgroundColor = new Color(0.6f, 0.6f, 0.6f); // 浅黄色背景
+                GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f); // 浅黄色背景
                 if (GUILayout.Button(new GUIContent(_lightDirIcon, "校正(PBR_Mobile)烘焙高光方向"), GUILayout.Height(35), GUILayout.Width(38)))
                 {
                     SceneTools.ApplyLightDirectionToMaterials();
                 }
-                GUI.backgroundColor = Color.blue;
+                GUI.backgroundColor = new Color(0.4f, 0.5f, 0.7f);
             }
             if (GUILayout.Button(new GUIContent("设置层级", "设置所有选择对象放入最后选择的对象中"), GUILayout.Height(30)))
             {
@@ -944,6 +1024,12 @@ public class ResourceBoxFileItem
             if (GUILayout.Button(new GUIContent("选择层级", "选择当前对象所在层级的所有对象"), GUILayout.Height(30)))
             {
                 SceneTools.SelectAllHierarchy();
+            }
+            GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
+            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的物体"), GUILayout.Height(30)))
+            {
+                // 根据选项选择场景中的物体
+                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissScript, _selAct, _selMeshObj, _selParticleObj, _selParent);
             }
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
@@ -1431,8 +1517,7 @@ public class ResourceBoxFileItem
             
             // 保存到全局文件
             SaveResourceBoxToGlobalFile(jsonData);
-            
-            Debug.Log($"资源箱数据已保存到全局文件，包含 {resourceBoxData.Count} 个对象（包括 {resourceBoxData.Count(item => item.guid == "NULL:OBJECT")} 个null对象）");
+            // Debug.Log($"资源箱数据已保存到全局文件，包含 {resourceBoxData.Count} 个对象（包括 {resourceBoxData.Count(item => item.guid == "NULL:OBJECT")} 个null对象）");
         }
         
         /// <summary>
