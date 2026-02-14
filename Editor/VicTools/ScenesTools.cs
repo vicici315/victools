@@ -89,6 +89,8 @@ public class ResourceBoxFileItem
         private readonly List<Object> _resourceBox = new List<Object>(); // 资源箱列表
         private readonly Dictionary<Object, string> _resourceBoxDisplayNames = new Dictionary<Object, string>(); // 对象到displayName的映射
         private readonly Dictionary<int, string> _nullObjectDisplayNames = new Dictionary<int, string>(); // 用于存储null对象的displayName，使用索引作为键
+        private readonly Dictionary<int, int> _resourceBoxInstanceIDs = new Dictionary<int, int>(); // 存储资源箱索引到对象InstanceID的映射
+        private readonly Dictionary<int, string> _instanceIDToDisplayName = new Dictionary<int, string>(); // 存储InstanceID到displayName的映射
         private Vector2 _resourceBoxScrollPosition; // 资源箱滚动位置
         private string _searchText = ""; // 搜索文本
         private Material _selectedMaterial; // 用于存储用户手动选择的材质
@@ -115,7 +117,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.11]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.12]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -150,6 +152,9 @@ public class ResourceBoxFileItem
             
             // 刷新可用文件列表
             RefreshAvailableFiles();
+            
+            // 自动刷新资源箱，尝试重新加载null对象
+            RecheckNullObjectsInResourceBox();
             
             // 初始化选中对象状态
             UpdateSelectedObjectsInResourceBox();
@@ -709,6 +714,87 @@ public class ResourceBoxFileItem
             // 显示资源箱内容
             if (_resourceBox.Count > 0)
             {
+                // 在绘制之前，检测并保存刚变为null的对象的displayName
+                for (int i = 0; i < _resourceBox.Count; i++)
+                {
+                    Object obj = _resourceBox[i];
+                    bool isObjectNull = !obj;
+                    
+                    if (!isObjectNull)
+                    {
+                        // 对象有效，保存或更新它的InstanceID和displayName映射
+                        int instanceID = obj.GetInstanceID();
+                        _resourceBoxInstanceIDs[i] = instanceID;
+                        
+                        // 计算并保存displayName
+                        var parentName = GetTopLevelParentName(obj);
+                        var displayName = !string.IsNullOrEmpty(parentName) 
+                            ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}" 
+                            : $"<{obj.GetType().Name}> {obj.name}";
+                        _instanceIDToDisplayName[instanceID] = displayName;
+                    }
+                    else if (!_nullObjectDisplayNames.ContainsKey(i))
+                    {
+                        // 对象为null，但_nullObjectDisplayNames中还没有保存它的displayName
+                        // 尝试通过InstanceID找到它之前的displayName
+                        if (_resourceBoxInstanceIDs.TryGetValue(i, out int instanceID))
+                        {
+                            if (_instanceIDToDisplayName.TryGetValue(instanceID, out string savedDisplayName))
+                            {
+                                _nullObjectDisplayNames[i] = savedDisplayName;
+                            }
+                            else
+                            {
+                                // 如果找不到，使用默认名称
+                                _nullObjectDisplayNames[i] = "<未知类型> 未知对象";
+                            }
+                        }
+                        else
+                        {
+                            // 如果没有保存InstanceID，尝试从保存的数据中加载
+                            var jsonData = EditorPrefs.GetString("VicTools_ScenesTools_ResourceBox", "");
+                            if (!string.IsNullOrEmpty(jsonData))
+                            {
+                                try
+                                {
+                                    var resourceBoxData = JsonUtility.FromJson<ResourceBoxData>(jsonData);
+                                    if (resourceBoxData != null && resourceBoxData.items != null && i < resourceBoxData.items.Count)
+                                    {
+                                        var item = resourceBoxData.items[i];
+                                        if (!string.IsNullOrEmpty(item.displayName))
+                                        {
+                                            _nullObjectDisplayNames[i] = item.displayName;
+                                        }
+                                        else if (!string.IsNullOrEmpty(item.name))
+                                        {
+                                            _nullObjectDisplayNames[i] = $"<未知类型> {item.name}";
+                                        }
+                                        else
+                                        {
+                                            _nullObjectDisplayNames[i] = "<未知类型> 未知对象";
+                                        }
+                                    }
+                                    else
+                                    {
+                                        _nullObjectDisplayNames[i] = "<未知类型> 未知对象";
+                                    }
+                                }
+                                catch
+                                {
+                                    _nullObjectDisplayNames[i] = "<未知类型> 未知对象";
+                                }
+                            }
+                            else
+                            {
+                                _nullObjectDisplayNames[i] = "<未知类型> 未知对象";
+                            }
+                        }
+                        
+                        // 立即保存资源箱数据，确保null对象的displayName被持久化
+                        SaveResourceBox(false);
+                    }
+                }
+                
                 // 添加使用提示
                 EditorGUILayout.LabelField("提示：按住 Ctrl 键点击\"选择\"按钮可添加选择，按住 Shift 键选择整个层级", style.normalfont_Hui_Cen);
                 // 滚动视图显示资源箱内容 - 自适应高度，使用剩余空间
@@ -731,50 +817,15 @@ public class ResourceBoxFileItem
                     
                     if (isObjectNull)
                     {
-                        // 如果对象不存在，尝试从null对象字典中获取保存的displayName
-                        // 使用索引作为键来查找null对象的displayName
+                        // 如果对象不存在，从null对象字典中获取保存的displayName
                         if (_nullObjectDisplayNames.TryGetValue(i, out string savedDisplayName))
                         {
                             displayName = savedDisplayName;
                         }
                         else
                         {
-                            // 如果字典中没有保存的displayName，尝试从原始对象名称中提取
-                            // 首先尝试从_resourceBoxDisplayNames中查找（如果对象曾经有效过）
-                            string originalName = "未知对象";
-                            
-                            // 尝试从保存的数据中获取原始名称
-                            var jsonData = EditorPrefs.GetString("VicTools_ScenesTools_ResourceBox", "");
-                            if (!string.IsNullOrEmpty(jsonData))
-                            {
-                                try
-                                {
-                                    var resourceBoxData = JsonUtility.FromJson<ResourceBoxData>(jsonData);
-                                    if (resourceBoxData != null && resourceBoxData.items != null && i < resourceBoxData.items.Count)
-                                    {
-                                        var item = resourceBoxData.items[i];
-                                        if (!string.IsNullOrEmpty(item.displayName))
-                                        {
-                                            // 从displayName中提取原始对象名称
-                                            originalName = ExtractOriginalNameFromDisplayName(item.displayName);
-                                        }
-                                        else if (!string.IsNullOrEmpty(item.name))
-                                        {
-                                            originalName = item.name;
-                                        }
-                                    }
-                                }
-                                catch
-                                {
-                                    // 如果解析失败，使用默认名称
-                                }
-                            }
-                            
-                            // 显示灰色的原对象名
-                            displayName = $"<未知类型> {originalName}";
-                            
-                            // 保存到null对象字典以便下次使用
-                            _nullObjectDisplayNames[i] = displayName;
+                            // 这种情况理论上不应该发生，因为我们在绘制前已经处理了
+                            displayName = "<未知类型> 未知对象";
                         }
                     }
                     else
@@ -930,7 +981,58 @@ public class ResourceBoxFileItem
                     GUI.backgroundColor = Color.red;
                     if (GUILayout.Button("X", GUILayout.Width(20), GUILayout.ExpandWidth(false)))
                     {
+                        // 删除对象前，先清理相关的映射
+                        if (_resourceBoxInstanceIDs.TryGetValue(i, out int instanceID))
+                        {
+                            _instanceIDToDisplayName.Remove(instanceID);
+                        }
+                        
                         _resourceBox.RemoveAt(i);
+                        
+                        // 重新构建null对象显示名称字典和InstanceID映射，更新所有受影响的索引
+                        var tempNullDisplayNames = new Dictionary<int, string>();
+                        var tempInstanceIDs = new Dictionary<int, int>();
+                        
+                        foreach (var kvp in _nullObjectDisplayNames)
+                        {
+                            if (kvp.Key < i)
+                            {
+                                // 删除位置之前的索引保持不变
+                                tempNullDisplayNames[kvp.Key] = kvp.Value;
+                            }
+                            else if (kvp.Key > i)
+                            {
+                                // 删除位置之后的索引需要减1
+                                tempNullDisplayNames[kvp.Key - 1] = kvp.Value;
+                            }
+                            // kvp.Key == i 的项被删除，不添加到新字典中
+                        }
+                        
+                        foreach (var kvp in _resourceBoxInstanceIDs)
+                        {
+                            if (kvp.Key < i)
+                            {
+                                tempInstanceIDs[kvp.Key] = kvp.Value;
+                            }
+                            else if (kvp.Key > i)
+                            {
+                                tempInstanceIDs[kvp.Key - 1] = kvp.Value;
+                            }
+                        }
+                        
+                        _nullObjectDisplayNames.Clear();
+                        _resourceBoxInstanceIDs.Clear();
+                        
+                        foreach (var kvp in tempNullDisplayNames)
+                        {
+                            _nullObjectDisplayNames[kvp.Key] = kvp.Value;
+                        }
+                        
+                        foreach (var kvp in tempInstanceIDs)
+                        {
+                            _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
+                        }
+                        
                         i--; // 调整索引
                         // 立即保存资源箱数据
                         SaveResourceBox(false);
@@ -1136,6 +1238,9 @@ public class ResourceBoxFileItem
 
             if (!confirm) return;
             _resourceBox.Clear();
+            _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
+            _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
+            _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
             // 清除保存的数据
             EditorPrefs.DeleteKey("VicTools_ScenesTools_ResourceBox");
             // 强制重绘窗口
@@ -1599,6 +1704,9 @@ public class ResourceBoxFileItem
 
                 // 加载资源箱对象
                 _resourceBox.Clear();
+                _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
+                _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
+                _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
                 var hasSceneObjectChanges = false; // 标记是否有场景对象变化
                 var hasDataInconsistency = false; // 标记是否有数据不一致
 
@@ -1852,6 +1960,9 @@ public class ResourceBoxFileItem
                 Debug.LogError($"加载资源箱数据时出错: {e.Message}");
                 // 在出错时清空资源箱，避免使用损坏的数据
                 _resourceBox.Clear();
+                _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
+                _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
+                _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
             }
         }
 
@@ -2358,6 +2469,9 @@ public class ResourceBoxFileItem
 
                 // 清空当前资源箱
                 _resourceBox.Clear();
+                _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
+                _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
+                _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
                 var loadedCount = 0;
                 var failedCount = 0;
                 var hasSceneObjectChanges = false; // 标记是否有场景对象变化

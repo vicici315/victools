@@ -47,7 +47,7 @@ public class ComputeBufferTool : EditorWindow
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度
-        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.2");
+        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.3");
         window.minSize = new Vector2(400, 600);  // 最小宽度，最小高度
         window.maxSize = new Vector2(1000, 1200); // 最大宽度1200，最大高度1000
         
@@ -318,8 +318,13 @@ public class ComputeBufferTool : EditorWindow
                         EditorGUILayout.EndHorizontal();
 //选择按钮行
                         EditorGUILayout.BeginHorizontal();
+                        GUI.backgroundColor = new Color(0.8f,0.5f,0.8f);
+                        if (GUILayout.Button(new GUIContent("剔除材质 ↑", "从管理器 剔除 场景中选中 模型的材质 或 Project中选择的材质球"), GUILayout.Height(22)))
+                        {
+                            DelMaterialsFromManager();
+                        }
                         GUI.backgroundColor = Color.magenta;
-                        if (GUILayout.Button(new GUIContent("添加材质 ↓", "向管理器添加Project中选择的材质球"), GUILayout.Height(22)))
+                        if (GUILayout.Button(new GUIContent("添加材质 ↓", "向管理器 添加 场景中选中 模型的材质 或 Project中选择的材质球"), GUILayout.Height(22)))
                         {
                             AddMaterialsToManager();
                         }
@@ -967,6 +972,109 @@ public class ComputeBufferTool : EditorWindow
         ToolFindPbrMobileMaterials();
     }
     
+    private void DelMaterialsFromManager()
+    {
+        if (!_computeBufferFileExists)
+        {
+            Debug.LogWarning("ComputeBuffer.cs文件不存在，无法剔除材质");
+            EditorUtility.DisplayDialog("错误", "ComputeBuffer.cs文件不存在，无法剔除材质。", "确定");
+            return;
+        }
+
+        if (!_manager || _manager.Equals(null))
+        {
+            Debug.LogWarning("无法剔除材质：未找到ComputeBufferLightManager实例");
+            EditorUtility.DisplayDialog("错误", "未找到ComputeBufferLightManager实例，请先创建或查找管理器。", "确定");
+            return;
+        }
+
+        // 收集要剔除的材质
+        List<Material> materialsToRemove = new List<Material>();
+
+        // 1. 从场景中选中的模型获取材质
+        GameObject[] selectedGameObjects = Selection.gameObjects;
+        if (selectedGameObjects != null && selectedGameObjects.Length > 0)
+        {
+            foreach (var go in selectedGameObjects)
+            {
+                Renderer renderer = go.GetComponent<Renderer>();
+                if (renderer && renderer.sharedMaterials != null)
+                {
+                    foreach (var material in renderer.sharedMaterials)
+                    {
+                        if (material && !materialsToRemove.Contains(material))
+                        {
+                            materialsToRemove.Add(material);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. 从Project中选择的材质球
+        Object[] selectedObjects = Selection.objects;
+        if (selectedObjects != null && selectedObjects.Length > 0)
+        {
+            foreach (var obj in selectedObjects)
+            {
+                if (obj is Material material && !materialsToRemove.Contains(material))
+                {
+                    materialsToRemove.Add(material);
+                }
+            }
+        }
+
+        // 检查是否有材质需要剔除
+        if (materialsToRemove.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "请先在场景中选择包含材质的模型，或在Project窗口中选择材质球。", "确定");
+            return;
+        }
+
+        // 从管理器中剔除材质
+        List<Material> removedMaterials = new List<Material>();
+        List<Material> notFoundMaterials = new List<Material>();
+
+        foreach (var material in materialsToRemove)
+        {
+            if (_manager.targetMaterials.Contains(material))
+            {
+                _manager.targetMaterials.Remove(material);
+                removedMaterials.Add(material);
+            }
+            else
+            {
+                notFoundMaterials.Add(material);
+            }
+        }
+
+        // 显示结果
+        string message = "";
+        if (removedMaterials.Count > 0)
+        {
+            message += $"成功从管理器剔除 {removedMaterials.Count} 个材质。\n";
+        }
+        
+        if (notFoundMaterials.Count > 0)
+        {
+            message += $"\n以下 {notFoundMaterials.Count} 个材质不在管理器中：\n";
+            foreach (var mat in notFoundMaterials)
+            {
+                message += $"  • {mat.name}\n";
+            }
+        }
+
+        if (removedMaterials.Count > 0 || notFoundMaterials.Count > 0)
+        {
+            EditorUtility.DisplayDialog("剔除材质结果", message, "确定");
+            
+            // 刷新材质列表显示
+            if (removedMaterials.Count > 0)
+            {
+                RefreshTargetMaterials();
+            }
+        }
+    }
     private void AddMaterialsToManager()
     {
         if (!_computeBufferFileExists)
@@ -983,28 +1091,46 @@ public class ComputeBufferTool : EditorWindow
             return;
         }
 
-        // 获取Project中选择的对象
-        Object[] selectedObjects = Selection.objects;
-        
-        if (selectedObjects == null || selectedObjects.Length == 0)
-        {
-            EditorUtility.DisplayDialog("提示", "请先在Project窗口中选择材质球。", "确定");
-            return;
-        }
+        // 收集要添加的材质
+        List<Material> materialsToAdd = new List<Material>();
 
-        // 筛选出材质对象
-        List<Material> selectedMaterials = new List<Material>();
-        foreach (var obj in selectedObjects)
+        // 1. 从场景中选中的模型获取材质
+        GameObject[] selectedGameObjects = Selection.gameObjects;
+        if (selectedGameObjects != null && selectedGameObjects.Length > 0)
         {
-            if (obj is Material material)
+            foreach (var go in selectedGameObjects)
             {
-                selectedMaterials.Add(material);
+                Renderer renderer = go.GetComponent<Renderer>();
+                if (renderer && renderer.sharedMaterials != null)
+                {
+                    foreach (var material in renderer.sharedMaterials)
+                    {
+                        if (material && !materialsToAdd.Contains(material))
+                        {
+                            materialsToAdd.Add(material);
+                        }
+                    }
+                }
             }
         }
 
-        if (selectedMaterials.Count == 0)
+        // 2. 从Project中选择的材质球
+        Object[] selectedObjects = Selection.objects;
+        if (selectedObjects != null && selectedObjects.Length > 0)
         {
-            EditorUtility.DisplayDialog("提示", "选择的对象中没有材质球，请选择材质球后再试。", "确定");
+            foreach (var obj in selectedObjects)
+            {
+                if (obj is Material material && !materialsToAdd.Contains(material))
+                {
+                    materialsToAdd.Add(material);
+                }
+            }
+        }
+
+        // 检查是否有材质需要添加
+        if (materialsToAdd.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "请先在场景中选择包含材质的模型，或在Project窗口中选择材质球。", "确定");
             return;
         }
 
@@ -1012,7 +1138,7 @@ public class ComputeBufferTool : EditorWindow
         List<Material> addedMaterials = new List<Material>();
         List<Material> existingMaterials = new List<Material>();
 
-        foreach (var material in selectedMaterials)
+        foreach (var material in materialsToAdd)
         {
             if (_manager.targetMaterials.Contains(material))
             {
