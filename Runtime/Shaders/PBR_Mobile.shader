@@ -19,6 +19,7 @@
 // PBR_Mobile4.2 取消反射颜色
 // PBR_Mobile5.0 添加SpotLight支持
 // PBR_Mobile5.1 添加聚光灯纹理彩色光环
+// PBR_Mobile5.2 添加UI脚本控制
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -908,4 +909,5 @@ Shader "Custom/PBR_Mobile"
         }
     }
     
+    CustomEditor "PBR_MobileGUI"
 }

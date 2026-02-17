@@ -1,3 +1,4 @@
+//性能分析1.5 优化未使用资源扫码准确度，精确查找BuildSetting中添加场景的资源使用，添加（扫描所有场景）选项
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -51,6 +52,7 @@ namespace VicTools
         private Vector2 _resourceScrollPosition;
         private System.DateTime _lastResourceScanTime = System.DateTime.MinValue;
         private bool _isSingleSelectMode = false; // 单选模式状态
+        private bool _scanAllScenes = false; // 是否扫描项目中的所有场景文件（而不仅仅是 Build Settings 中的）
         
         // 用户可配置的排除列表
         private readonly List<string> _excludedPaths = new(); // 排除的路径列表
@@ -90,6 +92,8 @@ namespace VicTools
             LoadModuleToggleStates();
             // 加载排除列表设置
             LoadExclusionSettings();
+            // 加载扫描选项
+            _scanAllScenes = EditorPrefs.GetBool("VicTools_ScanAllScenes", false);
             RefreshPerformanceData();
         }
 
@@ -1749,7 +1753,7 @@ namespace VicTools
         private void DrawResourceUtilizationSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
-            EditorGUILayout.LabelField("资源利用率检查", subheadingStyle);
+            EditorGUILayout.LabelField("未使用资源检查", subheadingStyle);
             
             // 显示上次扫描时间
             if (_lastResourceScanTime != System.DateTime.MinValue)
@@ -1760,7 +1764,7 @@ namespace VicTools
                 EditorGUILayout.EndHorizontal();
             }
             
-            // 扫描按钮
+            // 扫描按钮和选项
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             
             GUI.enabled = !_isScanningResources;
@@ -1771,6 +1775,25 @@ namespace VicTools
             }
             GUI.backgroundColor = Color.white;
             GUI.enabled = true;
+            
+            // 扫描选项
+            GUILayout.Space(10);
+            bool newScanAllScenes = EditorGUILayout.ToggleLeft("扫描所有场景", _scanAllScenes, GUILayout.Width(100));
+            if (newScanAllScenes != _scanAllScenes)
+            {
+                _scanAllScenes = newScanAllScenes;
+                EditorPrefs.SetBool("VicTools_ScanAllScenes", _scanAllScenes);
+            }
+            
+            // 提示信息
+            if (_scanAllScenes)
+            {
+                EditorGUILayout.LabelField("(包含项目中所有场景)", EditorStyles.miniLabel);
+            }
+            else
+            {
+                EditorGUILayout.LabelField("(仅 Build Settings 场景)", EditorStyles.miniLabel);
+            }
             
             EditorGUILayout.EndHorizontal();
             
@@ -1991,12 +2014,12 @@ namespace VicTools
                         columnCount++;
                     }
                     
-                    // 填充剩余空间
+                    // 填充剩余空间并结束最后一行
                     if (columnCount > 0)
                     {
                         GUILayout.FlexibleSpace();
+                        EditorGUILayout.EndHorizontal();
                     }
-                    EditorGUILayout.EndHorizontal();
                     
                     EditorGUILayout.EndVertical();
                 }
@@ -2008,8 +2031,11 @@ namespace VicTools
                 _resourceScrollPosition = EditorGUILayout.BeginScrollView(_resourceScrollPosition, GUILayout.Height(200));
                 
                 // 显示筛选后的资源
+                // 使用 ToList() 创建副本，避免在遍历时修改集合
                 int displayedCount = 0;
-                foreach (var resourcePath in _unusedResources)
+                string resourceToDelete = null;
+                
+                foreach (var resourcePath in _unusedResources.ToList())
                 {
                     // 检查资源类型是否被选中
                     string fileExtension = Path.GetExtension(resourcePath).ToLower();
@@ -2038,7 +2064,7 @@ namespace VicTools
                     GUI.backgroundColor = Color.red;
                     if (GUILayout.Button("删除", GUILayout.Width(50)))
                     {
-                        DeleteResource(resourcePath);
+                        resourceToDelete = resourcePath;
                     }
                     GUI.backgroundColor = Color.white;
                     
@@ -2046,13 +2072,19 @@ namespace VicTools
                     displayedCount++;
                 }
                 
+                EditorGUILayout.EndScrollView();
+                
+                // 在遍历结束后执行删除操作
+                if (!string.IsNullOrEmpty(resourceToDelete))
+                {
+                    DeleteResource(resourceToDelete);
+                }
+                
                 // 如果没有显示任何资源（所有类型都被取消选中）
                 if (displayedCount == 0)
                 {
                     EditorGUILayout.LabelField("没有选中任何类型，请至少选择一个资源类型", normalStyle);
                 }
-                
-                EditorGUILayout.EndScrollView();
                 
                 // 批量操作按钮
                 EditorGUILayout.Space();
@@ -2090,118 +2122,443 @@ namespace VicTools
         /// <summary>
         /// 扫描未使用资源
         /// </summary>
+        /// <summary>
+        /// 扫描未使用资源 - 优化版本
+        /// 使用基于依赖关系的项目级扫描，支持进度显示
+        /// </summary>
         private void ScanUnusedResources()
         {
             _isScanningResources = true;
             _unusedResources.Clear();
             _unusedResourcesByType.Clear();
             _resourceTypeFilters.Clear();
-            _resourceUsageCache.Clear(); // 清除缓存以允许重复扫描
-            
-            // 在实际实现中，这里应该使用后台线程或协程来避免阻塞UI
-            // 这里使用简单的实现作为示例
             
             try
             {
-                // 获取项目中所有资源
+                // 第一步：收集所有需要检查的资源
+                EditorUtility.DisplayProgressBar("扫描未使用资源", "正在收集项目资源...", 0f);
+                
+                var allAssets = new List<string>();
                 string[] allAssetPaths = AssetDatabase.GetAllAssetPaths();
                 
                 foreach (string assetPath in allAssetPaths)
                 {
-                // 跳过文件夹 - 简化文件夹识别逻辑，主要依赖AssetDatabase.IsValidFolder
-                bool isFolder = AssetDatabase.IsValidFolder(assetPath);
-                
-                // 如果AssetDatabase.IsValidFolder返回false，进行简单的启发式检查
-                // 主要检查是否有文件扩展名（大多数文件都有扩展名）
-                if (!isFolder)
-                {
-                    string extension = Path.GetExtension(assetPath);
-                    bool hasExtension = !string.IsNullOrEmpty(extension);
-                    
-                    // 如果没有扩展名，且路径看起来像文件夹（包含斜杠，不以常见文件扩展名结尾）
-                    if (!hasExtension && assetPath.Contains("/"))
-                    {
-                        // 检查是否是已知的特殊文件夹路径
-                        bool isSpecialFolderPath = assetPath.Contains("/Resources/") || 
-                                                  assetPath.Contains("/StreamingAssets/") ||
-                                                  assetPath.Contains("/Editor/") ||
-                                                  assetPath.Contains("/Plugins/") ||
-                                                  assetPath.Contains("/Gizmos/") ||
-                                                  assetPath.Contains("/Standard Assets/") ||
-                                                  assetPath.Contains("/Editor Default Resources/");
+                    // 只处理 Assets 文件夹下的资源
+                    if (!assetPath.StartsWith("Assets/"))
+                        continue;
                         
-                        // 如果是特殊文件夹路径，很可能是文件夹
-                        if (isSpecialFolderPath)
+                    // 跳过文件夹
+                    if (AssetDatabase.IsValidFolder(assetPath))
+                        continue;
+                        
+                    // 跳过脚本、着色器等代码文件
+                    string ext = Path.GetExtension(assetPath).ToLower();
+                    if (ext == ".cs" || ext == ".shader" || ext == ".cginc" || ext == ".hlsl" || 
+                        ext == ".dll" || ext == ".asmdef" || ext == ".asmref")
+                        continue;
+                        
+                    // 跳过 Editor 文件夹（编辑器专用资源）
+                    if (assetPath.Contains("/Editor/"))
+                        continue;
+                        
+                    // 跳过排除列表中的资源
+                    if (IsResourceExcluded(assetPath))
+                        continue;
+                        
+                    allAssets.Add(assetPath);
+                }
+                
+                Debug.Log($"开始扫描 {allAssets.Count} 个资源...");
+                
+                // 第二步：构建项目依赖关系图
+                EditorUtility.DisplayProgressBar("扫描未使用资源", "正在构建依赖关系图...", 0.1f);
+                
+                var usedAssets = new HashSet<string>();
+                var rootAssets = new HashSet<string>();
+                
+                // 收集根资源（入口点）
+                // 1. 构建场景（Build Settings 中的所有场景，不管是否启用）
+                Debug.Log("收集构建场景...");
+                foreach (var scene in EditorBuildSettings.scenes)
+                {
+                    if (!string.IsNullOrEmpty(scene.path))
+                    {
+                        rootAssets.Add(scene.path);
+                        Debug.Log($"  添加构建场景: {scene.path} (启用: {scene.enabled})");
+                    }
+                }
+                
+                // 添加当前打开的所有场景（可能不在 Build Settings 中）
+                for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+                {
+                    var scene = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                    if (scene.IsValid() && !string.IsNullOrEmpty(scene.path))
+                    {
+                        if (rootAssets.Add(scene.path))
                         {
-                            isFolder = true;
+                            Debug.Log($"  添加当前打开场景: {scene.path}");
                         }
-                        // 对于包管理器路径，进行特殊处理
-                        else if (assetPath.StartsWith("Packages/"))
+                    }
+                }
+                
+                // 可选：扫描项目中的所有场景文件（更全面）
+                if (_scanAllScenes)
+                {
+                    Debug.Log("扫描项目中的所有场景文件...");
+                    string[] allScenePaths = AssetDatabase.FindAssets("t:Scene")
+                        .Select(guid => AssetDatabase.GUIDToAssetPath(guid))
+                        .Where(path => path.StartsWith("Assets/"))
+                        .ToArray();
+                    
+                    foreach (string scenePath in allScenePaths)
+                    {
+                        if (rootAssets.Add(scenePath))
                         {
-                            // 包管理器路径通常没有文件扩展名
-                            // 检查最后一部分是否包含@（版本号）或看起来像包名
-                            string lastPart = assetPath.Split('/').Last();
-                            if (lastPart.Contains("@") || (!lastPart.Contains(".") && lastPart.Length > 0))
+                            Debug.Log($"  添加项目场景: {scenePath}");
+                        }
+                    }
+                }
+                
+                // 2. Graphics Settings（渲染管线、后处理等）
+                // 使用 AssetDatabase 加载 GraphicsSettings
+                try
+                {
+                    var graphicsSettingsAssets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset");
+                    foreach (var obj in graphicsSettingsAssets)
+                    {
+                        if (obj != null)
+                        {
+                            string path = AssetDatabase.GetAssetPath(obj);
+                            if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets/"))
                             {
-                                isFolder = true;
+                                rootAssets.Add(path);
                             }
                         }
                     }
                 }
-                    
-                    if (isFolder)
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"检查 Graphics Settings 时出错: {ex.Message}");
+                }
+                
+                // 3. Quality Settings 中的渲染管线资源
+                var renderPipelineAsset = UnityEngine.QualitySettings.renderPipeline;
+                if (renderPipelineAsset != null)
+                {
+                    string pipelinePath = AssetDatabase.GetAssetPath(renderPipelineAsset);
+                    if (!string.IsNullOrEmpty(pipelinePath))
                     {
-                        // 调试日志，帮助识别哪些路径被识别为文件夹
-                        // Debug.Log($"跳过文件夹: {assetPath}");
-                        continue;
-                    }
-                    
-                    // 跳过特殊文件夹和文件
-                    if (assetPath.StartsWith("Assets/") && 
-                        !assetPath.Contains("/Editor/") && 
-                        !assetPath.Contains("/Resources/") &&
-                        !assetPath.EndsWith(".cs") &&
-                        !assetPath.EndsWith(".shader") &&
-                        !assetPath.EndsWith(".cginc") &&
-                        !assetPath.EndsWith(".hlsl"))
-                    {
-                    // 检查资源是否被引用
-                    if (!IsResourceUsed(assetPath))
-                    {
-                        // 按类型分类
-                        string fileExtension = Path.GetExtension(assetPath).ToLower();
-                        string resourceType = GetResourceType(fileExtension);
-                        
-                        // 排除"Other"和"ScriptableObject"类型的资源
-                        if (resourceType != "Other" && resourceType != "ScriptableObject")
-                        {
-                            _unusedResources.Add(assetPath);
-                            
-                            if (!_unusedResourcesByType.ContainsKey(resourceType))
-                                _unusedResourcesByType[resourceType] = new List<string>();
-                            
-                            _unusedResourcesByType[resourceType].Add(assetPath);
-                        }
-                    }
+                        rootAssets.Add(pipelinePath);
                     }
                 }
                 
-                // 初始化所有类型筛选状态为true（默认选中）
+                // 检查所有 Quality Level 的渲染管线
+                int qualityLevelCount = UnityEngine.QualitySettings.names.Length;
+                int currentQuality = UnityEngine.QualitySettings.GetQualityLevel();
+                for (int i = 0; i < qualityLevelCount; i++)
+                {
+                    UnityEngine.QualitySettings.SetQualityLevel(i, false);
+                    var levelPipeline = UnityEngine.QualitySettings.renderPipeline;
+                    if (levelPipeline != null)
+                    {
+                        string path = AssetDatabase.GetAssetPath(levelPipeline);
+                        if (!string.IsNullOrEmpty(path))
+                        {
+                            rootAssets.Add(path);
+                        }
+                    }
+                }
+                UnityEngine.QualitySettings.SetQualityLevel(currentQuality, false);
+                
+                // 4. Resources 文件夹（运行时动态加载）
+                foreach (string assetPath in allAssets)
+                {
+                    if (assetPath.Contains("/Resources/"))
+                    {
+                        rootAssets.Add(assetPath);
+                    }
+                }
+                
+                // 5. StreamingAssets 文件夹
+                foreach (string assetPath in allAssets)
+                {
+                    if (assetPath.Contains("/StreamingAssets/"))
+                    {
+                        rootAssets.Add(assetPath);
+                    }
+                }
+                
+                // 6. Addressables 资源（如果启用）
+                if (IsAddressablesEnabled())
+                {
+                    foreach (string assetPath in allAssets)
+                    {
+                        if (IsReferencedByAddressables(assetPath))
+                        {
+                            rootAssets.Add(assetPath);
+                        }
+                    }
+                }
+                
+                // 7. 预加载资源（PlayerSettings 中配置的）
+                var preloadedAssets = UnityEditor.PlayerSettings.GetPreloadedAssets();
+                foreach (var asset in preloadedAssets)
+                {
+                    if (asset != null)
+                    {
+                        string path = AssetDatabase.GetAssetPath(asset);
+                        if (!string.IsNullOrEmpty(path))
+                        {
+                            rootAssets.Add(path);
+                        }
+                    }
+                }
+                
+                // 8. 标签管理器中的资源（Tags and Layers）
+                var tagManager = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset");
+                foreach (var obj in tagManager)
+                {
+                    if (obj != null)
+                    {
+                        string path = AssetDatabase.GetAssetPath(obj);
+                        if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets/"))
+                        {
+                            rootAssets.Add(path);
+                        }
+                    }
+                }
+                
+                // 9. 输入管理器中的资源
+                var inputManager = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/InputManager.asset");
+                foreach (var obj in inputManager)
+                {
+                    if (obj != null)
+                    {
+                        string path = AssetDatabase.GetAssetPath(obj);
+                        if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets/"))
+                        {
+                            rootAssets.Add(path);
+                        }
+                    }
+                }
+                
+                // 10. URP/HDRP 渲染管线的 Renderer 资源和全局设置
+                // 通过反射获取 URP Asset 中的 Renderer 列表
+                try
+                {
+                    foreach (string assetPath in allAssets)
+                    {
+                        // 检查是否是渲染管线资源
+                        if (assetPath.EndsWith(".asset"))
+                        {
+                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                            if (asset != null)
+                            {
+                                var assetType = asset.GetType();
+                                
+                                // URP/HDRP: RenderPipelineAsset
+                                if (assetType.Name.Contains("UniversalRenderPipelineAsset") || 
+                                    assetType.Name.Contains("HDRenderPipelineAsset"))
+                                {
+                                    rootAssets.Add(assetPath);
+                                    Debug.Log($"  添加渲染管线资源: {assetPath}");
+                                    
+                                    // 获取 Renderer 列表
+                                    var rendererDataListProperty = assetType.GetProperty("rendererDataList", 
+                                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                    
+                                    if (rendererDataListProperty == null)
+                                    {
+                                        // 尝试字段
+                                        var rendererDataListField = assetType.GetField("m_RendererDataList", 
+                                            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                                        
+                                        if (rendererDataListField != null)
+                                        {
+                                            var rendererList = rendererDataListField.GetValue(asset);
+                                            if (rendererList != null && rendererList is System.Collections.IEnumerable enumerable)
+                                            {
+                                                foreach (var renderer in enumerable)
+                                                {
+                                                    if (renderer != null && renderer is UnityEngine.Object rendererObj)
+                                                    {
+                                                        string rendererPath = AssetDatabase.GetAssetPath(rendererObj);
+                                                        if (!string.IsNullOrEmpty(rendererPath))
+                                                        {
+                                                            rootAssets.Add(rendererPath);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        var rendererList = rendererDataListProperty.GetValue(asset);
+                                        if (rendererList != null && rendererList is System.Collections.IEnumerable enumerable)
+                                        {
+                                            foreach (var renderer in enumerable)
+                                            {
+                                                if (renderer != null && renderer is UnityEngine.Object rendererObj)
+                                                {
+                                                    string rendererPath = AssetDatabase.GetAssetPath(rendererObj);
+                                                    if (!string.IsNullOrEmpty(rendererPath))
+                                                    {
+                                                        rootAssets.Add(rendererPath);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // URP/HDRP: GlobalSettings
+                                else if (assetType.Name.Contains("UniversalRenderPipelineGlobalSettings") || 
+                                         assetType.Name.Contains("HDRenderPipelineGlobalSettings") ||
+                                         assetType.Name.Contains("RenderPipelineGlobalSettings"))
+                                {
+                                    rootAssets.Add(assetPath);
+                                    Debug.Log($"  添加渲染管线全局设置: {assetPath}");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogWarning($"检查渲染管线 Renderer 时出错: {ex.Message}");
+                }
+                
+                Debug.Log($"找到 {rootAssets.Count} 个根资源（入口点）");
+                
+                // 输出前几个根资源用于调试
+                int debugCount = 0;
+                foreach (var root in rootAssets)
+                {
+                    Debug.Log($"  根资源: {root}");
+                    debugCount++;
+                    if (debugCount >= 5) break;
+                }
+                if (rootAssets.Count > 5)
+                {
+                    Debug.Log($"  ... 还有 {rootAssets.Count - 5} 个根资源");
+                }
+                
+                // 第三步：从根资源开始，递归收集所有依赖
+                EditorUtility.DisplayProgressBar("扫描未使用资源", "正在分析依赖关系...", 0.3f);
+                
+                int processedCount = 0;
+                foreach (var rootAsset in rootAssets)
+                {
+                    CollectDependencies(rootAsset, usedAssets);
+                    
+                    processedCount++;
+                    if (processedCount % 10 == 0)
+                    {
+                        float progress = 0.3f + (0.4f * processedCount / rootAssets.Count);
+                        EditorUtility.DisplayProgressBar("扫描未使用资源", 
+                            $"正在分析依赖关系... ({processedCount}/{rootAssets.Count})", progress);
+                    }
+                }
+                
+                Debug.Log($"依赖关系分析完成，共 {usedAssets.Count} 个被使用的资源");
+                
+                // 第四步：找出未被使用的资源
+                EditorUtility.DisplayProgressBar("扫描未使用资源", "正在识别未使用资源...", 0.7f);
+                
+                int checkedCount = 0;
+                foreach (string assetPath in allAssets)
+                {
+                    if (!usedAssets.Contains(assetPath))
+                    {
+                        // 额外检查：代码中的动态引用
+                        if (!IsReferencedInCode(assetPath))
+                        {
+                            string fileExtension = Path.GetExtension(assetPath).ToLower();
+                            string resourceType = GetResourceType(fileExtension);
+                            
+                            // 排除某些类型
+                            if (resourceType != "Other")
+                            {
+                                _unusedResources.Add(assetPath);
+                                
+                                if (!_unusedResourcesByType.ContainsKey(resourceType))
+                                    _unusedResourcesByType[resourceType] = new List<string>();
+                                
+                                _unusedResourcesByType[resourceType].Add(assetPath);
+                            }
+                        }
+                    }
+                    
+                    checkedCount++;
+                    if (checkedCount % 100 == 0)
+                    {
+                        float progress = 0.7f + (0.2f * checkedCount / allAssets.Count);
+                        EditorUtility.DisplayProgressBar("扫描未使用资源", 
+                            $"正在识别未使用资源... ({checkedCount}/{allAssets.Count})", progress);
+                    }
+                }
+                
+                // 初始化类型筛选状态
                 foreach (var resourceType in _unusedResourcesByType.Keys)
                 {
                     _resourceTypeFilters[resourceType] = true;
                 }
                 
                 _lastResourceScanTime = System.DateTime.Now;
+                
+                EditorUtility.ClearProgressBar();
                 Debug.Log($"扫描完成: 发现 {_unusedResources.Count} 个未使用资源");
+                
+                // 显示详细统计
+                foreach (var kvp in _unusedResourcesByType)
+                {
+                    Debug.Log($"  - {kvp.Key}: {kvp.Value.Count} 个");
+                }
             }
             catch (System.Exception ex)
             {
-                Debug.LogError($"扫描资源时出错: {ex.Message}");
+                EditorUtility.ClearProgressBar();
+                Debug.LogError($"扫描资源时出错: {ex.Message}\n{ex.StackTrace}");
             }
             finally
             {
                 _isScanningResources = false;
+                EditorUtility.ClearProgressBar();
+            }
+        }
+        
+        /// <summary>
+        /// 递归收集资源的所有依赖
+        /// </summary>
+        private void CollectDependencies(string assetPath, HashSet<string> usedAssets)
+        {
+            // 避免重复处理
+            if (usedAssets.Contains(assetPath))
+                return;
+                
+            usedAssets.Add(assetPath);
+            
+            // 获取所有依赖（包括间接依赖）
+            // 第二个参数为 true 表示递归获取所有依赖
+            string[] dependencies = AssetDatabase.GetDependencies(assetPath, true);
+            
+            foreach (string dependency in dependencies)
+            {
+                // 避免重复处理
+                if (usedAssets.Contains(dependency))
+                    continue;
+                    
+                // 只处理 Assets 文件夹下的资源
+                if (!dependency.StartsWith("Assets/"))
+                    continue;
+                    
+                // 跳过脚本文件
+                string ext = Path.GetExtension(dependency).ToLower();
+                if (ext == ".cs" || ext == ".dll")
+                    continue;
+                    
+                // 标记为已使用
+                usedAssets.Add(dependency);
             }
         }
 
@@ -3276,7 +3633,19 @@ namespace VicTools
                     {
                         _unusedResourcesByType[resourceType].Remove(resourcePath);
                         if (_unusedResourcesByType[resourceType].Count == 0)
+                        {
                             _unusedResourcesByType.Remove(resourceType);
+                            _resourceTypeFilters.Remove(resourceType);
+                        }
+                    }
+                    
+                    // 刷新 AssetDatabase
+                    AssetDatabase.Refresh();
+                    
+                    // 强制重绘窗口
+                    if (Parent != null)
+                    {
+                        Parent.Repaint();
                     }
                 }
                 else
@@ -3317,32 +3686,73 @@ namespace VicTools
         /// </summary>
         private void DeleteAllUnusedResources()
         {
-            int count = _unusedResources.Count;
-            if (count == 0)
+            // 获取筛选后的资源数量
+            int filteredCount = GetFilteredResourcesCount();
+            if (filteredCount == 0)
             {
                 Debug.Log("没有未使用资源可删除");
                 return;
             }
             
             if (EditorUtility.DisplayDialog("确认删除所有", 
-                $"确定要删除所有 {count} 个未使用资源吗？\n\n此操作无法撤销。", 
+                $"确定要删除所有 {filteredCount} 个未使用资源吗？\n\n此操作无法撤销。", 
                 "删除所有", "取消"))
             {
                 int deletedCount = 0;
-                List<string> resourcesToDelete = new List<string>(_unusedResources);
+                List<string> resourcesToDelete = new List<string>();
                 
-                foreach (string resourcePath in resourcesToDelete)
+                // 收集需要删除的资源（根据筛选条件）
+                foreach (string resourcePath in _unusedResources)
                 {
-                    if (AssetDatabase.DeleteAsset(resourcePath))
+                    string fileExtension = Path.GetExtension(resourcePath).ToLower();
+                    string resourceType = GetResourceType(fileExtension);
+                    
+                    if (_resourceTypeFilters.ContainsKey(resourceType) && _resourceTypeFilters[resourceType])
                     {
-                        deletedCount++;
+                        resourcesToDelete.Add(resourcePath);
                     }
                 }
                 
-                _unusedResources.Clear();
-                _unusedResourcesByType.Clear();
+                // 显示进度条
+                for (int i = 0; i < resourcesToDelete.Count; i++)
+                {
+                    string resourcePath = resourcesToDelete[i];
+                    EditorUtility.DisplayProgressBar("删除资源", 
+                        $"正在删除 {Path.GetFileName(resourcePath)}... ({i + 1}/{resourcesToDelete.Count})", 
+                        (float)(i + 1) / resourcesToDelete.Count);
+                    
+                    if (AssetDatabase.DeleteAsset(resourcePath))
+                    {
+                        deletedCount++;
+                        _unusedResources.Remove(resourcePath);
+                        
+                        // 更新按类型统计
+                        string fileExtension = Path.GetExtension(resourcePath).ToLower();
+                        string resourceType = GetResourceType(fileExtension);
+                        if (_unusedResourcesByType.ContainsKey(resourceType))
+                        {
+                            _unusedResourcesByType[resourceType].Remove(resourcePath);
+                            if (_unusedResourcesByType[resourceType].Count == 0)
+                            {
+                                _unusedResourcesByType.Remove(resourceType);
+                                _resourceTypeFilters.Remove(resourceType);
+                            }
+                        }
+                    }
+                }
+                
+                EditorUtility.ClearProgressBar();
+                
+                // 刷新 AssetDatabase
+                AssetDatabase.Refresh();
                 
                 Debug.Log($"已删除 {deletedCount} 个未使用资源");
+                
+                // 强制重绘窗口
+                if (Parent != null)
+                {
+                    Parent.Repaint();
+                }
             }
         }
 
