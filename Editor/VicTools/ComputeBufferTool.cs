@@ -47,7 +47,7 @@ public class ComputeBufferTool : EditorWindow
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度
-        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.3");
+        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.4");
         window.minSize = new Vector2(400, 600);  // 最小宽度，最小高度
         window.maxSize = new Vector2(1000, 1200); // 最大宽度1200，最大高度1000
         
@@ -1041,6 +1041,25 @@ public class ComputeBufferTool : EditorWindow
             {
                 _manager.targetMaterials.Remove(material);
                 removedMaterials.Add(material);
+                
+                // 立即关闭该材质的灯光参数
+                if (material.HasProperty("_UsePointlight"))
+                {
+                    material.SetFloat("_UsePointlight", 0);
+                    material.DisableKeyword("_USEPOINTLIGHT");
+                }
+                if (material.HasProperty("_UseSpotlight"))
+                {
+                    material.SetFloat("_UseSpotlight", 0);
+                    material.DisableKeyword("_USESPOTLIGHT");
+                }
+                if (material.HasProperty("_UseSpotTexture"))
+                {
+                    material.SetFloat("_UseSpotTexture", 0);
+                    material.DisableKeyword("_USESPOTTEXTURE");
+                }
+                
+                EditorUtility.SetDirty(material);
             }
             else
             {
@@ -1148,6 +1167,52 @@ public class ComputeBufferTool : EditorWindow
             {
                 _manager.targetMaterials.Add(material);
                 addedMaterials.Add(material);
+                
+                // 根据管理器的灯光类型设置激活相应的材质灯光参数
+                bool usePointLight = _manager.GetPointLightEnabled();
+                bool useSpotLight = _manager.GetSpotLightEnabled();
+                bool useSpotTexture = _manager.GetUseSpotTexture();
+                
+                if (material.HasProperty("_UsePointlight"))
+                {
+                    material.SetFloat("_UsePointlight", usePointLight ? 1 : 0);
+                    if (usePointLight)
+                    {
+                        material.EnableKeyword("_USEPOINTLIGHT");
+                    }
+                    else
+                    {
+                        material.DisableKeyword("_USEPOINTLIGHT");
+                    }
+                }
+                
+                if (material.HasProperty("_UseSpotlight"))
+                {
+                    material.SetFloat("_UseSpotlight", useSpotLight ? 1 : 0);
+                    if (useSpotLight)
+                    {
+                        material.EnableKeyword("_USESPOTLIGHT");
+                    }
+                    else
+                    {
+                        material.DisableKeyword("_USESPOTLIGHT");
+                    }
+                }
+                
+                if (material.HasProperty("_UseSpotTexture"))
+                {
+                    material.SetFloat("_UseSpotTexture", useSpotTexture ? 1 : 0);
+                    if (useSpotTexture)
+                    {
+                        material.EnableKeyword("_USESPOTTEXTURE");
+                    }
+                    else
+                    {
+                        material.DisableKeyword("_USESPOTTEXTURE");
+                    }
+                }
+                
+                EditorUtility.SetDirty(material);
             }
         }
 

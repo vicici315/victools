@@ -117,7 +117,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.12]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.13]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -1070,7 +1070,7 @@ public class ResourceBoxFileItem
             // _selMeshObj和_selParticleObj的自动勾选逻辑
             _selMeshObj = base.CreateToggleWithStyle(new GUIContent("isMesh", "挑选 模型 对象"), _selMeshObj, null, null, null, null, 50, 20);
             _selParticleObj = base.CreateToggleWithStyle(new GUIContent("Particle", "挑选 粒子 对象"), _selParticleObj, null, null, null, null, 55, 20);
-            _selParent = base.CreateToggleWithStyle(new GUIContent("Parent", "挑选 父对象"), _selParent, null, null, null, null, 50, 20);
+            _selParent = base.CreateToggleWithStyle(new GUIContent("Parent", "选中 父对象"), _selParent, null, null, null, null, 50, 20);
             if (GUILayout.Button("Off", GUILayout.Width(40), GUILayout.ExpandWidth(false)))
             {
                 _selPrefab = false;
@@ -1078,6 +1078,9 @@ public class ResourceBoxFileItem
                 _selLODGroup = false;
                 _selMissMat = false;
                 _selMissScript = false;
+                _selMeshObj = false;
+                _selParticleObj = false;
+                _selParent = false;
             }
             // 处理自动勾选逻辑
             /*

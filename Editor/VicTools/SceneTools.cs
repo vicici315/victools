@@ -244,12 +244,47 @@ namespace VicTools
                 }
                 else
                 {
+                    // 辅助方法：检查对象类型是否符合二级选项筛选条件（除了selParent）
+                    bool PassesSecondaryTypeFilter(GameObject obj)
+                    {
+                        // 如果两个选项都不勾选，则不进行类型筛选（全部通过）
+                        if (!selMeshObj && !selParticleObj)
+                        {
+                            return true;
+                        }
+                        
+                        bool isMeshObject = false;
+                        bool isParticleObject = false;
+                        
+                        // 检查是否是模型对象（有MeshRenderer组件）
+                        var renderer = obj.GetComponent<Renderer>();
+                        if (renderer != null && renderer is MeshRenderer)
+                        {
+                            isMeshObject = true;
+                        }
+                        
+                        // 检查是否是粒子对象（有ParticleSystem组件）
+                        var particleSystem = obj.GetComponent<ParticleSystem>();
+                        if (particleSystem != null)
+                        {
+                            isParticleObject = true;
+                        }
+                        
+                        // 根据selMeshObj、selParticleObj筛选
+                        if (selMeshObj && isMeshObject) return true;
+                        if (selParticleObj && isParticleObject) return true;
+                        
+                        return false;
+                    }
+                    
                     // 正常选择模式
                     // 检查是否选择Prefab对象
                     if (selectPrefab)
                     {
-                        // 检查对象是否是Prefab实例且符合激活状态条件
-                        if (PrefabUtility.IsPartOfPrefabInstance(gameObject) && CheckActivationState(gameObject))
+                        // 检查对象是否是Prefab实例且符合激活状态条件和二级类型筛选
+                        if (PrefabUtility.IsPartOfPrefabInstance(gameObject) && 
+                            CheckActivationState(gameObject) && 
+                            PassesSecondaryTypeFilter(gameObject))
                         {
                             shouldSelect = true;
                         }
@@ -265,8 +300,10 @@ namespace VicTools
                             var renderer = gameObject.GetComponent<Renderer>();
                             if (renderer != null)
                             {
-                                // 进一步检查是否是MeshRenderer且符合激活状态条件
-                                if (renderer is MeshRenderer && CheckActivationState(gameObject))
+                                // 进一步检查是否是MeshRenderer且符合激活状态条件和二级类型筛选
+                                if (renderer is MeshRenderer && 
+                                    CheckActivationState(gameObject) && 
+                                    PassesSecondaryTypeFilter(gameObject))
                                 {
                                     shouldSelect = true;
                                 }
@@ -277,9 +314,11 @@ namespace VicTools
                     // 检查是否选择带LODGroup的对象
                     if (selectLODGroup && !shouldSelect)
                     {
-                        // 检查对象是否有LODGroup组件且符合激活状态条件
+                        // 检查对象是否有LODGroup组件且符合激活状态条件和二级类型筛选
                         var lodGroup = gameObject.GetComponent<LODGroup>();
-                        if (lodGroup != null && CheckActivationState(gameObject))
+                        if (lodGroup != null && 
+                            CheckActivationState(gameObject) && 
+                            PassesSecondaryTypeFilter(gameObject))
                         {
                             shouldSelect = true;
                         }
@@ -322,7 +361,9 @@ namespace VicTools
                                 }
                             }
                             
-                            if (hasMissingMaterial && CheckActivationState(gameObject))
+                            if (hasMissingMaterial && 
+                                CheckActivationState(gameObject) && 
+                                PassesSecondaryTypeFilter(gameObject))
                             {
                                 shouldSelect = true;
                             }
@@ -346,47 +387,13 @@ namespace VicTools
                             }
                         }
                         
-                        if (hasMissingScript && CheckActivationState(gameObject))
+                        if (hasMissingScript && 
+                            CheckActivationState(gameObject) && 
+                            PassesSecondaryTypeFilter(gameObject))
                         {
                             shouldSelect = true;
                         }
                     }
-                }
-                
-                // 应用筛选条件：selMeshObj（模型对象）、selParticleObj（粒子对象）
-                if (shouldSelect)
-                {
-                    // 对象类型筛选（模型对象、粒子对象）
-                    bool isMeshObject = false;
-                    bool isParticleObject = false;
-                    
-                    // 检查是否是模型对象（有MeshRenderer组件）
-                    var renderer = gameObject.GetComponent<Renderer>();
-                    if (renderer != null && renderer is MeshRenderer)
-                    {
-                        isMeshObject = true;
-                    }
-                    
-                    // 检查是否是粒子对象（有ParticleSystem组件）
-                    var particleSystem = gameObject.GetComponent<ParticleSystem>();
-                    if (particleSystem != null)
-                    {
-                        isParticleObject = true;
-                    }
-                    
-                    // 根据selMeshObj、selParticleObj筛选
-                    bool passesTypeFilter = false;
-                    
-                    if (selMeshObj && isMeshObject) passesTypeFilter = true;
-                    if (selParticleObj && isParticleObject) passesTypeFilter = true;
-                    
-                    // 如果两个选项都不勾选，则不进行类型筛选（全部通过）
-                    if (!selMeshObj && !selParticleObj)
-                    {
-                        passesTypeFilter = true;
-                    }
-                    
-                    shouldSelect = passesTypeFilter;
                 }
                 
                 // 最终决定是否选择

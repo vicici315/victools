@@ -47,7 +47,7 @@ Shader "Custom/PBR_Mobile"
         _OcclusionStrength  ("AO Strength", Range(0, 1)) = 0.5
         [Toggle(_PREVIEWAO)] _PreviewAOMap ("Preview AO(B) Channel", Float) = 0
 
-        [Header(3  (Normal Map))]
+        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
         [Space(5)]
         [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
@@ -55,15 +55,15 @@ Shader "Custom/PBR_Mobile"
         [Toggle(_FILPG)] _FilpG("Filp Green Channel", Float) = 0
         [Toggle(_DEBUGNORMAL)] _DebugNormal("Debug Normal Map", Float) = 0
         
-        [Header(4  (Emission))]
+        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
         [Space(5)]
         [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
         [HDR]_EmissionColor ("Emission Color", Color) = (1,1,1,1)
         _EmissionMap ("Emission Map", 2D) = "white" {}
         _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
-        [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0
+        [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0   
         
-        [Header(5  (Reflection))]
+        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
         [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
@@ -73,7 +73,7 @@ Shader "Custom/PBR_Mobile"
         _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
         _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
         
-        [Header(6  (Custom Point Lights))]
+        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
         [Space(5)]
         [Toggle(_USEPOINTLIGHT)] _UsePointlight("Use Point Lighting", Float) = 0
         _PointLightIntensity ("Point Light Intensity", Range(0, 8)) = 1.0
@@ -81,7 +81,7 @@ Shader "Custom/PBR_Mobile"
         _PointLightFalloff ("Falloff Power", Range(0.5, 8)) = 2.0
         _PointLightAmount ("Light Amount", Range(1, 16)) = 4
 
-        [Header(7  (Custom Spot Lights))]
+        // [Header(7  (Custom Spot Lights))]
         [Space(5)]
         [Toggle(_USESPOTLIGHT)] _UseSpotlight("Use Spot Lighting", Float) = 0
         _SpotLightIntensity ("Spot Light Intensity", Range(0, 8)) = 1.0
@@ -94,7 +94,7 @@ Shader "Custom/PBR_Mobile"
         _SpotTextureSize ("Spot Texture Size", Range(0.1, 1)) = 0.5
         _SpotTextureIntensity ("Spot Texture Intensity", Range(0, 2)) = 1.0
 
-        [Header(#  (Performance))]
+        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
         [Space(5)]
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
         
@@ -234,7 +234,6 @@ Shader "Custom/PBR_Mobile"
                 float3 _BakedSpecularDirection;
                 
                 float _ReflectionStrength;
-                float4 _SphericalReflectionMap_ST;
                 float _ReflectionBlur;
                 float _ReflectionFresnelPower;
                 float _ReflectionFresnelBias;
@@ -287,7 +286,6 @@ Shader "Custom/PBR_Mobile"
                 reflectionVector = normalize(reflectionVector);
                 
                 return float2(
-                    
                     reflectionVector.x / 4.01 + 0.5,  
                     reflectionVector.y / 4.01 + 0.5   
                 );
@@ -313,7 +311,6 @@ Shader "Custom/PBR_Mobile"
             float3 SampleSphericalReflection(float3 reflectionVector, float blur)
             {
                 float2 uv = fastSphericalUV(reflectionVector);
-                uv = TRANSFORM_TEX(uv, _SphericalReflectionMap);
                 
                 float3 reflectionColor = SAMPLE_TEXTURE2D_LOD(_SphericalReflectionMap, sampler_SphericalReflectionMap, uv, blur).rgb;
                 return reflectionColor;
@@ -388,7 +385,7 @@ Shader "Custom/PBR_Mobile"
                     mat.roughness *= mat.mraSample.g;
                 #endif
 
-                #ifdef _USEAOMAP
+                #if defined(_USEMSAMAP) && defined(_USEAOMAP)
                     mat.aoValue = mat.mraSample.b;
                 #endif
                 
@@ -735,7 +732,7 @@ Shader "Custom/PBR_Mobile"
                 #endif
                 finalColor += reflectionContrib * mat.albedo;
                 
-                #ifdef _USEAOMAP
+                #if defined(_USEMSAMAP) && defined(_USEAOMAP)
                     mat.aoValue = saturate(fastPow(max(mat.aoValue,0.01), _OcclusionContrast));
                     mat.aoValue = lerp(1.0, mat.aoValue, _OcclusionStrength);
                     finalColor *= mat.aoValue;
@@ -779,7 +776,7 @@ Shader "Custom/PBR_Mobile"
                     #endif
                 #endif
                 
-                #ifdef _PREVIEWAO
+                #if defined(_USEMSAMAP) && defined(_PREVIEWAO)
                 return mat.aoValue;
                 #else
                 return half4(finalColor, 1.0);

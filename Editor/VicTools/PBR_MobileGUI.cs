@@ -161,21 +161,19 @@ public class PBR_MobileGUI : ShaderGUI
         m_MaterialEditor.RangeProperty(halfLambert, "半兰伯特");
         m_MaterialEditor.RangeProperty(shadowScale, "自身阴影强度");
         m_MaterialEditor.RangeProperty(brightness, "亮度");
-        
         if (disableEnvironment.floatValue < 0.5f)
         {
             m_MaterialEditor.VectorProperty(bakedSpecularDirection, "烘焙高光方向");
         }
-
-        m_MaterialEditor.ShaderProperty(useMsaMap, "使用金属度粗糙度贴图");
+        m_MaterialEditor.ShaderProperty(useMsaMap, "  使用金属度粗糙度贴图");
         
         if (useMsaMap.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
-            m_MaterialEditor.TextureProperty(metallicGlossMap, "金属度(R) 粗糙度(G) AO(B)");
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("金属度(R) 粗糙度(G) AO(B)"),metallicGlossMap);
             EditorGUI.indentLevel--;
             
-            m_MaterialEditor.ShaderProperty(useAOMap, "使用 AO(B) 通道");
+            m_MaterialEditor.ShaderProperty(useAOMap, "  使用 AO(B) 通道");
             
             if (useAOMap.floatValue > 0.5f)
             {
@@ -185,6 +183,34 @@ public class PBR_MobileGUI : ShaderGUI
                 m_MaterialEditor.ShaderProperty(previewAOMap, "预览 AO(B) 通道");
                 EditorGUI.indentLevel--;
             }
+            else
+            {
+                // 确保关键字被禁用
+                foreach (Material mat in m_MaterialEditor.targets)
+                {
+                    mat.DisableKeyword("_USEAOMAP");
+                    mat.DisableKeyword("_PREVIEWAO");
+                }
+            }
+        }
+        else
+        {
+            // 当 useMsaMap 关闭时，自动禁用 useAOMap 和相关关键字
+            if (useAOMap.floatValue > 0.5f)
+            {
+                useAOMap.floatValue = 0;
+            }
+            if (previewAOMap.floatValue > 0.5f)
+            {
+                previewAOMap.floatValue = 0;
+            }
+            
+            // 确保关键字被禁用
+            foreach (Material mat in m_MaterialEditor.targets)
+            {
+                mat.DisableKeyword("_USEAOMAP");
+                mat.DisableKeyword("_PREVIEWAO");
+            }
         }
     }
 
@@ -192,12 +218,12 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("3 ▌法线贴图 (Normal Map)", EditorStyles.boldLabel);
         
-        m_MaterialEditor.ShaderProperty(useNormalMap, "使用法线贴图");
+        m_MaterialEditor.ShaderProperty(useNormalMap, "3 ▌使用法线贴图");
         
         if (useNormalMap.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
-            m_MaterialEditor.TextureProperty(bumpMap, "法线贴图");
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), bumpMap);
             m_MaterialEditor.RangeProperty(bumpScale, "法线强度");
             m_MaterialEditor.ShaderProperty(filpG, "翻转绿色通道");
             m_MaterialEditor.ShaderProperty(debugNormal, "调试法线贴图");
@@ -209,13 +235,13 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("4 ▌自发光 (Emission)", EditorStyles.boldLabel);
         
-        m_MaterialEditor.ShaderProperty(useEmissionMap, "使用自发光贴图");
+        m_MaterialEditor.ShaderProperty(useEmissionMap, "4 ▌使用自发光贴图");
         
         if (useEmissionMap.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
-            m_MaterialEditor.ColorProperty(emissionColor, "自发光颜色");
-            m_MaterialEditor.TextureProperty(emissionMap, "自发光贴图");
+            // 将自发光颜色和贴图显示在同一行
+            m_MaterialEditor.TexturePropertyWithHDRColor(new GUIContent("自发光"), emissionMap, emissionColor, false);
             m_MaterialEditor.RangeProperty(emissionScale, "自发光缩放");
             m_MaterialEditor.ShaderProperty(invertEmisMap, "反转自发光贴图");
             EditorGUI.indentLevel--;
@@ -226,12 +252,12 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("5 ▌反射 (Reflection)", EditorStyles.boldLabel);
         
-        m_MaterialEditor.ShaderProperty(useReflection, "使用反射贴图");
+        m_MaterialEditor.ShaderProperty(useReflection, "5 ▌使用反射贴图");
         
         if (useReflection.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
-            m_MaterialEditor.TextureProperty(sphericalReflectionMap, "球形反射贴图");
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("球形反射贴图"),sphericalReflectionMap);
             m_MaterialEditor.RangeProperty(reflectionStrength, "反射强度");
             m_MaterialEditor.RangeProperty(reflectionBlur, "反射模糊");
             m_MaterialEditor.RangeProperty(reflectionFresnelPower, "菲涅尔强度");
@@ -243,7 +269,7 @@ public class PBR_MobileGUI : ShaderGUI
     private void DrawPointLights()
     {
         // GUILayout.Label("6 ▌自定义点光源 (Custom Point Lights)", EditorStyles.boldLabel);
-        m_MaterialEditor.ShaderProperty(usePointlight, "使用点光源");
+        m_MaterialEditor.ShaderProperty(usePointlight, "6 ▌使用点光源");
         
         if (usePointlight.floatValue > 0.5f)
         {
@@ -259,7 +285,7 @@ public class PBR_MobileGUI : ShaderGUI
     private void DrawSpotLights()
     {
         // GUILayout.Label("7 ▌自定义聚光灯 (Custom Spot Lights)", EditorStyles.boldLabel);
-        m_MaterialEditor.ShaderProperty(useSpotlight, "使用聚光灯");
+        m_MaterialEditor.ShaderProperty(useSpotlight, "7 ▌使用聚光灯");
         
         if (useSpotlight.floatValue > 0.5f)
         {
@@ -275,7 +301,7 @@ public class PBR_MobileGUI : ShaderGUI
             if (useSpotTexture.floatValue > 0.5f)
             {
                 EditorGUI.indentLevel++;
-                m_MaterialEditor.TextureProperty(spotTexture, "聚光灯纹理");
+                m_MaterialEditor.TexturePropertySingleLine(new GUIContent("聚光灯纹理"), spotTexture);
                 m_MaterialEditor.RangeProperty(spotTextureContrast, "纹理对比度");
                 m_MaterialEditor.RangeProperty(spotTextureSize, "纹理大小");
                 m_MaterialEditor.RangeProperty(spotTextureIntensity, "纹理强度");
@@ -288,7 +314,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawPerformance()
     {
-        GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
+        // GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
         m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
     }
 }

@@ -1771,7 +1771,15 @@ namespace VicTools
             GUI.backgroundColor = _isScanningResources ? Color.gray : Color.green;
             if (GUILayout.Button(_isScanningResources ? "扫描中..." : "扫描未使用资源", GUILayout.Width(120)))
             {
-                ScanUnusedResources();
+                // 显示确认对话框
+                if (EditorUtility.DisplayDialog(
+                    "确认扫描",
+                    "扫描未使用资源可能需要较长时间，特别是在大型项目中。\n\n是否继续？",
+                    "确定",
+                    "取消"))
+                {
+                    ScanUnusedResources();
+                }
             }
             GUI.backgroundColor = Color.white;
             GUI.enabled = true;
@@ -2028,7 +2036,7 @@ namespace VicTools
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("未使用资源列表:", normalStyle);
                 
-                _resourceScrollPosition = EditorGUILayout.BeginScrollView(_resourceScrollPosition, GUILayout.Height(200));
+                _resourceScrollPosition = EditorGUILayout.BeginScrollView(_resourceScrollPosition, GUILayout.ExpandHeight(true));
                 
                 // 显示筛选后的资源
                 // 使用 ToList() 创建副本，避免在遍历时修改集合
@@ -2053,7 +2061,7 @@ namespace VicTools
                     EditorGUILayout.LabelField(resourcePath, normalStyle, GUILayout.ExpandWidth(true));
                     
                     // GUILayout.FlexibleSpace();
-                    
+                    GUI.backgroundColor = Color.cyan;
                     // 选择按钮
                     if (GUILayout.Button("选择", GUILayout.Width(50)))
                     {
@@ -2090,6 +2098,7 @@ namespace VicTools
                 EditorGUILayout.Space();
                 EditorGUILayout.BeginHorizontal();
                 
+                GUI.backgroundColor = Color.cyan;
                 if (GUILayout.Button("选择所有未使用资源", GUILayout.Width(150)))
                 {
                     SelectAllUnusedResources();

@@ -93,6 +93,9 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Tooltip("启用光斑纹理效果")]
     [SerializeField] private bool _useSpotTexture = false;
     
+    [Tooltip("聚光灯纹理 - 统一控制所有PBR_Mobile材质的光斑纹理")]
+    [SerializeField] private Texture2D _spotTexture = null;
+    
     [Tooltip("光斑纹理对比度")]
     [Range(0.1f, 5)]
     [SerializeField] private float _spotTextureContrast = 1.0f;
@@ -131,6 +134,7 @@ public class ComputeBufferLightManager : MonoBehaviour
         public static readonly int SpotLightAmount = Shader.PropertyToID("_SpotLightAmount");
         
         // ● 光斑纹理相关属性ID
+        public static readonly int SpotTexture = Shader.PropertyToID("_SpotTexture");
         public static readonly int SpotTextureContrast = Shader.PropertyToID("_SpotTextureContrast");
         public static readonly int SpotTextureSize = Shader.PropertyToID("_SpotTextureSize");
         public static readonly int SpotTextureIntensity = Shader.PropertyToID("_SpotTextureIntensity");
@@ -181,7 +185,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     private bool _editorUpdateInitialized = false;
     private float _lastEditorUpdateTime = 0f;
     private float _editorUpdateInterval = 0.1f; // 编辑器模式下默认更新间隔
-    private bool _editorModeActive = false; // 标记编辑器模式是否激活
     
     // ● 存储上一次的参数值，用于检测变化
     private bool _lastUsePointLight;
@@ -198,6 +201,7 @@ public class ComputeBufferLightManager : MonoBehaviour
     
     // ● 光斑纹理相关参数缓存
     private bool _lastUseSpotTexture;
+    private Texture2D _lastSpotTexture;
     private float _lastSpotTextureContrast;
     private float _lastSpotTextureSize;
     private float _lastSpotTextureIntensity;
@@ -409,6 +413,11 @@ public class ComputeBufferLightManager : MonoBehaviour
             changed = true;
         }
         
+        if (_spotTexture != _lastSpotTexture)
+        {
+            changed = true;
+        }
+        
         if (!Mathf.Approximately(_spotTextureContrast, _lastSpotTextureContrast))
         {
             changed = true;
@@ -459,6 +468,7 @@ public class ComputeBufferLightManager : MonoBehaviour
         
         // 缓存光斑纹理相关参数
         _lastUseSpotTexture = _useSpotTexture;
+        _lastSpotTexture = _spotTexture;
         _lastSpotTextureContrast = _spotTextureContrast;
         _lastSpotTextureSize = _spotTextureSize;
         _lastSpotTextureIntensity = _spotTextureIntensity;
@@ -1049,6 +1059,10 @@ public class ComputeBufferLightManager : MonoBehaviour
                 material.SetFloat(ShaderPropertyIDs.SpotLightAmount, _spotLightAmount);
                 
                 // ● 设置光斑纹理浮点参数
+                if (_spotTexture != null)
+                {
+                    material.SetTexture(ShaderPropertyIDs.SpotTexture, _spotTexture);
+                }
                 material.SetFloat(ShaderPropertyIDs.SpotTextureContrast, _spotTextureContrast);
                 material.SetFloat(ShaderPropertyIDs.SpotTextureSize, _spotTextureSize);
                 material.SetFloat(ShaderPropertyIDs.SpotTextureIntensity, _spotTextureIntensity);
@@ -1115,6 +1129,10 @@ public class ComputeBufferLightManager : MonoBehaviour
         material.SetFloat(ShaderPropertyIDs.SpotLightAmount, _spotLightAmount);
         
         // ● 设置光斑纹理数值参数
+        if (_spotTexture != null)
+        {
+            material.SetTexture(ShaderPropertyIDs.SpotTexture, _spotTexture);
+        }
         material.SetFloat(ShaderPropertyIDs.SpotTextureContrast, _spotTextureContrast);
         material.SetFloat(ShaderPropertyIDs.SpotTextureSize, _spotTextureSize);
         material.SetFloat(ShaderPropertyIDs.SpotTextureIntensity, _spotTextureIntensity);
@@ -1173,6 +1191,13 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         return _usePointLight;
     }
+
+    //● 获取聚光照开关状态
+    public bool GetSpotLightEnabled()
+    {
+        return _useSpotLight;
+    }
+
 
 
     //● 设置点光照强度
@@ -1267,6 +1292,141 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             _parametersDirty = true;
         }
+    }
+
+    //● 设置聚光灯纹理
+    public void SetSpotTexture(Texture2D texture)
+    {
+        if (_spotTexture != texture)
+        {
+            _spotTexture = texture;
+            _parametersDirty = true; // 标记参数已变更
+            
+            // 立即更新所有受控材质的纹理
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null && texture != null)
+                {
+                    mat.SetTexture(ShaderPropertyIDs.SpotTexture, texture);
+                }
+            }
+        }
+    }
+
+    //● 获取聚光灯纹理
+    public Texture2D GetSpotTexture()
+    {
+        return _spotTexture;
+    }
+
+    //● 设置是否启用光斑纹理
+    public void SetUseSpotTexture(bool enabled)
+    {
+        if (_useSpotTexture != enabled)
+        {
+            _useSpotTexture = enabled;
+            _parametersDirty = true; // 标记参数已变更
+            
+            // 立即更新所有受控材质的关键字
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null)
+                {
+                    if (enabled)
+                    {
+                        mat.EnableKeyword("_USESPOTTEXTURE");
+                    }
+                    else
+                    {
+                        mat.DisableKeyword("_USESPOTTEXTURE");
+                    }
+                }
+            }
+        }
+    }
+
+    //● 获取是否启用光斑纹理
+    public bool GetUseSpotTexture()
+    {
+        return _useSpotTexture;
+    }
+
+    //● 设置光斑纹理对比度
+    public void SetSpotTextureContrast(float contrast)
+    {
+        float clampedContrast = Mathf.Clamp(contrast, 0.1f, 5f);
+        if (!Mathf.Approximately(_spotTextureContrast, clampedContrast))
+        {
+            _spotTextureContrast = clampedContrast;
+            _parametersDirty = true; // 标记参数已变更
+            
+            // 立即更新所有受控材质的对比度
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null)
+                {
+                    mat.SetFloat(ShaderPropertyIDs.SpotTextureContrast, clampedContrast);
+                }
+            }
+        }
+    }
+
+    //● 获取光斑纹理对比度
+    public float GetSpotTextureContrast()
+    {
+        return _spotTextureContrast;
+    }
+
+    //● 设置光斑纹理大小
+    public void SetSpotTextureSize(float size)
+    {
+        float clampedSize = Mathf.Clamp(size, 0.1f, 1f);
+        if (!Mathf.Approximately(_spotTextureSize, clampedSize))
+        {
+            _spotTextureSize = clampedSize;
+            _parametersDirty = true; // 标记参数已变更
+            
+            // 立即更新所有受控材质的大小
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null)
+                {
+                    mat.SetFloat(ShaderPropertyIDs.SpotTextureSize, clampedSize);
+                }
+            }
+        }
+    }
+
+    //● 获取光斑纹理大小
+    public float GetSpotTextureSize()
+    {
+        return _spotTextureSize;
+    }
+
+    //● 设置光斑纹理强度
+    public void SetSpotTextureIntensity(float intensity)
+    {
+        float clampedIntensity = Mathf.Clamp(intensity, 0f, 2f);
+        if (!Mathf.Approximately(_spotTextureIntensity, clampedIntensity))
+        {
+            _spotTextureIntensity = clampedIntensity;
+            _parametersDirty = true; // 标记参数已变更
+            
+            // 立即更新所有受控材质的强度
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null)
+                {
+                    mat.SetFloat(ShaderPropertyIDs.SpotTextureIntensity, clampedIntensity);
+                }
+            }
+        }
+    }
+
+    //● 获取光斑纹理强度
+    public float GetSpotTextureIntensity()
+    {
+        return _spotTextureIntensity;
     }
 
 
@@ -1849,8 +2009,6 @@ public class ComputeBufferLightManager : MonoBehaviour
                 UpdateSpotLightsBuffer(); // 立即更新聚光灯
             }
             
-            // ● 标记编辑器模式为激活状态
-            _editorModeActive = true;
             Debug.Log("编辑器模式点光灯系统已激活");
         }
     }
@@ -1995,9 +2153,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     //当用户在Inspector中修改targetMaterials列表时，确保_controlledMaterials同步更新
     private void SyncControlledMaterials()
     {
-        // ● 检查是否需要同步
-        bool needsSync = false;
-        
         // ● 首先清理两个列表中的null材质，防止编辑器序列化错误
         _controlledMaterials.RemoveAll(material => material == null);
         targetMaterials.RemoveAll(material => material == null);
@@ -2009,7 +2164,6 @@ public class ComputeBufferLightManager : MonoBehaviour
             if (material != null && !targetMaterials.Contains(material))
             {
                 materialsToRemove.Add(material);
-                needsSync = true;
             }
         }
         
@@ -2030,7 +2184,6 @@ public class ComputeBufferLightManager : MonoBehaviour
             if (material != null && !_controlledMaterials.Contains(material))
             {
                 _controlledMaterials.Add(material);
-                needsSync = true;
                 // ● 立即应用当前参数设置到新材质
                 SetMaterialParameters(material);
             }
