@@ -1172,6 +1172,7 @@ public class ComputeBufferTool : EditorWindow
                 bool usePointLight = _manager.GetPointLightEnabled();
                 bool useSpotLight = _manager.GetSpotLightEnabled();
                 bool useSpotTexture = _manager.GetUseSpotTexture();
+                Texture2D spotTexture = _manager.GetSpotTexture();
                 
                 if (material.HasProperty("_UsePointlight"))
                 {
@@ -1210,6 +1211,12 @@ public class ComputeBufferTool : EditorWindow
                     {
                         material.DisableKeyword("_USESPOTTEXTURE");
                     }
+                }
+                
+                // 设置聚光灯纹理
+                if (spotTexture != null && material.HasProperty("_SpotTexture"))
+                {
+                    material.SetTexture("_SpotTexture", spotTexture);
                 }
                 
                 EditorUtility.SetDirty(material);

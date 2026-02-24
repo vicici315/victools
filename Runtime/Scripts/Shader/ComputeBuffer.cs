@@ -124,10 +124,17 @@ public class ComputeBufferLightManager : MonoBehaviour
     // ● Shader属性ID缓存（性能优化）
     private static class ShaderPropertyIDs
     {
+        // ● 开关属性ID
+        public static readonly int UsePointlight = Shader.PropertyToID("_UsePointlight");
+        public static readonly int UseSpotlight = Shader.PropertyToID("_UseSpotlight");
+        public static readonly int UseSpotTexture = Shader.PropertyToID("_UseSpotTexture");
+        
+        // ● 点光照参数ID
         public static readonly int PointLightIntensity = Shader.PropertyToID("_PointLightIntensity");
         public static readonly int PointLightRangeMultiplier = Shader.PropertyToID("_PointLightRangeMultiplier");
         public static readonly int PointLightFalloff = Shader.PropertyToID("_PointLightFalloff");
         
+        // ● 聚光照参数ID
         public static readonly int SpotLightIntensity = Shader.PropertyToID("_SpotLightIntensity");
         public static readonly int SpotLightRangeMultiplier = Shader.PropertyToID("_SpotLightRangeMultiplier");
         public static readonly int SpotLightFalloff = Shader.PropertyToID("_SpotLightFalloff");
@@ -360,10 +367,26 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         bool changed = false;
         
-        // ● 检查每个参数是否与上一次缓存的值不同
+        // ● 检查点光照开关变化并立即同步材质
         if (_usePointLight != _lastUsePointLight)
         {
             changed = true;
+            // 立即同步更新所有材质的点光照开关
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UsePointlight))
+                {
+                    mat.SetFloat(ShaderPropertyIDs.UsePointlight, _usePointLight ? 1 : 0);
+                    if (_usePointLight)
+                    {
+                        mat.EnableKeyword(POINT_LIGHT_KEYWORD);
+                    }
+                    else
+                    {
+                        mat.DisableKeyword(POINT_LIGHT_KEYWORD);
+                    }
+                }
+            }
         }
         
         if (!Mathf.Approximately(_pointLightIntensity, _lastPointLightIntensity))
@@ -381,10 +404,26 @@ public class ComputeBufferLightManager : MonoBehaviour
             changed = true;
         }
         
-        // ● 检查聚光灯相关参数变化
+        // ● 检查聚光照开关变化并立即同步材质
         if (_useSpotLight != _lastUseSpotLight)
         {
             changed = true;
+            // 立即同步更新所有材质的聚光照开关
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotlight))
+                {
+                    mat.SetFloat(ShaderPropertyIDs.UseSpotlight, _useSpotLight ? 1 : 0);
+                    if (_useSpotLight)
+                    {
+                        mat.EnableKeyword(SPOT_LIGHT_KEYWORD);
+                    }
+                    else
+                    {
+                        mat.DisableKeyword(SPOT_LIGHT_KEYWORD);
+                    }
+                }
+            }
         }
         
         if (!Mathf.Approximately(_spotLightIntensity, _lastSpotLightIntensity))
@@ -407,15 +446,42 @@ public class ComputeBufferLightManager : MonoBehaviour
             changed = true;
         }
         
-        // ● 检查光斑纹理参数变化
+        // ● 检查光斑纹理开关变化并立即同步材质
         if (_useSpotTexture != _lastUseSpotTexture)
         {
             changed = true;
+            // 立即同步更新所有材质的光斑纹理开关
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotTexture))
+                {
+                    mat.SetFloat(ShaderPropertyIDs.UseSpotTexture, _useSpotTexture ? 1 : 0);
+                    if (_useSpotTexture)
+                    {
+                        mat.EnableKeyword("_USESPOTTEXTURE");
+                    }
+                    else
+                    {
+                        mat.DisableKeyword("_USESPOTTEXTURE");
+                    }
+                }
+            }
         }
         
         if (_spotTexture != _lastSpotTexture)
         {
             changed = true;
+            // 立即同步更新所有材质的聚光灯纹理
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null)
+                {
+                    if (_spotTexture != null)
+                    {
+                        mat.SetTexture(ShaderPropertyIDs.SpotTexture, _spotTexture);
+                    }
+                }
+            }
         }
         
         if (!Mathf.Approximately(_spotTextureContrast, _lastSpotTextureContrast))
@@ -491,8 +557,15 @@ public class ComputeBufferLightManager : MonoBehaviour
         // ● 安全检查：确保Compute Buffer已正确初始化
         if (_lightsBuffer == null || _lightsData == null)
         {
-            Debug.LogWarning("Compute Buffer未正确初始化，跳过更新");
-            return _currentLightCount;
+            Debug.LogWarning("PointLight Compute Buffer未正确初始化，重新初始化");
+            InitializeComputeBuffer();
+            
+            // 重新检查初始化是否成功
+            if (_lightsBuffer == null || _lightsData == null)
+            {
+                Debug.LogWarning("PointLight Compute Buffer重新初始化失败，跳过更新");
+                return _currentLightCount;
+            }
         }
         
         _currentLightCount = 0;
@@ -1017,7 +1090,11 @@ public class ComputeBufferLightManager : MonoBehaviour
             
             try
             {
-                // ● 设置Shader关键字（对应Properties中的Toggle）
+                // ● 设置点光照开关（属性值和关键字）
+                if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
+                {
+                    material.SetFloat(ShaderPropertyIDs.UsePointlight, _usePointLight ? 1 : 0);
+                }
                 if (_usePointLight)
                 {
                     material.EnableKeyword(POINT_LIGHT_KEYWORD);
@@ -1027,7 +1104,11 @@ public class ComputeBufferLightManager : MonoBehaviour
                     material.DisableKeyword(POINT_LIGHT_KEYWORD);
                 }
                 
-                // ● 设置SpotLight关键字
+                // ● 设置聚光照开关（属性值和关键字）
+                if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
+                {
+                    material.SetFloat(ShaderPropertyIDs.UseSpotlight, _useSpotLight ? 1 : 0);
+                }
                 if (_useSpotLight)
                 {
                     material.EnableKeyword(SPOT_LIGHT_KEYWORD);
@@ -1037,7 +1118,11 @@ public class ComputeBufferLightManager : MonoBehaviour
                     material.DisableKeyword(SPOT_LIGHT_KEYWORD);
                 }
                 
-                // ● 设置SpotLight Texture关键字
+                // ● 设置光斑纹理开关（属性值和关键字）
+                if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
+                {
+                    material.SetFloat(ShaderPropertyIDs.UseSpotTexture, _useSpotTexture ? 1 : 0);
+                }
                 if (_useSpotTexture)
                 {
                     material.EnableKeyword("_USESPOTTEXTURE");
@@ -1087,7 +1172,11 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         if (material == null) return;
         
-        // ● 设置关键字状态
+        // ● 设置点光照开关（属性值和关键字）
+        if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
+        {
+            material.SetFloat(ShaderPropertyIDs.UsePointlight, _usePointLight ? 1 : 0);
+        }
         if (_usePointLight)
         {
             material.EnableKeyword(POINT_LIGHT_KEYWORD);
@@ -1097,7 +1186,11 @@ public class ComputeBufferLightManager : MonoBehaviour
             material.DisableKeyword(POINT_LIGHT_KEYWORD);
         }
         
-        // ● 设置SpotLight关键字状态
+        // ● 设置聚光照开关（属性值和关键字）
+        if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
+        {
+            material.SetFloat(ShaderPropertyIDs.UseSpotlight, _useSpotLight ? 1 : 0);
+        }
         if (_useSpotLight)
         {
             material.EnableKeyword(SPOT_LIGHT_KEYWORD);
@@ -1107,7 +1200,11 @@ public class ComputeBufferLightManager : MonoBehaviour
             material.DisableKeyword(SPOT_LIGHT_KEYWORD);
         }
         
-        // ● 设置SpotLight Texture关键字状态
+        // ● 设置光斑纹理开关（属性值和关键字）
+        if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
+        {
+            material.SetFloat(ShaderPropertyIDs.UseSpotTexture, _useSpotTexture ? 1 : 0);
+        }
         if (_useSpotTexture)
         {
             material.EnableKeyword("_USESPOTTEXTURE");
@@ -1183,6 +1280,23 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             _usePointLight = enabled;
             _parametersDirty = true; // 标记参数已变更
+            
+            // 立即同步更新所有材质的点光照开关
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UsePointlight))
+                {
+                    mat.SetFloat(ShaderPropertyIDs.UsePointlight, enabled ? 1 : 0);
+                    if (enabled)
+                    {
+                        mat.EnableKeyword(POINT_LIGHT_KEYWORD);
+                    }
+                    else
+                    {
+                        mat.DisableKeyword(POINT_LIGHT_KEYWORD);
+                    }
+                }
+            }
         }
     }
 
@@ -1190,6 +1304,33 @@ public class ComputeBufferLightManager : MonoBehaviour
     public bool GetPointLightEnabled()
     {
         return _usePointLight;
+    }
+
+    //● 设置聚光照开关状态
+    public void SetSpotLightEnabled(bool enabled)
+    {
+        if (_useSpotLight != enabled)
+        {
+            _useSpotLight = enabled;
+            _parametersDirty = true; // 标记参数已变更
+            
+            // 立即同步更新所有材质的聚光照开关
+            foreach (Material mat in targetMaterials)
+            {
+                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotlight))
+                {
+                    mat.SetFloat(ShaderPropertyIDs.UseSpotlight, enabled ? 1 : 0);
+                    if (enabled)
+                    {
+                        mat.EnableKeyword(SPOT_LIGHT_KEYWORD);
+                    }
+                    else
+                    {
+                        mat.DisableKeyword(SPOT_LIGHT_KEYWORD);
+                    }
+                }
+            }
+        }
     }
 
     //● 获取聚光照开关状态
@@ -1327,11 +1468,12 @@ public class ComputeBufferLightManager : MonoBehaviour
             _useSpotTexture = enabled;
             _parametersDirty = true; // 标记参数已变更
             
-            // 立即更新所有受控材质的关键字
+            // 立即更新所有受控材质的光斑纹理开关
             foreach (Material mat in targetMaterials)
             {
-                if (mat != null)
+                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotTexture))
                 {
+                    mat.SetFloat(ShaderPropertyIDs.UseSpotTexture, enabled ? 1 : 0);
                     if (enabled)
                     {
                         mat.EnableKeyword("_USESPOTTEXTURE");
@@ -1619,7 +1761,6 @@ public class ComputeBufferLightManager : MonoBehaviour
 
     private IEnumerator BounceAnimationCoroutine()
     {
-        bool goingUp = true;
         float currentTime = 0f;
         
         while (true)
