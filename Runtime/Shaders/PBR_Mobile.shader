@@ -47,7 +47,7 @@ Shader "Custom/PBR_Mobile"
         _OcclusionStrength  ("AO Strength", Range(0, 1)) = 0.5
         [Toggle(_PREVIEWAO)] _PreviewAOMap ("Preview AO(B) Channel", Float) = 0
 
-        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
+        [Header(........................................................)]
         [Space(5)]
         [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
@@ -55,7 +55,7 @@ Shader "Custom/PBR_Mobile"
         [Toggle(_FILPG)] _FilpG("Filp Green Channel", Float) = 0
         [Toggle(_DEBUGNORMAL)] _DebugNormal("Debug Normal Map", Float) = 0
         
-        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
+        [Header(........................................................)]
         [Space(5)]
         [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
         [HDR]_EmissionColor ("Emission Color", Color) = (1,1,1,1)
@@ -63,7 +63,7 @@ Shader "Custom/PBR_Mobile"
         _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
         [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0   
         
-        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
+        [Header(........................................................)]
         [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
@@ -73,7 +73,7 @@ Shader "Custom/PBR_Mobile"
         _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
         _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
         
-        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
+        [Header(........................................................)]
         [Space(5)]
         [Toggle(_USEPOINTLIGHT)] _UsePointlight("Use Point Lighting", Float) = 0
         _PointLightIntensity ("Point Light Intensity", Range(0, 8)) = 1.0
@@ -94,8 +94,9 @@ Shader "Custom/PBR_Mobile"
         _SpotTextureSize ("Spot Texture Size", Range(0.1, 1)) = 0.5
         _SpotTextureIntensity ("Spot Texture Intensity", Range(0, 2)) = 1.0
 
-        [Header(cccccccccccccccccccccccccccccccccccccccccccco)]
+        [Header(........................................................)]
         [Space(5)]
+        [HideInInspector]_Cutoff("Alpha Cutoff", Range(0.001, 1.0)) = 0.5
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
         
         [HideInInspector][NoScaleOffset]unity_Lightmaps("unity_Lightmaps", 2DArray) = "" {}

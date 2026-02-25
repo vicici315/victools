@@ -5,6 +5,7 @@ public class PBR_MobileGUI : ShaderGUI
 {
     private MaterialEditor m_MaterialEditor;
     private MaterialProperty[] m_Properties;
+    private bool isTransShader = false; // 标记是否为 Trans 版本的 Shader
 
     // 缓存属性
     private MaterialProperty disableEnvironment;
@@ -56,30 +57,48 @@ public class PBR_MobileGUI : ShaderGUI
     private MaterialProperty spotTextureSize;
     private MaterialProperty spotTextureIntensity;
     private MaterialProperty cullMode;
+    private MaterialProperty _Cutoff;
 
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
     {
         m_MaterialEditor = materialEditor;
         m_Properties = properties;
 
+        // 检测是否为 Trans 版本的 Shader
+        Material material = materialEditor.target as Material;
+        if (material != null && material.shader != null)
+        {
+            isTransShader = material.shader.name.Contains("PBR_Mobile_Trans");
+        }
+
         // 查找所有属性
         FindProperties();
 
         // 绘制 GUI
         DrawGlobalSettings();
+        
         // EditorGUILayout.Space(5);
         DrawBaseProperties();
+        if (isTransShader)
+        {
+            DrawAlphaCull();
+        }
         DrawMetallicRoughnessAO();
         // EditorGUILayout.Space(5);
         DrawNormalMap();
         // EditorGUILayout.Space(5);
         DrawEmission();
         // EditorGUILayout.Space(5);
-        DrawReflection();
-        // EditorGUILayout.Space(5);
-        DrawPointLights();
-        // EditorGUILayout.Space(5);
-        DrawSpotLights();
+        
+        // 只在非 Trans 版本显示反射
+        if (!isTransShader)
+        {
+            DrawReflection();
+            DrawPointLights();
+            DrawSpotLights();
+            // EditorGUILayout.Space(5);
+        }        
+        
         EditorGUILayout.Space(5);
         DrawPerformance();
     }
@@ -135,13 +154,23 @@ public class PBR_MobileGUI : ShaderGUI
         spotTextureSize = FindProperty("_SpotTextureSize", m_Properties);
         spotTextureIntensity = FindProperty("_SpotTextureIntensity", m_Properties);
         cullMode = FindProperty("_Cull", m_Properties);
+        _Cutoff = FindProperty("_Cutoff", m_Properties);
     }
 
     private void DrawGlobalSettings()
     {
         GUILayout.Label("全局设置", EditorStyles.boldLabel);
-        m_MaterialEditor.ShaderProperty(disableEnvironment, "禁用环境光");
-        m_MaterialEditor.ShaderProperty(useVerShadow, "使用顶点阴影");
+        
+        // 只在非 Trans 版本显示禁用环境光选项
+        if (!isTransShader && disableEnvironment != null)
+        {
+            m_MaterialEditor.ShaderProperty(disableEnvironment, "禁用环境光");
+        }
+        
+        if (useVerShadow != null)
+        {
+            m_MaterialEditor.ShaderProperty(useVerShadow, "使用顶点阴影");
+        }
     }
 
     private void DrawBaseProperties()
@@ -153,7 +182,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawMetallicRoughnessAO()
     {
-        GUILayout.Label("2 ▌金属度 粗糙度 AO (Metallic Roughness AO)", EditorStyles.boldLabel);
+        GUILayout.Label("2 ▌PBR参数 (Metallic Roughness AO)", EditorStyles.boldLabel);
         
         m_MaterialEditor.RangeProperty(metallic, "金属度");
         m_MaterialEditor.RangeProperty(roughness, "粗糙度");
@@ -161,11 +190,17 @@ public class PBR_MobileGUI : ShaderGUI
         m_MaterialEditor.RangeProperty(halfLambert, "半兰伯特");
         m_MaterialEditor.RangeProperty(shadowScale, "自身阴影强度");
         m_MaterialEditor.RangeProperty(brightness, "亮度");
-        if (disableEnvironment.floatValue < 0.5f)
+        
+        // 只在非 Trans 版本显示烘焙高光方向
+        if (!isTransShader && disableEnvironment != null && disableEnvironment.floatValue < 0.5f && bakedSpecularDirection != null)
         {
             m_MaterialEditor.VectorProperty(bakedSpecularDirection, "烘焙高光方向");
         }
-        m_MaterialEditor.ShaderProperty(useMsaMap, "  使用金属度粗糙度贴图");
+        
+        if (useMsaMap != null)
+        {
+            m_MaterialEditor.ShaderProperty(useMsaMap, "  使用金属度粗糙度贴图");
+        }
         
         if (useMsaMap.floatValue > 0.5f)
         {
@@ -225,8 +260,18 @@ public class PBR_MobileGUI : ShaderGUI
             EditorGUI.indentLevel++;
             m_MaterialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), bumpMap);
             m_MaterialEditor.RangeProperty(bumpScale, "法线强度");
-            m_MaterialEditor.ShaderProperty(filpG, "翻转绿色通道");
-            m_MaterialEditor.ShaderProperty(debugNormal, "调试法线贴图");
+            
+            if (filpG != null)
+            {
+                m_MaterialEditor.ShaderProperty(filpG, "翻转绿色通道");
+            }
+            
+            // 只在非 Trans 版本显示调试法线贴图
+            if (!isTransShader && debugNormal != null)
+            {
+                m_MaterialEditor.ShaderProperty(debugNormal, "调试法线贴图");
+            }
+            
             EditorGUI.indentLevel--;
         }
     }
@@ -312,6 +357,10 @@ public class PBR_MobileGUI : ShaderGUI
         }
     }
 
+    private void DrawAlphaCull()
+    {
+        m_MaterialEditor.ShaderProperty(_Cutoff, "透明阈值");
+    }
     private void DrawPerformance()
     {
         // GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
