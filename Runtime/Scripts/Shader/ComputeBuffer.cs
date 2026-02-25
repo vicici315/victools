@@ -1074,9 +1074,9 @@ public class ComputeBufferLightManager : MonoBehaviour
     public void UpdateAllMaterials()
     {
         // ● 安全检查：清理null材质引用
-        _controlledMaterials.RemoveAll(material => material == null);
+        targetMaterials.RemoveAll(material => material == null);
         
-        if (_controlledMaterials.Count == 0)
+        if (targetMaterials.Count == 0)
         {
             Debug.LogWarning("没有找到需要更新的材质");
             return;
@@ -1084,7 +1084,7 @@ public class ComputeBufferLightManager : MonoBehaviour
 
         int updatedCount = 0;
         
-        foreach (Material material in _controlledMaterials)
+        foreach (Material material in targetMaterials)
         {
             if (material == null) continue;
             
@@ -2312,10 +2312,29 @@ public class ComputeBufferLightManager : MonoBehaviour
         foreach (var material in materialsToRemove)
         {
             _controlledMaterials.Remove(material);
-            // ● 对于被移除的材质，禁用点光源效果
+            // ● 对于被移除的材质，禁用所有灯光效果
             if (material != null)
             {
+                // 禁用点光源
+                if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
+                {
+                    material.SetFloat(ShaderPropertyIDs.UsePointlight, 0);
+                }
                 material.DisableKeyword(POINT_LIGHT_KEYWORD);
+                
+                // 禁用聚光灯
+                if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
+                {
+                    material.SetFloat(ShaderPropertyIDs.UseSpotlight, 0);
+                }
+                material.DisableKeyword(SPOT_LIGHT_KEYWORD);
+                
+                // 禁用光斑纹理
+                if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
+                {
+                    material.SetFloat(ShaderPropertyIDs.UseSpotTexture, 0);
+                }
+                material.DisableKeyword("_USESPOTTEXTURE");
             }
         }
         
