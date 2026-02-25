@@ -73,41 +73,6 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - 优化用户界面
 
 
-
-## 目录结构
-
-```
-com.youdoo.victools/
-├── Editor/                    # 编辑器工具
-│   ├── Vic.Editor.asmdef     # 编辑器程序集定义
-│   └── VicTools/             # 主要工具集
-│       ├── ComputeBufferTool.cs          # Compute Buffer 工具
-│       ├── ProjectTools.cs               # 项目工具
-│       ├── ScenePerformanceAnalyzer.cs   # 场景性能分析器
-│       ├── ScenesTools.cs                # 场景工具（核心）
-│       ├── SceneTools.cs                 # 场景工具辅助
-│       ├── SearchHistoryManager.cs       # 搜索历史管理器
-│       ├── ShaderMaterialFinder.cs       # 着色器材质查找器
-│       ├── VicToolsHelpWindow.cs         # 帮助窗口
-│       ├── VicToolsStyle.cs              # 工具样式定义
-│       ├── VicToolsWindow.cs             # 主窗口（核心）
-│       ├── win_ScenesTools.cs            # 独立场景工具窗口
-│       ├── win_ShaderMaterialFinder.cs   # 独立着色器材质查找器窗口
-│       ├── winScenePerformanceAnalyzer.cs # 独立性能分析器窗口
-│       └── 图标资源文件
-├── Runtime/                  # 运行时组件
-│   ├── Vic.Runtim.asmdef    # 运行时程序集定义
-│   ├── Scripts/             # 运行时脚本
-│   │   └── Shader/
-│   │       └── ComputeBuffer.cs  # Compute Buffer 管理器
-│   └── Shaders/             # 自定义着色器
-│       ├── AddTrans.shader              # 透明叠加着色器
-│       ├── Glass_MobileNew.shader       # 移动端玻璃着色器
-│       ├── PBR_Mobile_Trans.shader      # 透明 PBR 着色器
-│       └── PBR_Mobile.shader            # PBR 移动端着色器（核心）
-└── package.json             # 包配置文件
-```
-
 ## 主要功能模块
 
 ### 1. 场景工具 (ScenesTools)

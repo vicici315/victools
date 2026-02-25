@@ -101,7 +101,7 @@ public class ResourceBoxFileItem
         private bool _selMissMat = false;
         private bool _selMissScript = false;
         // 二级选项
-        private bool _selAct = false;
+        private bool _selAct = true;
         private bool _selMeshObj = true;
         private bool _selParticleObj = false;
         private bool _selParent = false;
@@ -1071,7 +1071,7 @@ public class ResourceBoxFileItem
             _selMeshObj = base.CreateToggleWithStyle(new GUIContent("isMesh", "挑选 模型 对象"), _selMeshObj, null, null, null, null, 50, 20);
             _selParticleObj = base.CreateToggleWithStyle(new GUIContent("Particle", "挑选 粒子 对象"), _selParticleObj, null, null, null, null, 55, 20);
             _selParent = base.CreateToggleWithStyle(new GUIContent("Parent", "选中 父对象"), _selParent, null, null, null, null, 50, 20);
-            if (GUILayout.Button("Off", GUILayout.Width(40), GUILayout.ExpandWidth(false)))
+            if (GUILayout.Button("Reset", GUILayout.Width(45), GUILayout.ExpandWidth(false)))
             {
                 _selPrefab = false;
                 _selMesh = false;
@@ -1081,6 +1081,7 @@ public class ResourceBoxFileItem
                 _selMeshObj = false;
                 _selParticleObj = false;
                 _selParent = false;
+                _selAct = true;
             }
             // 处理自动勾选逻辑
             /*
