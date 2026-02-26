@@ -912,6 +912,7 @@ public class ResourceBoxFileItem
                             if (obj is SceneAsset)
                             {
                                 GUI.backgroundColor = Color.black;
+                                // 打开场景按钮
                                 if (GUILayout.Button("□", GUILayout.Width(20), GUILayout.ExpandWidth(false)))
                                 {
                                     // 打开场景
@@ -922,6 +923,10 @@ public class ResourceBoxFileItem
                                         if (UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
                                         {
                                             UnityEditor.SceneManagement.EditorSceneManager.OpenScene(scenePath);
+                                            //刷新→
+                                            RefreshAvailableFiles();
+                                            LoadResourceBox();
+                                            RecheckNullObjectsInResourceBox();
                                         }
                                     }
                                 }

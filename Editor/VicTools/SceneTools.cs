@@ -557,7 +557,7 @@ namespace VicTools
             
             if (selectedObjects.Length == 0)
             {
-                Debug.LogWarning("无法赋予材质：场景中没有选中的模型");
+                // Debug.LogWarning("无法赋予材质：场景中没有选中的模型");
                 EditorUtility.DisplayDialog("赋予材质失败", "请先在场景中选择要赋予材质的模型", "确定");
                 return;
             }

@@ -54,6 +54,9 @@ namespace VicTools
         private bool _isSingleSelectMode = false; // 单选模式状态
         private bool _scanAllScenes = false; // 是否扫描项目中的所有场景文件（而不仅仅是 Build Settings 中的）
         
+        // 资源依赖信息 - 在扫描时收集，删除时使用
+        private readonly Dictionary<string, List<string>> _resourceReferences = new(); // 资源 -> 引用它的资源列表
+        
         // 用户可配置的排除列表
         private readonly List<string> _excludedPaths = new(); // 排除的路径列表
         private readonly List<string> _excludedPatterns = new(); // 排除的模式（通配符）
@@ -255,8 +258,48 @@ namespace VicTools
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
 
             // 第三行开关 - 资源利用率检查
-            _showResourceUtilization = CreateToggleWithStyle("资源利用率检查", _showResourceUtilization,
-                (newValue) => { _showResourceUtilization = newValue; }, null, null, null, 100, 20);
+            bool newShowResourceUtilization = CreateToggleWithStyle("资源利用检查", _showResourceUtilization,
+                null, null, null, null, 90, 20);
+            
+            // 检测状态变化
+            if (newShowResourceUtilization != _showResourceUtilization)
+            {
+                string prefix = "VicTools.ScenePerformanceAnalyzer.";
+                
+                if (newShowResourceUtilization)
+                {
+                    // 激活资源利用检查时，先保存当前状态到备份键
+                    EditorPrefs.SetBool(prefix + "Backup.ShowSelectedObjectInfo", _showSelectedObjectInfo);
+                    EditorPrefs.SetBool(prefix + "Backup.ShowSceneInfo", _showSceneInfo);
+                    EditorPrefs.SetBool(prefix + "Backup.ShowMemoryUsage", _showMemoryUsage);
+                    EditorPrefs.SetBool(prefix + "Backup.ShowObjectStatistics", _showObjectStatistics);
+                    EditorPrefs.SetBool(prefix + "Backup.ShowGlobalIllumination", _showGlobalIllumination);
+                    EditorPrefs.SetBool(prefix + "Backup.ShowPerformanceWarnings", _showPerformanceWarnings);
+                    EditorPrefs.SetBool(prefix + "Backup.ShowDetailedStatisticsSection", _showDetailedStatisticsSection);
+                    
+                    // 然后关闭所有其他模块
+                    _showSelectedObjectInfo = false;
+                    _showSceneInfo = false;
+                    _showMemoryUsage = false;
+                    _showObjectStatistics = false;
+                    _showGlobalIllumination = false;
+                    _showPerformanceWarnings = false;
+                    _showDetailedStatisticsSection = false;
+                }
+                else
+                {
+                    // 关闭资源利用检查时，从备份键恢复设置
+                    _showSelectedObjectInfo = EditorPrefs.GetBool(prefix + "Backup.ShowSelectedObjectInfo", true);
+                    _showSceneInfo = EditorPrefs.GetBool(prefix + "Backup.ShowSceneInfo", true);
+                    _showMemoryUsage = EditorPrefs.GetBool(prefix + "Backup.ShowMemoryUsage", true);
+                    _showObjectStatistics = EditorPrefs.GetBool(prefix + "Backup.ShowObjectStatistics", true);
+                    _showGlobalIllumination = EditorPrefs.GetBool(prefix + "Backup.ShowGlobalIllumination", true);
+                    _showPerformanceWarnings = EditorPrefs.GetBool(prefix + "Backup.ShowPerformanceWarnings", true);
+                    _showDetailedStatisticsSection = EditorPrefs.GetBool(prefix + "Backup.ShowDetailedStatisticsSection", true);
+                }
+                
+                _showResourceUtilization = newShowResourceUtilization;
+            }
 
             EditorGUILayout.EndHorizontal();
 
@@ -1752,7 +1795,8 @@ namespace VicTools
         /// </summary>
         private void DrawResourceUtilizationSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
-            EditorGUILayout.BeginVertical(areaStyle);
+            // 父容器也需要设置 ExpandHeight，才能让子元素的 ExpandHeight 生效
+            EditorGUILayout.BeginVertical(areaStyle, GUILayout.ExpandHeight(true));
             EditorGUILayout.LabelField("未使用资源检查", subheadingStyle);
             
             // 显示上次扫描时间
@@ -1815,6 +1859,9 @@ namespace VicTools
                 // 排除路径列表
                 EditorGUILayout.LabelField("排除的路径:", normalStyle);
                 _exclusionScrollPosition = EditorGUILayout.BeginScrollView(_exclusionScrollPosition, GUILayout.Height(100));
+                
+                // 使用临时变量记录要删除的索引，避免在循环中直接删除导致 GUI 错误
+                int pathToRemove = -1;
                 for (int i = 0; i < _excludedPaths.Count; i++)
                 {
                     EditorGUILayout.BeginHorizontal();
@@ -1822,13 +1869,18 @@ namespace VicTools
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button("删除", GUILayout.Width(50)))
                     {
-                        _excludedPaths.RemoveAt(i);
-                        SaveExclusionSettings();
-                        break;
+                        pathToRemove = i;
                     }
                     EditorGUILayout.EndHorizontal();
                 }
                 EditorGUILayout.EndScrollView();
+                
+                // 在循环外删除，确保 GUI 布局完整
+                if (pathToRemove >= 0)
+                {
+                    _excludedPaths.RemoveAt(pathToRemove);
+                    SaveExclusionSettings();
+                }
                 
                 // 添加新排除路径 - 支持手动输入和Project窗口选择
                 EditorGUILayout.BeginHorizontal();
@@ -1857,6 +1909,9 @@ namespace VicTools
                 // 排除模式列表
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("排除的模式 (通配符):", normalStyle);
+                
+                // 使用临时变量记录要删除的索引
+                int patternToRemove = -1;
                 for (int i = 0; i < _excludedPatterns.Count; i++)
                 {
                     EditorGUILayout.BeginHorizontal();
@@ -1864,11 +1919,16 @@ namespace VicTools
                     GUILayout.FlexibleSpace();
                     if (GUILayout.Button("删除", GUILayout.Width(50)))
                     {
-                        _excludedPatterns.RemoveAt(i);
-                        SaveExclusionSettings();
-                        break;
+                        patternToRemove = i;
                     }
                     EditorGUILayout.EndHorizontal();
+                }
+                
+                // 在循环外删除，确保 GUI 布局完整
+                if (patternToRemove >= 0)
+                {
+                    _excludedPatterns.RemoveAt(patternToRemove);
+                    SaveExclusionSettings();
                 }
                 
                 // 添加新排除模式
@@ -2036,7 +2096,12 @@ namespace VicTools
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("未使用资源列表:", normalStyle);
                 
-                _resourceScrollPosition = EditorGUILayout.BeginScrollView(_resourceScrollPosition, GUILayout.ExpandHeight(true));
+                // 使用 ExpandHeight 让列表自动扩展填充可用空间
+                // 如果需要最小高度，可以在列表为空时添加占位空间
+                _resourceScrollPosition = EditorGUILayout.BeginScrollView(
+                    _resourceScrollPosition,
+                    GUILayout.ExpandHeight(true)
+                );
                 
                 // 显示筛选后的资源
                 // 使用 ToList() 创建副本，避免在遍历时修改集合
@@ -2054,11 +2119,27 @@ namespace VicTools
                         continue; // 跳过未选中的类型
                     }
                     
+                    // 检查资源是否被引用
+                    bool isReferenced = _resourceReferences.ContainsKey(resourcePath);
+                    
                     EditorGUILayout.BeginHorizontal();
                     
+                    // 如果资源被引用，使用黄色背景标记
+                    if (isReferenced)
+                    {
+                        GUI.backgroundColor = new Color(1f, 1f, 0.7f); // 浅黄色
+                    }
+                    
                     // 显示资源路径
-                    EditorGUILayout.LabelField(Path.GetFileName(resourcePath), normalStyle, GUILayout.Width(150));
+                    string displayName = Path.GetFileName(resourcePath);
+                    if (isReferenced)
+                    {
+                        displayName += " [被引用]";
+                    }
+                    EditorGUILayout.LabelField(displayName, normalStyle, GUILayout.Width(200));
                     EditorGUILayout.LabelField(resourcePath, normalStyle, GUILayout.ExpandWidth(true));
+                    
+                    GUI.backgroundColor = Color.white;
                     
                     // GUILayout.FlexibleSpace();
                     GUI.backgroundColor = Color.cyan;
@@ -2068,16 +2149,34 @@ namespace VicTools
                         SelectResource(resourcePath);
                     }
                     
-                    // 删除按钮
-                    GUI.backgroundColor = Color.red;
+                    // 删除按钮 - 如果被引用则显示为灰色
+                    if (isReferenced)
+                    {
+                        GUI.backgroundColor = Color.gray;
+                        GUI.enabled = false;
+                    }
+                    else
+                    {
+                        GUI.backgroundColor = Color.red;
+                    }
+                    
                     if (GUILayout.Button("删除", GUILayout.Width(50)))
                     {
                         resourceToDelete = resourcePath;
                     }
+                    
+                    GUI.enabled = true;
                     GUI.backgroundColor = Color.white;
                     
                     EditorGUILayout.EndHorizontal();
                     displayedCount++;
+                }
+                
+                // 添加占位空间，确保滚动视图有最小高度（约6行）
+                // 只有在显示的资源很少时才需要
+                if (displayedCount < 6)
+                {
+                    GUILayout.Space((6 - displayedCount) * 20f);
                 }
                 
                 EditorGUILayout.EndScrollView();
@@ -2507,6 +2606,98 @@ namespace VicTools
                     }
                 }
                 
+                // 第五步：检查未使用资源之间的依赖关系
+                EditorUtility.DisplayProgressBar("扫描未使用资源", "正在检查资源依赖关系...", 0.9f);
+                Debug.Log("正在检查未使用资源的依赖关系...");
+                
+                _resourceReferences.Clear();
+                
+                // 构建未使用资源的 GUID 映射
+                Dictionary<string, string> unusedGuidToPathMap = new Dictionary<string, string>();
+                foreach (string resourcePath in _unusedResources)
+                {
+                    string guid = AssetDatabase.AssetPathToGUID(resourcePath);
+                    if (!string.IsNullOrEmpty(guid))
+                    {
+                        unusedGuidToPathMap[guid] = resourcePath;
+                    }
+                }
+                
+                // 获取所有非未使用资源（这些是保留的资源）
+                string[] keptAssetPaths = AssetDatabase.GetAllAssetPaths()
+                    .Where(p => p.StartsWith("Assets/") && 
+                               !AssetDatabase.IsValidFolder(p) && 
+                               !_unusedResources.Contains(p))
+                    .ToArray();
+                
+                // 检查每个保留的资源是否引用了未使用的资源
+                for (int i = 0; i < keptAssetPaths.Length; i++)
+                {
+                    string assetPath = keptAssetPaths[i];
+                    
+                    if (i % 50 == 0)
+                    {
+                        float progress = 0.9f + (0.09f * i / keptAssetPaths.Length);
+                        EditorUtility.DisplayProgressBar("扫描未使用资源", 
+                            $"正在检查依赖关系... ({i + 1}/{keptAssetPaths.Length})", progress);
+                    }
+                    
+                    // 方法1: 使用 AssetDatabase.GetDependencies 检查
+                    string[] dependencies = AssetDatabase.GetDependencies(assetPath, true);
+                    foreach (string dependency in dependencies)
+                    {
+                        if (_unusedResources.Contains(dependency))
+                        {
+                            if (!_resourceReferences.ContainsKey(dependency))
+                                _resourceReferences[dependency] = new List<string>();
+                            
+                            if (!_resourceReferences[dependency].Contains(assetPath))
+                                _resourceReferences[dependency].Add(assetPath);
+                        }
+                    }
+                    
+                    // 方法2: 对于 Prefab 和场景文件，额外检查 GUID 引用
+                    string ext = Path.GetExtension(assetPath).ToLower();
+                    if (ext == ".prefab" || ext == ".unity" || ext == ".asset" || ext == ".mat")
+                    {
+                        try
+                        {
+                            string fileContent = System.IO.File.ReadAllText(assetPath);
+                            
+                            // 检查文件中是否包含未使用资源的 GUID
+                            foreach (var kvp in unusedGuidToPathMap)
+                            {
+                                string guid = kvp.Key;
+                                string resourcePath = kvp.Value;
+                                
+                                // 使用正则表达式查找 GUID 引用
+                                if (System.Text.RegularExpressions.Regex.IsMatch(fileContent, 
+                                    $@"guid:\s*{guid}\b", 
+                                    System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                                {
+                                    if (!_resourceReferences.ContainsKey(resourcePath))
+                                        _resourceReferences[resourcePath] = new List<string>();
+                                    
+                                    if (!_resourceReferences[resourcePath].Contains(assetPath))
+                                        _resourceReferences[resourcePath].Add(assetPath);
+                                }
+                            }
+                        }
+                        catch (System.Exception ex)
+                        {
+                            Debug.LogWarning($"检查文件 {assetPath} 时出错: {ex.Message}");
+                        }
+                    }
+                }
+                
+                // 统计被引用的资源数量
+                int referencedCount = _resourceReferences.Count;
+                Debug.Log($"依赖关系检查完成，发现 {referencedCount} 个未使用资源被其他资源引用");
+                if (referencedCount > 0)
+                {
+                    Debug.LogWarning($"警告: 有 {referencedCount} 个未使用资源被其他资源引用，删除时将自动跳过");
+                }
+                
                 // 初始化类型筛选状态
                 foreach (var resourceType in _unusedResourcesByType.Keys)
                 {
@@ -2547,6 +2738,13 @@ namespace VicTools
                 
             usedAssets.Add(assetPath);
             
+            // 特殊处理 Prefab 文件，检查嵌套 Prefab 引用
+            string ext = Path.GetExtension(assetPath).ToLower();
+            if (ext == ".prefab")
+            {
+                CollectPrefabDependencies(assetPath, usedAssets);
+            }
+            
             // 获取所有依赖（包括间接依赖）
             // 第二个参数为 true 表示递归获取所有依赖
             string[] dependencies = AssetDatabase.GetDependencies(assetPath, true);
@@ -2562,12 +2760,65 @@ namespace VicTools
                     continue;
                     
                 // 跳过脚本文件
-                string ext = Path.GetExtension(dependency).ToLower();
-                if (ext == ".cs" || ext == ".dll")
+                string depExt = Path.GetExtension(dependency).ToLower();
+                if (depExt == ".cs" || depExt == ".dll")
                     continue;
                     
                 // 标记为已使用
                 usedAssets.Add(dependency);
+                
+                // 如果依赖也是 Prefab，递归检查其嵌套依赖
+                if (depExt == ".prefab")
+                {
+                    CollectPrefabDependencies(dependency, usedAssets);
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 收集 Prefab 的嵌套依赖，包括通过 GUID 引用的缺失 Prefab
+        /// </summary>
+        private void CollectPrefabDependencies(string prefabPath, HashSet<string> usedAssets)
+        {
+            try
+            {
+                // 读取 Prefab 文件内容，查找 GUID 引用
+                string prefabContent = System.IO.File.ReadAllText(prefabPath);
+                
+                // 使用正则表达式查找所有 GUID 引用
+                // Prefab 中的引用格式通常是: guid: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+                var guidMatches = System.Text.RegularExpressions.Regex.Matches(
+                    prefabContent, 
+                    @"guid:\s*([a-f0-9]{32})",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                
+                foreach (System.Text.RegularExpressions.Match match in guidMatches)
+                {
+                    if (match.Groups.Count > 1)
+                    {
+                        string guid = match.Groups[1].Value;
+                        string referencedPath = AssetDatabase.GUIDToAssetPath(guid);
+                        
+                        // 如果找到了对应的资源路径，标记为已使用
+                        if (!string.IsNullOrEmpty(referencedPath) && 
+                            referencedPath.StartsWith("Assets/") &&
+                            !usedAssets.Contains(referencedPath))
+                        {
+                            usedAssets.Add(referencedPath);
+                            
+                            // 如果引用的也是 Prefab，递归处理
+                            string refExt = Path.GetExtension(referencedPath).ToLower();
+                            if (refExt == ".prefab")
+                            {
+                                CollectPrefabDependencies(referencedPath, usedAssets);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning($"读取 Prefab 依赖时出错 ({prefabPath}): {ex.Message}");
             }
         }
 
@@ -3626,6 +3877,39 @@ namespace VicTools
         /// </summary>
         private void DeleteResource(string resourcePath)
         {
+            // 检查资源是否被引用（使用扫描时收集的依赖信息）
+            if (_resourceReferences.ContainsKey(resourcePath))
+            {
+                var references = _resourceReferences[resourcePath];
+                
+                // 构建引用列表字符串
+                string referenceList = "";
+                int showCount = System.Math.Min(references.Count, 5);
+                for (int i = 0; i < showCount; i++)
+                {
+                    referenceList += $"\n  • {references[i]}";
+                }
+                if (references.Count > 5)
+                {
+                    referenceList += $"\n  ... 还有 {references.Count - 5} 个引用";
+                }
+                
+                // 显示警告对话框
+                EditorUtility.DisplayDialog("无法删除", 
+                    $"资源 '{Path.GetFileName(resourcePath)}' 被以下 {references.Count} 个资源引用，无法删除：{referenceList}\n\n" +
+                    "删除此资源可能会导致其他资源出现 Missing Reference 错误。", 
+                    "确定");
+                
+                Debug.LogWarning($"无法删除 {resourcePath}，被以下 {references.Count} 个资源引用:");
+                foreach (var reference in references)
+                {
+                    Debug.LogWarning($"  • {reference}");
+                }
+                
+                return;
+            }
+            
+            // 资源没有被引用，可以安全删除
             if (EditorUtility.DisplayDialog("确认删除", 
                 $"确定要删除资源 '{Path.GetFileName(resourcePath)}' 吗？\n\n此操作无法撤销。", 
                 "删除", "取消"))
@@ -3647,6 +3931,9 @@ namespace VicTools
                             _resourceTypeFilters.Remove(resourceType);
                         }
                     }
+                    
+                    // 从依赖信息中移除
+                    _resourceReferences.Remove(resourcePath);
                     
                     // 刷新 AssetDatabase
                     AssetDatabase.Refresh();
@@ -3708,7 +3995,9 @@ namespace VicTools
                 "删除所有", "取消"))
             {
                 int deletedCount = 0;
+                int skippedCount = 0;
                 List<string> resourcesToDelete = new List<string>();
+                List<string> skippedResources = new List<string>();
                 
                 // 收集需要删除的资源（根据筛选条件）
                 foreach (string resourcePath in _unusedResources)
@@ -3722,14 +4011,39 @@ namespace VicTools
                     }
                 }
                 
-                // 显示进度条
-                for (int i = 0; i < resourcesToDelete.Count; i++)
+                Debug.Log($"准备删除 {resourcesToDelete.Count} 个资源...");
+                
+                // 显示进度条并删除资源
+                int processedCount = 0;
+                foreach (string resourcePath in resourcesToDelete)
                 {
-                    string resourcePath = resourcesToDelete[i];
+                    processedCount++;
                     EditorUtility.DisplayProgressBar("删除资源", 
-                        $"正在删除 {Path.GetFileName(resourcePath)}... ({i + 1}/{resourcesToDelete.Count})", 
-                        (float)(i + 1) / resourcesToDelete.Count);
+                        $"正在删除 {Path.GetFileName(resourcePath)}... ({processedCount}/{resourcesToDelete.Count})", 
+                        (float)processedCount / resourcesToDelete.Count);
                     
+                    // 检查资源是否被引用（使用扫描时收集的依赖信息）
+                    if (_resourceReferences.ContainsKey(resourcePath))
+                    {
+                        skippedCount++;
+                        skippedResources.Add(resourcePath);
+                        
+                        // 显示跳过原因
+                        var references = _resourceReferences[resourcePath];
+                        Debug.LogWarning($"跳过删除 {resourcePath}，被以下 {references.Count} 个资源引用:");
+                        int showCount = System.Math.Min(references.Count, 3);
+                        for (int i = 0; i < showCount; i++)
+                        {
+                            Debug.LogWarning($"  • {references[i]}");
+                        }
+                        if (references.Count > 3)
+                        {
+                            Debug.LogWarning($"  ... 还有 {references.Count - 3} 个引用");
+                        }
+                        continue;
+                    }
+                    
+                    // 删除资源
                     if (AssetDatabase.DeleteAsset(resourcePath))
                     {
                         deletedCount++;
@@ -3747,15 +4061,24 @@ namespace VicTools
                                 _resourceTypeFilters.Remove(resourceType);
                             }
                         }
+                        
+                        // 从依赖信息中移除
+                        _resourceReferences.Remove(resourcePath);
                     }
                 }
                 
                 EditorUtility.ClearProgressBar();
                 
                 // 刷新 AssetDatabase
-                AssetDatabase.Refresh();
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
                 
-                Debug.Log($"已删除 {deletedCount} 个未使用资源");
+                Debug.Log($"删除完成: 成功删除 {deletedCount} 个资源，跳过 {skippedCount} 个被引用的资源");
+                
+                // 如果有跳过的资源，显示汇总信息
+                if (skippedCount > 0)
+                {
+                    Debug.LogWarning($"共跳过 {skippedCount} 个被引用的资源，详细信息请查看上方日志");
+                }
                 
                 // 强制重绘窗口
                 if (Parent != null)
