@@ -22,6 +22,7 @@
 // PBR_Mobile5.2 添加UI脚本控制
 // PBR_Mobile5.3 优化自身阴影平滑度，减少阶梯状硬边
 // PBR_Mobile5.4 性能优化 - 预计算PBR属性，消除重复计算，优化光源循环
+// PBR_Mobile5.5 完善自身阴影与半兰伯特阴影
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -309,25 +310,6 @@ Shader "Custom/PBR_Mobile"
             half3 AdjustContrast(half3 color, half contrast) {
                 
                 return saturate((color - 0.5) * contrast + 0.5);
-            }
-
-            // 改进的阴影平滑函数 - 使用多级平滑减少阶梯状硬边
-            half SmoothShadowTransition(half shadowValue, half NdotL, half smoothness)
-            {
-                // 基于法线和光照方向的渐变因子
-                half gradientFactor = saturate(NdotL * 0.5 + 0.5);
-                
-                // 使用双层smoothstep实现更平滑的过渡
-                half smooth1 = smoothstep(0.0, smoothness, shadowValue);
-                half smooth2 = smoothstep(0.0, smoothness * 2.0, shadowValue);
-                
-                // 混合两层平滑结果
-                half finalShadow = lerp(smooth1, smooth2, 0.5);
-                
-                // 在阴影边界应用额外的渐变
-                finalShadow = lerp(finalShadow, shadowValue, gradientFactor * 0.3);
-                
-                return finalShadow;
             }
 
             float3 SampleSphericalReflection(float3 reflectionVector, float blur)
@@ -653,7 +635,7 @@ Shader "Custom/PBR_Mobile"
                     half shadowAttenuation = 1.0;
                     
                     // 当 _ShadowScale >= 0.9 时，跳过阴影计算以优化性能
-                    if (_ShadowScale < 0.9)
+                    if (_ShadowScale < 0.8)
                     {
                         float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS);
                         shadowCoord.w = max(shadowCoord.w, 0.001);
@@ -705,33 +687,27 @@ Shader "Custom/PBR_Mobile"
                 
                 #ifdef _USEVERSHADOW
                     // 顶点阴影模式
-                    if (_ShadowScale < 0.9)
+                    if (_ShadowScale < 0.8)
                     {
-                        // 使用改进的平滑过渡
                         half rawShadow = input.shadowAttenuation;
                         
-                        // 应用平滑过渡函数
-                        shadowAttenuation = SmoothShadowTransition(rawShadow, input.NdotL, 0.5);
+                        // 简单的阴影计算，使用_ShadowScale控制强度
+                        shadowAttenuation = lerp(rawShadow, 1.0, _ShadowScale);
                         
-                        // 背面剔除优化 - 使用与Half Lambert协调的范围
-                        half backfaceRange = lerp(0.3, 0.5, _HalfLambert);
-                        half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, input.NdotL);
+                        // 背面剔除优化 - 使用固定范围0.3
+                        half backfaceFactor = smoothstep(-0.3, 0.3, input.NdotL);
                         shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                     }
                     // 当 _ShadowScale >= 0.9 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #else
                     // 像素阴影模式
-                    if (_ShadowScale < 0.9)
+                    if (_ShadowScale < 0.8)
                     {
-                        // 使用改进的平滑过渡
                         half baseShadow = mainLight.shadowAttenuation;
                         half pixelNdotL = dot(mat.normalWS, lightDir);
                         
-                        // 使用 _ShadowScale 和 _HalfLambert 共同控制阴影强度
-                        half scaledShadow = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
-                        
-                        // 应用平滑过渡函数
-                        shadowAttenuation = SmoothShadowTransition(scaledShadow, pixelNdotL, 0.5);
+                        // 简单的阴影计算，使用_ShadowScale控制强度
+                        shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale);
                         
                         // 背面剔除优化 - 使用与Half Lambert协调的范围
                         half backfaceRange = lerp(0.0, 1.0, pixelNdotL);
