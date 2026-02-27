@@ -9,6 +9,8 @@
 // 继承PBR_Mobile3.3    校正基础光照；优化烘焙亮度
 // 继承PBR_Mobile3.4    匹配PBR_Mobile高光算法
 // 继承PBR_Mobile4.0    匹配PBR_Mobile优化金属度算法（包括LIGHTMAP_ON、CalculateCustomPointLights）
+// 继承PBR_Mobile5.3    优化自身阴影平滑度，减少阶梯状硬边
+// 继承PBR_Mobile5.4    性能优化 - 预计算PBR属性，消除重复计算；添加球形反射贴图支持，包含菲涅尔效果
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
@@ -53,13 +55,15 @@ Shader "Custom/PBR_Mobile_Trans"
         _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
         [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0
         
+        [Header(........................................................)]
         [Space(5)]
-        [HideInInspector] _UseReflection("Use Reflection", Float) = 0
-        [HideInInspector] _SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
-        [HideInInspector] _ReflectionStrength ("Reflection Strength", Range(0, 2)) = 1.0
-        [HideInInspector] _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
-        [HideInInspector] _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
-        [HideInInspector] _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
+        [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
+        [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
+        _ReflectionStrength ("Reflection Strength", Range(0, 2)) = 1.0
+        _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
+        [Space(5)]
+        _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
+        _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
         
         [Header(6  (Custom Point Lights))]
         [Space(5)]
@@ -124,6 +128,7 @@ Shader "Custom/PBR_Mobile_Trans"
             #pragma shader_feature_local _NORMALMAP
             #pragma shader_feature_local _USEPOINTLIGHT
             #pragma shader_feature_local _USEVERSHADOW
+            #pragma shader_feature_local _USEREFLECTION
             
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             
@@ -154,6 +159,8 @@ Shader "Custom/PBR_Mobile_Trans"
             SAMPLER(sampler_MetallicGlossMap);
             TEXTURE2D(_EmissionMap);
             SAMPLER(sampler_EmissionMap);
+            TEXTURE2D(_SphericalReflectionMap);
+            SAMPLER(sampler_SphericalReflectionMap);
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseMap_ST;
@@ -170,6 +177,11 @@ Shader "Custom/PBR_Mobile_Trans"
                 half _EmissionScale;
                 half4 _EmissionColor;
                 half _Cutoff;
+                
+                float _ReflectionStrength;
+                float _ReflectionBlur;
+                float _ReflectionFresnelPower;
+                float _ReflectionFresnelBias;
                 
             CBUFFER_END
 
@@ -205,25 +217,133 @@ Shader "Custom/PBR_Mobile_Trans"
                 #endif
             };
 
+            struct MaterialProperties
+            {
+                half3 albedo;
+                half metallic;
+                half roughness;
+                half3 normalWS;
+                float2 uv;
+                
+                // 预计算的PBR属性（性能优化）
+                half3 diffuseColor;     // 预计算的漫反射颜色
+                half3 specularColor;    // 预计算的高光颜色
+                half smoothness;        // 预计算的光滑度
+                half shininess;         // 预计算的高光指数
+                half oneMinusMetallic;  // 预计算的 1-metallic
+            };
+
+            MaterialProperties InitMaterialProperties(half3 albedo, half metallic, half roughness, half3 normalWS, float2 uv)
+            {
+                MaterialProperties mat;
+                mat.albedo = albedo;
+                mat.metallic = metallic;
+                mat.roughness = roughness;
+                mat.normalWS = normalWS;
+                
+                // 预计算PBR属性（性能优化 - 避免在每个光源中重复计算）
+                mat.oneMinusMetallic = 1.0 - metallic;
+                mat.smoothness = 1.0 - roughness;
+                
+                // 预计算能量守恒的漫反射和高光颜色
+                half oneMinusDielectricSpec = 0.96;
+                mat.diffuseColor = albedo * oneMinusDielectricSpec * mat.oneMinusMetallic;
+                
+                half3 baseSpecularColor = lerp(0.04, albedo, metallic);
+                half minSpecular = mad(0.03, mat.oneMinusMetallic, 0.01 * mat.oneMinusMetallic + 0.04 * metallic);
+                mat.specularColor = max(baseSpecularColor, minSpecular);
+                
+                // 预计算高光指数（避免在每个光源中重复pow运算）
+                half smoothnessCubed = mat.smoothness * mat.smoothness * mat.smoothness;
+                mat.shininess = mad(smoothnessCubed, 512.0, 2.0);
+                
+                return mat;
+            }
+
             half3 SimpleDiffuse(half3 normalWS, half3 lightDir, half3 lightColor)
             {
                 half NdotL = saturate(dot(normalWS, lightDir));
                 
+                // 标准Half Lambert效果
                 half halfLambertEffect = NdotL * (1.0 - _HalfLambert) + _HalfLambert;
+                
                 return lightColor * halfLambertEffect;
             }
+            
             half fastPow(half x, half n) {
                 return exp2(n * log2(x)); 
             }
 
-            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half roughness, half3 lightColor, half shadowAttenuation)
+            float2 fastSphericalUV(float3 reflectionVector) {
+                reflectionVector = normalize(reflectionVector);
+                
+                return float2(
+                    reflectionVector.x / 4.01 + 0.5,  
+                    reflectionVector.y / 4.01 + 0.5   
+                );
+            }
+
+            float3 SampleSphericalReflection(float3 reflectionVector, float blur)
+            {
+                float2 uv = fastSphericalUV(reflectionVector);
+                
+                float3 reflectionColor = SAMPLE_TEXTURE2D_LOD(_SphericalReflectionMap, sampler_SphericalReflectionMap, uv, blur).rgb;
+                return reflectionColor;
+            }
+
+            float CalculateFresnel(float3 normalWS, float3 viewDirWS, float power, float bias)
+            {
+                float fresnel = saturate(dot(normalWS, viewDirWS));
+                fresnel = saturate(bias + (1.0 - bias) * fastPow(1.0 - fresnel, power));
+                return fresnel;
+            }
+
+            float3 CalculateSphericalReflection(float3 normalWS, float3 viewDirWS, float metallic, float roughness, float2 uv, half3 mainLightColor)
+            {
+                
+                float3 reflectionVector = reflect(-viewDirWS, normalWS);
+                
+                float3 reflectionColor = SampleSphericalReflection(reflectionVector, _ReflectionBlur);
+                
+                reflectionColor *= _ReflectionStrength;
+                
+                float fresnel = CalculateFresnel(normalWS, viewDirWS, _ReflectionFresnelPower, _ReflectionFresnelBias);
+                
+                float smoothness = 1.0 - roughness; 
+                float reflectionIntensity = metallic * smoothness * fresnel;
+                
+                half mainLightLuminance = dot(mainLightColor, half3(0.299, 0.587, 0.114));
+                
+                half lightInfluence = saturate(mainLightLuminance * 2.0 + 0.1);
+                reflectionIntensity *= lightInfluence;
+                
+                return reflectionColor * reflectionIntensity;
+            }
+
+            // 改进的阴影平滑函数 - 使用多级平滑减少阶梯状硬边
+            half SmoothShadowTransition(half shadowValue, half NdotL, half smoothness)
+            {
+                // 基于法线和光照方向的渐变因子
+                half gradientFactor = saturate(NdotL * 0.5 + 0.5);
+                
+                // 使用双层smoothstep实现更平滑的过渡
+                half smooth1 = smoothstep(0.0, smoothness, shadowValue);
+                half smooth2 = smoothstep(0.0, smoothness * 2.0, shadowValue);
+                
+                // 混合两层平滑结果
+                half finalShadow = lerp(smooth1, smooth2, 0.5);
+                
+                // 在阴影边界应用额外的渐变
+                finalShadow = lerp(finalShadow, shadowValue, gradientFactor * 0.3);
+                
+                return finalShadow;
+            }
+
+            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 lightColor, half shadowAttenuation)
             {
                 half3 halfDir = normalize(lightDir + viewDir);
                 half NdotH = saturate(dot(normalWS, halfDir));
-                half smoothness = 1.0 - roughness; 
                 
-                half shininess = 2.0 + smoothness * smoothness * 256.0;
-
                 half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
                 return lightColor * specular * shadowAttenuation; 
             }
@@ -299,56 +419,71 @@ Shader "Custom/PBR_Mobile_Trans"
                     roughness *= metallicGloss.g; 
                 #endif
 
+                // 初始化材质属性（包含预计算的PBR属性）
+                MaterialProperties mat = InitMaterialProperties(albedo, metallic, roughness, normalWS, input.uv);
+
                 half3 viewDirWS = normalize(input.viewDirWS);
                 
                 half shadowAttenuation = 1;
                 Light mainLight = GetMainLight(TransformWorldToShadowCoord(input.positionWS));
                 
                 #ifdef _USEVERSHADOW
+                    // 顶点阴影模式 - 使用改进的平滑过渡
+                    half rawShadow = input.shadowAttenuation;
                     
-                    shadowAttenuation = input.shadowAttenuation;
+                    // 应用平滑过渡函数
+                    shadowAttenuation = SmoothShadowTransition(rawShadow, input.NdotL, 0.5);
                     
-                    half smoothFactor = smoothstep(-0.3, 0.3, input.NdotL);
-                    shadowAttenuation = lerp(1.0, shadowAttenuation, smoothFactor);
+                    // 背面剔除优化 - 使用与Half Lambert协调的范围
+                    half backfaceRange = lerp(0.3, 0.5, _HalfLambert);
+                    half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, input.NdotL);
+                    shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                 #else
-                    
+                    // 像素阴影模式 - 使用改进的平滑过渡
                     half baseShadow = mainLight.shadowAttenuation;
-                    shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
+                    half pixelNdotL = dot(mat.normalWS, mainLight.direction);
                     
-                    half pixelNdotL = dot(normalWS, mainLight.direction);
+                    // 应用阴影缩放
+                    half scaledShadow = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
                     
-                    half smoothFactor = smoothstep(-0.3, 0.3, pixelNdotL);
-                    shadowAttenuation = lerp(1.0, shadowAttenuation, smoothFactor);
+                    // 应用平滑过渡函数
+                    shadowAttenuation = SmoothShadowTransition(scaledShadow, pixelNdotL, 0.5);
+                    
+                    // 背面剔除优化 - 使用与Half Lambert协调的范围
+                    half backfaceRange = lerp(0.0, 1.0, pixelNdotL);
+                    half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, pixelNdotL);
+                    shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                 #endif
 		
                 half3 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
                 half3 lightDir = mainLight.direction;
                 
-                half3 diffuse = SimpleDiffuse(normalWS, lightDir, lightColor);
-                half3 specular = SimpleSpecular(normalWS, lightDir, viewDirWS, roughness, lightColor, shadowAttenuation);
+                half3 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
+                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
                 
-                half oneMinusDielectricSpec = 0.96; 
-                half3 diffuseColor = albedo * oneMinusDielectricSpec * (1.0 - metallic);
-                
-                half3 baseSpecularColor = lerp(0.04, albedo, metallic);
-                half minSpecular = 0.01 * (1.0 - metallic) + 0.04 * metallic;
-                half3 specularColor = max(baseSpecularColor, minSpecular);
-                
-                half3 finalColor = diffuseColor * diffuse + specularColor * specular * _SpecularScale;
+                // 使用预计算的diffuseColor和specularColor（性能优化）
+                half3 finalColor = mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
                 
                 half3 bakedGI = 0;
                 #ifdef LIGHTMAP_ON
                     
-                    bakedGI = SampleLightmap(input.lightmapUV, normalWS)*4.0;
+                    bakedGI = SampleLightmap(input.lightmapUV, mat.normalWS)*4.0;
                 #else
                     
-                    bakedGI = SampleSH(normalWS);
+                    bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
-                half3 ambient = bakedGI * (diffuseColor + specularColor * metallic * 0.5);
+                // 使用预计算的diffuseColor和specularColor（性能优化）
+                half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
                 finalColor += ambient;
                 
                 finalColor *= _Brightness;
+                
+                half3 reflectionContrib = 0;
+                #ifdef _USEREFLECTION
+                    reflectionContrib = CalculateSphericalReflection(mat.normalWS, viewDirWS, mat.metallic, mat.roughness, mat.uv, lightColor);
+                #endif
+                finalColor += reflectionContrib * mat.albedo;
                 
                 #ifdef _USEAOMAP
                     half3 contrastedAO = saturate((metallicGloss.b - 0.5) * _OcclusionContrast + 0.5);

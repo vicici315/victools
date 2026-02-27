@@ -20,6 +20,8 @@
 // PBR_Mobile5.0 添加SpotLight支持
 // PBR_Mobile5.1 添加聚光灯纹理彩色光环
 // PBR_Mobile5.2 添加UI脚本控制
+// PBR_Mobile5.3 优化自身阴影平滑度，减少阶梯状硬边
+// PBR_Mobile5.4 性能优化 - 预计算PBR属性，消除重复计算，优化光源循环
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -309,6 +311,25 @@ Shader "Custom/PBR_Mobile"
                 return saturate((color - 0.5) * contrast + 0.5);
             }
 
+            // 改进的阴影平滑函数 - 使用多级平滑减少阶梯状硬边
+            half SmoothShadowTransition(half shadowValue, half NdotL, half smoothness)
+            {
+                // 基于法线和光照方向的渐变因子
+                half gradientFactor = saturate(NdotL * 0.5 + 0.5);
+                
+                // 使用双层smoothstep实现更平滑的过渡
+                half smooth1 = smoothstep(0.0, smoothness, shadowValue);
+                half smooth2 = smoothstep(0.0, smoothness * 2.0, shadowValue);
+                
+                // 混合两层平滑结果
+                half finalShadow = lerp(smooth1, smooth2, 0.5);
+                
+                // 在阴影边界应用额外的渐变
+                finalShadow = lerp(finalShadow, shadowValue, gradientFactor * 0.3);
+                
+                return finalShadow;
+            }
+
             float3 SampleSphericalReflection(float3 reflectionVector, float blur)
             {
                 float2 uv = fastSphericalUV(reflectionVector);
@@ -350,7 +371,9 @@ Shader "Custom/PBR_Mobile"
             {
                 half NdotL = saturate(dot(normalWS, lightDir));
                 
+                // 标准Half Lambert效果
                 half halfLambertEffect = NdotL * (1.0 - _HalfLambert) + _HalfLambert;
+                
                 return lightColor * halfLambertEffect;
             }
 
@@ -365,7 +388,14 @@ Shader "Custom/PBR_Mobile"
                 half3 normalTS;         
                 half3 normalWS;         
                 half3 emissionMap;      
-                float2 uv;              
+                float2 uv;
+                
+                // 预计算的PBR属性（性能优化）
+                half3 diffuseColor;     // 预计算的漫反射颜色
+                half3 specularColor;    // 预计算的高光颜色
+                half smoothness;        // 预计算的光滑度
+                half shininess;         // 预计算的高光指数
+                half oneMinusMetallic;  // 预计算的 1-metallic
             };
 
             MaterialProperties InitMaterialProperties(float2 uv, half3 worldNormal)
@@ -399,6 +429,22 @@ Shader "Custom/PBR_Mobile"
                     mat.emissionMap = half3(0, 0, 0);
                 #endif
                 
+                // 预计算PBR属性（性能优化 - 避免在每个光源中重复计算）
+                mat.oneMinusMetallic = 1.0 - mat.metallic;
+                mat.smoothness = 1.0 - mat.roughness;
+                
+                // 预计算能量守恒的漫反射和高光颜色
+                half oneMinusDielectricSpec = 0.96;
+                mat.diffuseColor = mat.albedo * oneMinusDielectricSpec * mat.oneMinusMetallic;
+                
+                half3 baseSpecularColor = lerp(0.04, mat.albedo, mat.metallic);
+                half minSpecular = mad(0.03, mat.oneMinusMetallic, 0.01 * mat.oneMinusMetallic + 0.04 * mat.metallic);
+                mat.specularColor = max(baseSpecularColor, minSpecular);
+                
+                // 预计算高光指数（避免在每个光源中重复pow运算）
+                half smoothnessCubed = mat.smoothness * mat.smoothness * mat.smoothness;
+                mat.shininess = mad(smoothnessCubed, 512.0, 2.0);
+                
                 return mat;
             }
 
@@ -420,20 +466,17 @@ Shader "Custom/PBR_Mobile"
                 #endif
             }
 
-            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half roughness, half3 lightColor, half shadowAttenuation)
+            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 lightColor, half shadowAttenuation)
             {
                 half3 halfDir = normalize(lightDir + viewDir);
                 half NdotH = saturate(dot(normalWS, halfDir));
-                half smoothness = 1.0 - roughness; 
                 
-                half shininess = 2.0 + smoothness * smoothness * smoothness * 512.0;
-
                 half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
                 
                 return lightColor * specular * shadowAttenuation * 2.0; 
             }
             
-            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half roughness, half3 bakedGI, half metallic)
+            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic)
             {
                 
                 half3 finalLightDir = lightDir;
@@ -445,9 +488,6 @@ Shader "Custom/PBR_Mobile"
                 
                 half3 halfDir = normalize(finalLightDir + viewDir);
                 half NdotH = saturate(dot(normalWS, halfDir));
-                half smoothness = 1.0 - roughness;
-                
-                half shininess = 2.0 + smoothness * smoothness * smoothness * 512.0;
                 
                 half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
                 
@@ -464,6 +504,9 @@ Shader "Custom/PBR_Mobile"
                 if (_CustomPointLightCount == 0) return totalLight;
                 
                 int lightCount = min(_CustomPointLightCount, MAX_POINT_LIGHTS);
+                
+                // 预计算是否需要高光（避免在循环中判断）
+                bool needSpecular = (mat.metallic > 0.1 || mat.roughness < 0.9);
                 
                 [loop]for (int i = 0; i < lightCount; i++)
                 {
@@ -483,44 +526,26 @@ Shader "Custom/PBR_Mobile"
                     
                     half3 lightColor = light.color.rgb * light.color.a * _PointLightIntensity * attenuation;
                     
-                    half3 diffuse;
+                    // 漫反射计算
+                    half NdotL = saturate(dot(mat.normalWS, lightDir));
+                    half3 diffuse = lightColor * NdotL;
+                    
+                    // 高光计算（使用预计算的材质属性）
                     half3 specular = 0;
-                    
-                    if (useSimpleCalculation) 
+                    if (!useSimpleCalculation && needSpecular) 
                     {
+                        half3 halfDir = normalize(lightDir + viewDir);
+                        half NdotH = saturate(dot(mat.normalWS, halfDir));
                         
-                        half NdotL = saturate(dot(mat.normalWS, lightDir));
-                        diffuse = lightColor * NdotL;
-                    }
-                    else 
-                    {
-                        
-                        half NdotL = saturate(dot(mat.normalWS, lightDir));
-                        diffuse = lightColor * NdotL;
-                        
-                        if (mat.metallic > 0.1 || mat.roughness < 0.9) 
-                        {
-                            half3 halfDir = normalize(lightDir + viewDir);
-                            half NdotH = saturate(dot(mat.normalWS, halfDir));
-                            half smoothness = 1.0 - mat.roughness; 
-                            
-                            half shininess = 2.0 + smoothness * smoothness * smoothness * 512.0;
-                            #if USE_FAST_MATH
-                                specular = fastPow(max(NdotH, 0.001), shininess) * smoothness * attenuation;
-                            #else
-                                specular = pow(max(NdotH, 0.001), shininess) * smoothness * attenuation;
-                            #endif
-                        }
+                        #if USE_FAST_MATH
+                            specular = fastPow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * attenuation;
+                        #else
+                            specular = pow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * attenuation;
+                        #endif
                     }
                     
-                    half oneMinusDielectricSpec = 0.96; 
-                    half3 diffuseColor = mat.albedo * oneMinusDielectricSpec * (1.0 - mat.metallic);
-                    
-                    half3 baseSpecularColor = lerp(0.04, mat.albedo, mat.metallic);
-                    half minSpecular = 0.01 * (1.0 - mat.metallic) + 0.04 * mat.metallic;
-                    half3 specularColor = max(baseSpecularColor, minSpecular);
-                    
-                    totalLight += diffuseColor * diffuse + specularColor * specular * _SpecularScale;
+                    // 使用预计算的diffuseColor和specularColor
+                    totalLight += mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
                 }
                 
                 return totalLight;
@@ -533,6 +558,9 @@ Shader "Custom/PBR_Mobile"
                 if (_CustomSpotLightCount == 0) return totalLight;
                 
                 int lightCount = min(_CustomSpotLightCount, 2);
+                
+                // 预计算是否需要高光（避免在循环中判断）
+                bool needSpecular = (mat.metallic > 0.1 || mat.roughness < 0.9);
                 
                 [unroll(2)]for (int i = 0; i < lightCount; i++)
                 {
@@ -587,27 +615,21 @@ Shader "Custom/PBR_Mobile"
                         textureModulation = contrastAdjusted * _SpotTextureIntensity;
                     #endif
                     
+                    // 漫反射计算
                     half NdotL = saturate(dot(mat.normalWS, lightDir));
                     half3 diffuse = lightColor * NdotL * textureModulation;
                     
+                    // 高光计算（使用预计算的材质属性）
                     half3 specular = 0;
-                    if (mat.metallic > 0.1 || mat.roughness < 0.9) 
+                    if (needSpecular) 
                     {
                         half3 halfDir = normalize(lightDir + viewDir);
                         half NdotH = saturate(dot(mat.normalWS, halfDir));
-                        half smoothness = 1.0 - mat.roughness;
-                        half shininess = 2.0 + smoothness * smoothness * smoothness * 512.0;
-                        specular = fastPow(max(NdotH, 0.001), shininess) * smoothness * distanceAttenuation * spotAttenuation * textureModulation;
+                        specular = fastPow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * distanceAttenuation * spotAttenuation * textureModulation;
                     }
                     
-                    half oneMinusDielectricSpec = 0.96; 
-                    half3 diffuseColor = mat.albedo * oneMinusDielectricSpec * (1.0 - mat.metallic);
-                    
-                    half3 baseSpecularColor = lerp(0.04, mat.albedo, mat.metallic);
-                    half minSpecular = 0.01 * (1.0 - mat.metallic) + 0.04 * mat.metallic;
-                    half3 specularColor = max(baseSpecularColor, minSpecular);
-                    
-                    totalLight += diffuseColor * diffuse + specularColor * specular * _SpecularScale;
+                    // 使用预计算的diffuseColor和specularColor
+                    totalLight += mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
                 }
                 
                 return totalLight;
@@ -627,17 +649,29 @@ Shader "Custom/PBR_Mobile"
                 output.viewDirWS = GetCameraPositionWS() - vertexInput.positionWS;
                 output.fogFactor = ComputeFogFactor(vertexInput.positionCS.z);
                 #ifdef _USEVERSHADOW
+                    half NdotL = 0;
+                    half shadowAttenuation = 1.0;
                     
-                    float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS);
+                    // 当 _ShadowScale >= 0.9 时，跳过阴影计算以优化性能
+                    if (_ShadowScale < 0.9)
+                    {
+                        float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS);
+                        shadowCoord.w = max(shadowCoord.w, 0.001);
+                        Light mainLight = GetMainLight(shadowCoord);
+                        
+                        NdotL = dot(output.normalWS, mainLight.direction);
+                        half baseShadow = mainLight.shadowAttenuation;
+                        // 使用 _ShadowScale 和 _HalfLambert 共同控制阴影强度
+                        shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
+                    }
+                    else
+                    {
+                        // 获取主光源方向用于后续计算，但不计算阴影
+                        Light mainLight = GetMainLight();
+                        NdotL = dot(output.normalWS, mainLight.direction);
+                    }
                     
-                    shadowCoord.w = max(shadowCoord.w, 0.001);
-                    Light mainLight = GetMainLight(shadowCoord);
-                    
-                    half NdotL = dot(output.normalWS, mainLight.direction);
                     output.NdotL = NdotL;
-                    
-                    half baseShadow = mainLight.shadowAttenuation;
-                    half shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
                     output.shadowAttenuation = shadowAttenuation;
                 #endif
                 
@@ -670,36 +704,50 @@ Shader "Custom/PBR_Mobile"
                 lightDir = mainLight.direction; 
                 
                 #ifdef _USEVERSHADOW
-                    
-                    shadowAttenuation = input.shadowAttenuation;
-                    
-                    half smoothFactor = smoothstep(-0.3, 0.3, input.NdotL);
-                    shadowAttenuation = lerp(1.0, shadowAttenuation, smoothFactor);
+                    // 顶点阴影模式
+                    if (_ShadowScale < 0.9)
+                    {
+                        // 使用改进的平滑过渡
+                        half rawShadow = input.shadowAttenuation;
+                        
+                        // 应用平滑过渡函数
+                        shadowAttenuation = SmoothShadowTransition(rawShadow, input.NdotL, 0.5);
+                        
+                        // 背面剔除优化 - 使用与Half Lambert协调的范围
+                        half backfaceRange = lerp(0.3, 0.5, _HalfLambert);
+                        half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, input.NdotL);
+                        shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
+                    }
+                    // 当 _ShadowScale >= 0.9 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #else
-                    
-                    half baseShadow = mainLight.shadowAttenuation;
-                    shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
-                    
-                    half pixelNdotL = dot(mat.normalWS, lightDir);
-                    
-                    half smoothFactor = smoothstep(-0.3, 0.3, pixelNdotL);
-                    shadowAttenuation = lerp(1.0, shadowAttenuation, smoothFactor);
+                    // 像素阴影模式
+                    if (_ShadowScale < 0.9)
+                    {
+                        // 使用改进的平滑过渡
+                        half baseShadow = mainLight.shadowAttenuation;
+                        half pixelNdotL = dot(mat.normalWS, lightDir);
+                        
+                        // 使用 _ShadowScale 和 _HalfLambert 共同控制阴影强度
+                        half scaledShadow = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
+                        
+                        // 应用平滑过渡函数
+                        shadowAttenuation = SmoothShadowTransition(scaledShadow, pixelNdotL, 0.5);
+                        
+                        // 背面剔除优化 - 使用与Half Lambert协调的范围
+                        half backfaceRange = lerp(0.0, 1.0, pixelNdotL);
+                        half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, pixelNdotL);
+                        shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
+                    }
+                    // 当 _ShadowScale >= 0.9 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #endif
                 
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
                 
                 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
-                specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.roughness, lightColor, shadowAttenuation);
+                specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
                 
-                half oneMinusDielectricSpec = 0.96; 
-                half3 diffuseColor = mat.albedo * oneMinusDielectricSpec * (1.0 - mat.metallic);
-                
-                half3 baseSpecularColor = lerp(0.04, mat.albedo, mat.metallic);
-                
-                half minSpecular = 0.01 * (1.0 - mat.metallic) + 0.04 * mat.metallic;
-                half3 specularColor = max(baseSpecularColor, minSpecular);
-                
-                half3 finalColor = diffuseColor * diffuse + specularColor * specular * _SpecularScale;
+                // 使用预计算的diffuseColor和specularColor（性能优化）
+                half3 finalColor = mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
                 
                 #ifndef _DISABLEENVIRONMENT
                 half3 bakedGI = 0;
@@ -711,18 +759,17 @@ Shader "Custom/PBR_Mobile"
                     bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
-                half3 ambient = bakedGI * (diffuseColor + specularColor * mat.metallic * 0.5);
+                // 使用预计算的diffuseColor和specularColor（性能优化）
+                half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
                 
                 half3 bakedSpecular = 0;
                 
-                half3 baseBakedSpecularColor = lerp(0.04, mat.albedo, mat.metallic);
-                half bakedMinSpecular = 0.01 * (1.0 - mat.metallic) + 0.04 * mat.metallic;
-                half3 bakedSpecularColor = max(baseBakedSpecularColor, bakedMinSpecular);
+                // 使用预计算的specularColor（性能优化）
                 #ifdef LIGHTMAP_ON
-                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.roughness, bakedGI, mat.metallic);
+                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic);
                 #endif
                 
-                finalColor += ambient + bakedSpecularColor * bakedSpecular;
+                finalColor += ambient + mat.specularColor * bakedSpecular;
                 #endif 
                 
                 finalColor *= _Brightness;

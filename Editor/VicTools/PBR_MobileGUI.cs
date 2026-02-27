@@ -90,10 +90,12 @@ public class PBR_MobileGUI : ShaderGUI
         DrawEmission();
         // EditorGUILayout.Space(5);
         
-        // 只在非 Trans 版本显示反射
+        // 反射功能对两个版本都可用
+        DrawReflection();
+        
+        // 只在非 Trans 版本显示点光源和聚光灯
         if (!isTransShader)
         {
-            DrawReflection();
             DrawPointLights();
             DrawSpotLights();
             // EditorGUILayout.Space(5);
