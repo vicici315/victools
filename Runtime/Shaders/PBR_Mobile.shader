@@ -39,8 +39,8 @@ Shader "Custom/PBR_Mobile"
         _Metallic ("Metallic", Range(0, 1)) = 0.0
         _Roughness ("Roughness", Range(0, 2)) = 0.5
         _SpecularScale ("Specular Scale", Range(1, 12)) = 2
-        _HalfLambert ("Half Lambert", Range(0, 1)) = 0.5
-        _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.3
+        _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
+        _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
         _Brightness ("Brightness", Range(0.5, 20)) = 1.0
         _BakedSpecularDirection ("Baked Specular Direction", Vector) = (0, 0, 1)
         [Toggle(_USEMSAMAP)] _UseMsaMap ("Use Metallic Roughness Map", Float) = 0
@@ -635,7 +635,7 @@ Shader "Custom/PBR_Mobile"
                     half shadowAttenuation = 1.0;
                     
                     // 当 _ShadowScale >= 0.9 时，跳过阴影计算以优化性能
-                    if (_ShadowScale < 0.8)
+                    if (_ShadowScale < 0.88)
                     {
                         float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS);
                         shadowCoord.w = max(shadowCoord.w, 0.001);
@@ -643,8 +643,21 @@ Shader "Custom/PBR_Mobile"
                         
                         NdotL = dot(output.normalWS, mainLight.direction);
                         half baseShadow = mainLight.shadowAttenuation;
-                        // 使用 _ShadowScale 和 _HalfLambert 共同控制阴影强度
-                        shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale * (1.0 - _HalfLambert) + _HalfLambert);
+                        
+                        // 使用Lambert光照作为遮罩来平滑阴影锯齿（预计算）
+                        half lambertMask = saturate(NdotL * 0.5 + 0.5);
+                        
+                        // 检测阴影边界并应用Lambert遮罩平滑
+                        half shadowEdge = saturate((baseShadow - 0.3) / 0.4);
+                        half smoothedShadow = lerp(baseShadow, lambertMask, shadowEdge * (1.0 - shadowEdge) * shadowEdge);
+                        
+                        // 应用阴影强度控制
+                        shadowAttenuation = lerp(smoothedShadow, 1.0, _ShadowScale);
+                        
+                        // 背面剔除优化 - 使用与Half Lambert协调的范围
+                        half backfaceRange = lerp(0.0, 1.0, lambertMask);
+                        half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, NdotL);
+                        shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                     }
                     else
                     {
@@ -686,35 +699,35 @@ Shader "Custom/PBR_Mobile"
                 lightDir = mainLight.direction; 
                 
                 #ifdef _USEVERSHADOW
-                    // 顶点阴影模式
-                    if (_ShadowScale < 0.8)
+                    // 顶点阴影模式 - 直接使用顶点着色器预计算的阴影值（已包含完整算法）
+                    if (_ShadowScale < 0.88)
                     {
-                        half rawShadow = input.shadowAttenuation;
-                        
-                        // 简单的阴影计算，使用_ShadowScale控制强度
-                        shadowAttenuation = lerp(rawShadow, 1.0, _ShadowScale);
-                        
-                        // 背面剔除优化 - 使用固定范围0.3
-                        half backfaceFactor = smoothstep(-0.3, 0.3, input.NdotL);
-                        shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
+                        shadowAttenuation = input.shadowAttenuation;
                     }
-                    // 当 _ShadowScale >= 0.9 时，shadowAttenuation 保持为 1.0（已在上面初始化）
+                    // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #else
                     // 像素阴影模式
-                    if (_ShadowScale < 0.8)
+                    if (_ShadowScale < 0.88)
                     {
                         half baseShadow = mainLight.shadowAttenuation;
                         half pixelNdotL = dot(mat.normalWS, lightDir);
                         
-                        // 简单的阴影计算，使用_ShadowScale控制强度
-                        shadowAttenuation = lerp(baseShadow, 1.0, _ShadowScale);
+                        // 使用Lambert光照作为遮罩来平滑阴影锯齿
+                        half lambertMask = saturate(pixelNdotL * 0.5 + 0.5);
+                        
+                        // 检测阴影边界并应用Lambert遮罩平滑
+                        half shadowEdge = saturate((baseShadow - 0.3) / 0.4);
+                        half smoothedShadow = lerp(baseShadow, lambertMask, shadowEdge * (1.0 - shadowEdge) * shadowEdge);
+                        
+                        // 应用阴影强度控制
+                        shadowAttenuation = lerp(smoothedShadow, 1.0, _ShadowScale);
                         
                         // 背面剔除优化 - 使用与Half Lambert协调的范围
-                        half backfaceRange = lerp(0.0, 1.0, pixelNdotL);
+                        half backfaceRange = lerp(0.0, 1.0, lambertMask);
                         half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, pixelNdotL);
                         shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                     }
-                    // 当 _ShadowScale >= 0.9 时，shadowAttenuation 保持为 1.0（已在上面初始化）
+                    // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #endif
                 
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
