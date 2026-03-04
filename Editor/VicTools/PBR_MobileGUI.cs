@@ -190,11 +190,11 @@ public class PBR_MobileGUI : ShaderGUI
         m_MaterialEditor.RangeProperty(roughness, "粗糙度");
         m_MaterialEditor.RangeProperty(specularScale, "高光强度");
         m_MaterialEditor.RangeProperty(halfLambert, "半兰伯特");
-        m_MaterialEditor.RangeProperty(shadowScale, "自身阴影强度");
+        m_MaterialEditor.RangeProperty(shadowScale, "自身阴影衰减");
         m_MaterialEditor.RangeProperty(brightness, "亮度");
         
         // 只在非 Trans 版本显示烘焙高光方向
-        if (!isTransShader && disableEnvironment != null && disableEnvironment.floatValue < 0.5f && bakedSpecularDirection != null)
+        if (disableEnvironment != null && disableEnvironment.floatValue < 0.5f && bakedSpecularDirection != null)
         {
             m_MaterialEditor.VectorProperty(bakedSpecularDirection, "烘焙高光方向");
         }

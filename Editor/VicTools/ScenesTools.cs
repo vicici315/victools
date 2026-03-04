@@ -1,3 +1,4 @@
+// 场景工具 v2.14 添加lighting材质(用于烘焙打灯时查看实时灯光效果)快速切换功能按钮
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -95,6 +96,8 @@ public class ResourceBoxFileItem
         private string _searchText = ""; // 搜索文本
         private Material _selectedMaterial; // 用于存储用户手动选择的材质
         private Texture2D _lightDirIcon; // lightDir.png图标
+        private Texture2D _switchPBRMIcon; // lightDir.png图标
+        private bool _setStatic = false;
         private bool _selPrefab = false;
         private bool _selMesh = false;
         private bool _selLODGroup = false;
@@ -117,7 +120,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.13]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.15]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -147,6 +150,7 @@ public class ResourceBoxFileItem
             _selMeshObj = EditorPrefs.GetBool("ScenesTools_selMeshObj", true);
             _selParticleObj = EditorPrefs.GetBool("ScenesTools_selParticleObj", false);
             _selParent = EditorPrefs.GetBool("ScenesTools_selParent", false);
+            _setStatic = EditorPrefs.GetBool("ScenesTools_selStatic", false);
             // 加载保存的资源箱数据
             LoadResourceBox();
             
@@ -161,6 +165,7 @@ public class ResourceBoxFileItem
             // 加载lightDir图标 - 使用Unity包路径（兼容开发环境和打包发布）
             // 方法1：直接使用包路径（推荐，因为package.json中的name是固定的）
             string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
+            string switchPBRMicon = "Packages/com.youdoo.victools/Editor/VicTools/switchPBRM.png";
             
             // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
             // #if UNITY_2019_3_OR_NEWER
@@ -174,6 +179,7 @@ public class ResourceBoxFileItem
             
             // 加载lightDir图标
             _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
+            _switchPBRMIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(switchPBRMicon);
             
             // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
             if (_lightDirIcon == null)
@@ -206,6 +212,7 @@ public class ResourceBoxFileItem
             EditorPrefs.SetBool("ScenesTools_selMeshObj", _selMeshObj);
             EditorPrefs.SetBool("ScenesTools_selParticleObj", _selParticleObj);
             EditorPrefs.SetBool("ScenesTools_selParent", _selParent);
+            EditorPrefs.SetBool("ScenesTools_selStatic", _setStatic);
             // 保存资源箱数据（自动保存，不显示提示框）
             // SaveResourceBox();
         }
@@ -1113,16 +1120,27 @@ public class ResourceBoxFileItem
             EditorGUILayout.EndHorizontal();
             
             EditorGUILayout.BeginHorizontal();
+            GUILayout.BeginHorizontal(GUILayout.Width(40)); // 限制整个 Toggle 控件的宽度
+            _setStatic = base.CreateToggleWithStyle(new GUIContent("Static", "切换用于烘焙的静态对象材质"), _setStatic, null, null, null, null, 40, 20);
+            GUILayout.EndHorizontal();
+            
+            GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f); // 浅黄色背景
+            if (_switchPBRMIcon != null)
+            {
+                if (GUILayout.Button(new GUIContent(_switchPBRMIcon, "PBR_Mobile材质切换可接收灯光材质"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    SceneTools.SwitchPBRLightingShader(_setStatic);
+                }
+            }
             // 添加lightDir图标按钮 - 在"设置层级"按钮左边
             if (_lightDirIcon != null)
             {
-                GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f); // 浅黄色背景
                 if (GUILayout.Button(new GUIContent(_lightDirIcon, "校正(PBR_Mobile)烘焙高光方向"), GUILayout.Height(35), GUILayout.Width(38)))
                 {
                     SceneTools.ApplyLightDirectionToMaterials();
                 }
-                GUI.backgroundColor = new Color(0.4f, 0.5f, 0.7f);
             }
+            GUI.backgroundColor = new Color(0.4f, 0.5f, 0.7f);
             if (GUILayout.Button(new GUIContent("设置层级", "设置所有选择对象放入最后选择的对象中"), GUILayout.Height(30)))
             {
                 SceneTools.SetSelectedObjectsAsChildren();

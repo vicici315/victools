@@ -1,3 +1,4 @@
+// 材质查找v
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -61,7 +62,7 @@ namespace VicTools
             
             // 使用局部禁用组替代全局 GUI.enabled
             EditorGUI.BeginDisabledGroup(!_targetShader);
-            if (GUILayout.Button("查找使用该着色器的材质", style.normalButton))
+            if (GUILayout.Button(new GUIContent("材质查找", "查找使用该着色器的材质"), style.normalButton))
             {
                 FindMaterialsByShader();
             }

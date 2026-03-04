@@ -52,10 +52,13 @@ namespace VicTools
                 {
                     foreach (Material mat in renderer.sharedMaterials)
                     {
-                        if (mat != null && !processedMaterials.Contains(mat) &&
-                            mat.shader && mat.shader.name == "Custom/PBR_Mobile")
+                        if (mat != null && !processedMaterials.Contains(mat) && mat.shader)
                         {
-                            if (mat.HasProperty("_BakedSpecularDirection"))
+                            // 支持 PBR_Mobile 和 PBR_Mobile_Trans
+                            bool isPBRMobile = mat.shader.name == "Custom/PBR_Mobile";
+                            bool isPBRMobileTrans = mat.shader.name == "Custom/PBR_Mobile_Trans";
+                            
+                            if ((isPBRMobile || isPBRMobileTrans) && mat.HasProperty("_BakedSpecularDirection"))
                             {
                                 mat.SetVector("_BakedSpecularDirection", lightDirection);
                                 EditorUtility.SetDirty(mat);
@@ -82,6 +85,216 @@ namespace VicTools
             {
                 EditorUtility.DisplayDialog("警告", 
                     "未在场景中找到使用 Custom/PBR_Mobile 的材质", 
+                    "确定");
+            }
+        }
+
+        /// <summary>
+        /// 切换选中对象的材质着色器在 PBR_Mobile 和 PBR_Lighting 之间
+        /// 公共函数调用方法：SceneTools.SwitchPBRLightingShader();
+        /// </summary>
+        /// <param name="useStaticObjects">true: 处理场景中所有静态对象; false: 只处理选中的对象</param>
+        public static void SwitchPBRLightingShader(bool useStaticObjects = false)
+        {
+            GameObject[] targetObjects;
+            
+            if (useStaticObjects)
+            {
+                // 获取场景中所有带 Renderer 的静态对象
+                Renderer[] allRenderers = Object.FindObjectsOfType<Renderer>();
+                List<GameObject> staticObjects = new List<GameObject>();
+                
+                foreach (Renderer renderer in allRenderers)
+                {
+                    GameObject obj = renderer.gameObject;
+                    // 检查对象是否有任何静态标志
+                    StaticEditorFlags flags = GameObjectUtility.GetStaticEditorFlags(obj);
+                    if (flags != 0 && !staticObjects.Contains(obj))
+                    {
+                        staticObjects.Add(obj);
+                    }
+                }
+                
+                targetObjects = staticObjects.ToArray();
+                
+                if (targetObjects.Length == 0)
+                {
+                    EditorUtility.DisplayDialog("提示", "场景中没有找到静态对象", "确定");
+                    return;
+                }
+            }
+            else
+            {
+                // 使用选中的对象
+                targetObjects = Selection.gameObjects;
+                
+                if (targetObjects.Length == 0)
+                {
+                    EditorUtility.DisplayDialog("提示", "请先选择场景中的对象", "确定");
+                    return;
+                }
+            }
+
+            Shader pbrMobileShader = Shader.Find("Custom/PBR_Mobile");
+            Shader pbrLightingShader = Shader.Find("Custom/PBR_Lighting");
+
+            if (pbrMobileShader == null || pbrLightingShader == null)
+            {
+                EditorUtility.DisplayDialog("错误", 
+                    "未找到着色器:\n" +
+                    (pbrMobileShader == null ? "- Custom/PBR_Mobile\n" : "") +
+                    (pbrLightingShader == null ? "- Custom/PBR_Lighting\n" : ""),
+                    "确定");
+                return;
+            }
+
+            int switchedCount = 0;
+            int pbrMobileToLighting = 0;
+            int pbrLightingToMobile = 0;
+            HashSet<Material> processedMaterials = new HashSet<Material>();
+
+            // 记录 Undo 操作
+            string undoName = useStaticObjects ? "Switch PBR Lighting Shader (Static Objects)" : "Switch PBR Lighting Shader";
+            Undo.RecordObjects(targetObjects, undoName);
+
+            // 如果是静态对象模式，先检查材质一致性
+            bool forceSetToLighting = false;
+            if (useStaticObjects)
+            {
+                HashSet<string> shaderTypes = new HashSet<string>();
+                
+                // 收集所有材质的着色器类型
+                foreach (GameObject obj in targetObjects)
+                {
+                    Renderer renderer = obj.GetComponent<Renderer>();
+                    if (renderer != null)
+                    {
+                        foreach (Material mat in renderer.sharedMaterials)
+                        {
+                            if (mat != null)
+                            {
+                                string shaderName = mat.shader.name;
+                                if (shaderName == "Custom/PBR_Mobile" || shaderName == "Custom/PBR_Lighting")
+                                {
+                                    shaderTypes.Add(shaderName);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 如果材质不一致（同时存在两种着色器），强制设置为 PBR_Lighting
+                if (shaderTypes.Count > 1)
+                {
+                    forceSetToLighting = true;
+                }
+            }
+
+            foreach (GameObject obj in targetObjects)
+            {
+                Renderer[] renderers;
+                
+                if (useStaticObjects)
+                {
+                    // 静态对象模式：只处理对象本身的 Renderer，不包含子对象
+                    Renderer renderer = obj.GetComponent<Renderer>();
+                    renderers = renderer != null ? new Renderer[] { renderer } : new Renderer[0];
+                }
+                else
+                {
+                    // 选中对象模式：处理对象及其所有子对象
+                    renderers = obj.GetComponentsInChildren<Renderer>(true);
+                }
+                
+                foreach (Renderer renderer in renderers)
+                {
+                    // 记录 Renderer 的 Undo
+                    Undo.RecordObject(renderer, undoName);
+                    
+                    foreach (Material mat in renderer.sharedMaterials)
+                    {
+                        if (mat == null || processedMaterials.Contains(mat))
+                            continue;
+
+                        string shaderName = mat.shader.name;
+                        
+                        if (forceSetToLighting)
+                        {
+                            // 强制设置为 PBR_Lighting（材质不一致时）
+                            if (shaderName == "Custom/PBR_Mobile" || shaderName == "Custom/PBR_Lighting")
+                            {
+                                Undo.RecordObject(mat, "Force Set to PBR_Lighting");
+                                mat.shader = pbrLightingShader;
+                                EditorUtility.SetDirty(mat);
+                                processedMaterials.Add(mat);
+                                switchedCount++;
+                                if (shaderName == "Custom/PBR_Mobile")
+                                {
+                                    pbrMobileToLighting++;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // 正常切换逻辑（材质一致时）
+                            if (shaderName == "Custom/PBR_Mobile")
+                            {
+                                // 记录材质的 Undo
+                                Undo.RecordObject(mat, "Switch to PBR_Lighting");
+                                mat.shader = pbrLightingShader;
+                                EditorUtility.SetDirty(mat);
+                                processedMaterials.Add(mat);
+                                switchedCount++;
+                                pbrMobileToLighting++;
+                            }
+                            else if (shaderName == "Custom/PBR_Lighting")
+                            {
+                                // 记录材质的 Undo
+                                Undo.RecordObject(mat, "Switch to PBR_Mobile");
+                                mat.shader = pbrMobileShader;
+                                EditorUtility.SetDirty(mat);
+                                processedMaterials.Add(mat);
+                                switchedCount++;
+                                pbrLightingToMobile++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (switchedCount > 0)
+            {
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+                
+                // 只有在选中多个对象或处理静态对象时才显示提示窗口
+                if (useStaticObjects || targetObjects.Length > 1)
+                {
+                    string objectType = useStaticObjects ? "静态对象" : "选中对象";
+                    string message;
+                    
+                    if (forceSetToLighting)
+                    {
+                        message = $"检测到材质不一致，已统一设置为 PBR_Lighting ({objectType}):\n";
+                        message += $"- 共处理 {switchedCount} 个材质";
+                    }
+                    else
+                    {
+                        message = $"成功切换 {switchedCount} 个材质的着色器 ({objectType}):\n";
+                        if (pbrMobileToLighting > 0)
+                            message += $"- PBR_Mobile → PBR_Lighting: {pbrMobileToLighting} 个\n";
+                        if (pbrLightingToMobile > 0)
+                            message += $"- PBR_Lighting → PBR_Mobile: {pbrLightingToMobile} 个";
+                    }
+                    
+                    EditorUtility.DisplayDialog("成功", message.TrimEnd('\n'), "确定");
+                }
+            }
+            else
+            {
+                string objectType = useStaticObjects ? "静态对象" : "选中的对象";
+                EditorUtility.DisplayDialog("提示", 
+                    $"{objectType}中没有使用 Custom/PBR_Mobile 或 Custom/PBR_Lighting 着色器的材质", 
                     "确定");
             }
         }

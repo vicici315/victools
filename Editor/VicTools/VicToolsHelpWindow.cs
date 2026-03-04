@@ -65,6 +65,10 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.7.7",
+"【场景工具2.15】 添加一键切换lighting材质可接收实时灯光(用于场景烘焙打灯时查看实时灯光效果)快速切换功能；支持PBR_Mobile_Trans材质烘焙高光校正",
+"PBR_Mobile5.6  修复反射被烘焙光照覆盖问题",
+"PBR_Mobile5.7 烘焙投影支持，使用Unity标准的Subtractive模式方法",
                 "■ v2.7.6",
                 "• 【性能分析1.6】优化未使用资源扫描和删除逻辑，修复Prefab嵌套依赖检测问题",
                 "   增强Prefab依赖关系检测，通过GUID引用识别嵌套Prefab",

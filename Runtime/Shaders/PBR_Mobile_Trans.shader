@@ -12,6 +12,7 @@
 // 继承PBR_Mobile5.3    优化自身阴影平滑度，减少阶梯状硬边
 // 继承PBR_Mobile5.4    性能优化 - 预计算PBR属性，消除重复计算；添加球形反射贴图支持，包含菲涅尔效果
 // 继承PBR_Mobile5.5 完善自身阴影与半兰伯特阴影
+// 继承PBR_Mobile5.7 优化自身阴影明暗交界线
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
@@ -179,6 +180,8 @@ Shader "Custom/PBR_Mobile_Trans"
                 half4 _EmissionColor;
                 half _Cutoff;
                 
+                float3 _BakedSpecularDirection;
+                
                 float _ReflectionStrength;
                 float _ReflectionBlur;
                 float _ReflectionFresnelPower;
@@ -315,7 +318,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 half mainLightLuminance = dot(mainLightColor, half3(0.299, 0.587, 0.114));
                 
-                half lightInfluence = saturate(mainLightLuminance * 2.0 + 0.1);
+                half lightInfluence = saturate(mainLightLuminance * 0.5 + 0.5); // 降低影响，确保最小值为0.5
                 reflectionIntensity *= lightInfluence;
                 
                 return reflectionColor * reflectionIntensity;
@@ -329,6 +332,28 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
                 return lightColor * specular * shadowAttenuation; 
+            }
+            
+            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic)
+            {
+                
+                half3 finalLightDir = lightDir;
+                float3 bakedDir = float3(_BakedSpecularDirection.x, _BakedSpecularDirection.y, _BakedSpecularDirection.z);
+                if (length(bakedDir) > 0.001)
+                {
+                    
+                    finalLightDir = normalize(bakedDir);
+                }
+                
+                half3 halfDir = normalize(finalLightDir + viewDir);
+                half NdotH = saturate(dot(normalWS, halfDir));
+                
+                half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
+                
+                half metallicFactor = metallic * metallic; 
+                half3 adjustedBakedGI = lerp(bakedGI, half3(1, 1, 1), metallicFactor);
+                
+                return adjustedBakedGI * specular * _SpecularScale;
             }
 
             Varyings vert(Attributes input)
@@ -433,7 +458,23 @@ Shader "Custom/PBR_Mobile_Trans"
                 half3 viewDirWS = normalize(input.viewDirWS);
                 
                 half shadowAttenuation = 1;
-                Light mainLight = GetMainLight(TransformWorldToShadowCoord(input.positionWS));
+                float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);
+                Light mainLight = GetMainLight(shadowCoord);
+                half3 lightDir = mainLight.direction;
+                
+                // 处理ShadowMask（用于Subtractive和Shadowmask模式下的Mix灯光）
+                #if defined(LIGHTMAP_ON)
+                    #if defined(SHADOWS_SHADOWMASK)
+                        // Shadowmask模式：使用烘焙的阴影遮罩
+                        half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+                        mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
+                    #elif defined(LIGHTMAP_SHADOW_MIXING)
+                        // Subtractive模式：从lightmap中减去主光源的贡献，然后添加实时光照
+                        // 这样可以让动态物体正确接收实时阴影
+                        // 注意：在Subtractive模式下，静态物体的阴影已经烘焙到lightmap中
+                        // 动态物体需要接收实时阴影
+                    #endif
+                #endif
                 
                 #ifdef _USEVERSHADOW
                     // 顶点阴影模式 - 直接使用顶点着色器预计算的阴影值（已包含完整算法）
@@ -447,10 +488,19 @@ Shader "Custom/PBR_Mobile_Trans"
                     if (_ShadowScale < 0.88)
                     {
                         half baseShadow = mainLight.shadowAttenuation;
-                        half pixelNdotL = dot(mat.normalWS, mainLight.direction);
+                        half pixelNdotL = dot(mat.normalWS, lightDir);
+                        
+                        // 方法：通过偏移pixelNdotL来调整明暗交界线
+                        // 正值偏移 → 交界线向暗部移动（亮部扩大）
+                        // 负值偏移 → 交界线向亮部移动（暗部扩大）
+                        pixelNdotL = pixelNdotL - 0.1;  // 向白色部分偏移（亮部缩小）
                         
                         // 使用Lambert光照作为遮罩来平滑阴影锯齿
                         half lambertMask = saturate(pixelNdotL * 0.5 + 0.5);
+                        
+                        // 使用pow让明暗交界线向白色部分偏移（暗部收缩，亮部扩大）
+                        // 指数越大，交界线越向暗部移动
+                        lambertMask = fastPow(lambertMask, 2);
                         
                         // 检测阴影边界并应用Lambert遮罩平滑
                         half shadowEdge = saturate((baseShadow - 0.3) / 0.4);
@@ -467,35 +517,57 @@ Shader "Custom/PBR_Mobile_Trans"
                     // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #endif
 		
-                half3 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
-                half3 lightDir = mainLight.direction;
-                
-                half3 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
-                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
-                
-                // 使用预计算的diffuseColor和specularColor（性能优化）
-                half3 finalColor = mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
-                
+                // 烘焙光照处理
                 half3 bakedGI = 0;
                 #ifdef LIGHTMAP_ON
-                    
-                    bakedGI = SampleLightmap(input.lightmapUV, mat.normalWS)*4.0;
+                    // 采样烘焙光照（不乘以4.0，保持与PBR_Mobile一致）
+                    bakedGI = SampleLightmap(input.lightmapUV, mat.normalWS);
                 #else
-                    
+                    // 没有lightmap，使用球谐光照
                     bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
                 // 使用预计算的diffuseColor和specularColor（性能优化）
                 half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
-                finalColor += ambient;
+                
+                // 计算实时光照
+                half3 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
+                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
+                
+                // Subtractive模式特殊处理：让静态物体接收动态物体的实时阴影
+                #if defined(LIGHTMAP_ON) && defined(LIGHTMAP_SHADOW_MIXING)
+                    // Unity标准的Subtractive模式实现：
+                    // 在阴影区域，使用unity_ShadowColor调暗烘焙光照
+                    // shadowAttenuation: 1.0 = 无阴影, 0.0 = 完全阴影
+                    half shadowStrength = 1.0 - shadowAttenuation;
+                    half3 shadowTint = lerp(half3(1, 1, 1), unity_ShadowColor.rgb, shadowStrength);
+                    
+                    // 将实时阴影应用到烘焙光照上（保持烘焙的所有细节）
+                    ambient *= shadowTint;
+                #endif
+                
+                // 组合烘焙光照和实时光照
+                half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                
+                // 烘焙高光（保留原来的效果）
+                half3 bakedSpecular = 0;
+                #ifdef LIGHTMAP_ON
+                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic);
+                    finalColor += mat.specularColor * bakedSpecular;
+                #endif
                 
                 finalColor *= _Brightness;
                 
                 half3 reflectionContrib = 0;
                 #ifdef _USEREFLECTION
                     reflectionContrib = CalculateSphericalReflection(mat.normalWS, viewDirWS, mat.metallic, mat.roughness, mat.uv, lightColor);
+                    // 反射应该混合而不是累加，金属度高的材质反射替换漫反射
+                    finalColor = lerp(finalColor, finalColor + reflectionContrib, mat.metallic);
+                    // 非金属材质的反射叠加
+                    finalColor += reflectionContrib * (1.0 - mat.metallic) * 0.5;
                 #endif
-                finalColor += reflectionContrib * mat.albedo;
+                // finalColor += reflectionContrib * mat.albedo;
                 
                 #ifdef _USEAOMAP
                     half3 contrastedAO = saturate((metallicGloss.b - 0.5) * _OcclusionContrast + 0.5);
