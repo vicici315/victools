@@ -13,6 +13,7 @@
 // 继承PBR_Mobile5.4    性能优化 - 预计算PBR属性，消除重复计算；添加球形反射贴图支持，包含菲涅尔效果
 // 继承PBR_Mobile5.5 完善自身阴影与半兰伯特阴影
 // 继承PBR_Mobile5.7 优化自身阴影明暗交界线
+// 继承PBR_Mobile5.8 高光亮度还原 - 移除specularColor削减，保持完整高光亮度；烘焙高光受实时阴影影响
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
@@ -28,7 +29,7 @@ Shader "Custom/PBR_Mobile_Trans"
         [Space(5)]
         _Metallic ("Metallic", Range(0, 1)) = 0.0
         _Roughness ("Roughness", Range(0, 2)) = 0.5
-        _SpecularScale ("Specular Scale", Range(1, 12)) = 2
+        _SpecularScale ("Specular Scale", Range(0.1, 2)) = 1
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
         _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
         _Brightness ("Brightness", Range(0.5, 2)) = 1.2
@@ -331,10 +332,11 @@ Shader "Custom/PBR_Mobile_Trans"
                 half NdotH = saturate(dot(normalWS, halfDir));
                 
                 half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
-                return lightColor * specular * shadowAttenuation; 
+                
+                return lightColor * specular * shadowAttenuation * 2.0; 
             }
             
-            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic)
+            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic, half shadowAttenuation)
             {
                 
                 half3 finalLightDir = lightDir;
@@ -353,7 +355,8 @@ Shader "Custom/PBR_Mobile_Trans"
                 half metallicFactor = metallic * metallic; 
                 half3 adjustedBakedGI = lerp(bakedGI, half3(1, 1, 1), metallicFactor);
                 
-                return adjustedBakedGI * specular * _SpecularScale;
+                // 烘焙高光也应该受实时阴影影响
+                return adjustedBakedGI * specular * _SpecularScale * shadowAttenuation;
             }
 
             Varyings vert(Attributes input)
@@ -527,7 +530,7 @@ Shader "Custom/PBR_Mobile_Trans"
                     bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
-                // 使用预计算的diffuseColor和specularColor（性能优化）
+                // 使用预计算的diffuseColor（性能优化）
                 half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
                 
                 // 计算实时光照
@@ -547,14 +550,14 @@ Shader "Custom/PBR_Mobile_Trans"
                     ambient *= shadowTint;
                 #endif
                 
-                // 组合烘焙光照和实时光照
-                half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                // 组合烘焙光照和实时光照（高光不再被specularColor削减）
+                half3 finalColor = ambient + mat.diffuseColor * diffuse + specular * _SpecularScale;
                 
                 // 烘焙高光（保留原来的效果）
                 half3 bakedSpecular = 0;
                 #ifdef LIGHTMAP_ON
-                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic);
-                    finalColor += mat.specularColor * bakedSpecular;
+                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
+                    finalColor += bakedSpecular;
                 #endif
                 
                 finalColor *= _Brightness;

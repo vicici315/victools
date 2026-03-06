@@ -1,17 +1,18 @@
 // URP车窗玻璃Shader - 支持透明、菲涅尔反射、球形环境贴图
+// 1.2 添加"Reflection Scale"参数，控制反射图的明显度
 Shader "Custom/Glass_carWindow"
 {
     Properties
     {
         [Header(Glass Properties)]
         [Space(5)]
-        _BaseColor ("Glass Tint Color", Color) = (0.8, 0.9, 1.0, 0.3)
-        _Transparency ("Transparency", Range(0, 1)) = 0.1
+        [MainColor]_BaseColor ("Base Color", Color) = (0.8, 0.9, 1.0, 0.0)
+        _Transparency ("Global Transparency", Range(0, 1)) = 1
         
         [Header(Specular)]
         [Space(5)]
-        _Smoothness ("Smoothness", Range(0.01, 1)) = 0.85
-        _SpecularStrength ("Specular Strength", Range(0, 2)) = 1.0
+        _Smoothness ("Smoothness", Range(0.01, 1)) = 0.55
+        _SpecularStrength ("Specular Strength", Range(0, 1)) = 0.5
         
         [Header(Distortion)]
         [Space(5)]
@@ -23,8 +24,9 @@ Shader "Custom/Glass_carWindow"
         [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection Map", Float) = 1
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
+        _ReflectionScale ("Reflection Scale", Range(0.1, 3.0)) = 1.2
         _ReflectionStrength ("Reflection Strength", Range(0, 12)) = 1.0
-        _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
+        _ReflectionBlur ("Max Reflection Blur", Range(0, 6)) = 5.0
         
         [Header(Fresnel)]
         _FresnelPower ("Fresnel Power", Range(0.1, 10)) = 2.5
@@ -50,7 +52,8 @@ Shader "Custom/Glass_carWindow"
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
             
-            Blend SrcAlpha OneMinusSrcAlpha
+            // 使用预乘Alpha混合，让高光以叠加方式显示
+            Blend One OneMinusSrcAlpha
             ZWrite Off
             Cull[_Cull]
             
@@ -82,6 +85,7 @@ Shader "Custom/Glass_carWindow"
                 float4 _BumpMap_ST;
                 half _BumpScale;
                 half _ReflectionStrength;
+                half _ReflectionScale;
                 half _ReflectionBlur;
             CBUFFER_END
 
@@ -141,6 +145,7 @@ Shader "Custom/Glass_carWindow"
 
             // 玻璃高光 - 使用Phong反射模型（基于反射向量）
             // specular = lightColor * pow(saturate(dot(reflectDir, viewDir)), gloss)
+            // 添加能量守恒：smoothness越高，高光越聚焦，能量越集中
             half3 FastSpecular(half3 normalWS, half3 lightDir, half3 viewDirWS, half3 lightColor, half shadowAttenuation, float fresnel)
             {
                 // 计算光线的反射向量
@@ -156,11 +161,16 @@ Shader "Custom/Glass_carWindow"
                 // 使用fastPow计算高光
                 half specular = fastPow(max(RdotV, 0.001), gloss);
                 
+                // 能量守恒归一化（调整后的公式，减少低smoothness时的衰减）
+                // 使用 (gloss + 8) / 16 作为归一化因子，提供更平缓的过渡
+                half normalization = (gloss + 8.0) / 16.0;
+                specular *= normalization;
+                
                 // 高光受菲涅尔影响（边缘更亮）
-                half fresnelBoost = lerp(0.7, 1.0, fresnel);
+                half fresnelBoost = lerp(0.5, 0.8, fresnel);
                 
                 // 玻璃材质的高光
-                return lightColor * specular * _SpecularStrength * shadowAttenuation * fresnelBoost;
+                return lightColor * specular * shadowAttenuation;
             }
 
             Varyings vert(Attributes input)
@@ -183,7 +193,13 @@ Shader "Custom/Glass_carWindow"
                 
                 return output;
             }
-
+            // ● 饱和度调整函数
+            half3 AdjustSaturation(half3 color, half saturation) {
+                // 计算亮度（使用标准亮度权重）
+                half luminance = dot(color, half3(0.299, 0.587, 0.114));
+                // 线性插值在原始颜色和灰度之间
+                return lerp(half3(luminance, luminance, luminance), color, saturation);
+            }
             half4 frag(Varyings input) : SV_Target
             {
                 // 归一化向量
@@ -216,11 +232,11 @@ Shader "Custom/Glass_carWindow"
                     float3 reflectionVector = reflect(-viewDirWS, normalWS);
                     
                     // 采样球形反射贴图
-                    float3 reflectionColor = SampleSphericalReflection(reflectionVector, _ReflectionBlur) * (glassColor * 1.2);
+                    float3 reflectionColor = SampleSphericalReflection(reflectionVector, lerp(_ReflectionBlur,0,_Smoothness)) * (glassColor);
                     reflectionColor *= _ReflectionStrength;
                     
-                    // 混合反射
-                    finalColor = lerp(glassColor, reflectionColor, fresnel);
+                    // 混合反射（fresnel后面乘以的值控制反射贴图的突出显示度）
+                    finalColor = lerp(glassColor, reflectionColor, saturate(fresnel*_ReflectionScale));
                     // finalColor = reflectionColor;
                 #endif
                 
@@ -233,7 +249,7 @@ Shader "Custom/Glass_carWindow"
                 half shadowAttenuation = mainLight.shadowAttenuation;
                 
                 // 计算高光（传入fresnel，让边缘高光更亮）
-                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel);
+                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) *AdjustSaturation(_BaseColor.rgb,0.5)*(fresnel + 0.2 * _SpecularStrength);
                 
                 // 确保高光可见（调试用）
                 // return half4(specular * 10.0, 1.0); // 取消注释此行可以只看高光
@@ -249,12 +265,17 @@ Shader "Custom/Glass_carWindow"
                 
                 // 计算高光亮度（用于透明度）
                 half specularLuminance = dot(specular, half3(0.299, 0.587, 0.114));
-                // return specularLuminance;
+                
                 // 透明度计算：
                 // 1. 基础透明度受菲涅尔影响（边缘更不透明）
-                half baseAlpha = lerp(_Transparency, 1.0, fresnel * 0.9);
+                half baseAlpha = lerp(_BaseColor.a, 1, fresnel);
+                half finalAlpha = saturate(baseAlpha + specularLuminance)*_Transparency;
                 
-                return half4(finalColor, saturate(baseAlpha + specularLuminance*0.46));
+                // 预乘Alpha：将颜色乘以alpha，让高光以叠加方式显示
+                // 这样高光在亮背景下不会变暗
+                finalColor *= finalAlpha;
+                
+                return half4(finalColor, finalAlpha);
             }
             ENDHLSL
         }

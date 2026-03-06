@@ -1,3 +1,4 @@
+// 5.8 添加存档读档功能按钮
 using UnityEngine;
 using UnityEditor;
 
@@ -164,11 +165,25 @@ public class PBR_MobileGUI : ShaderGUI
         EditorGUILayout.BeginHorizontal();
         GUILayout.Label("全局设置", EditorStyles.boldLabel);
         
+        // 添加存档按钮
+        GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
+        if (GUILayout.Button("存档", GUILayout.Width(50)))
+        {
+            EditorApplication.delayCall += SaveMaterialParameters;
+        }
+        
+        // 添加读档按钮
+        GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f); // 绿色背景
+        if (GUILayout.Button("读档", GUILayout.Width(50)))
+        {
+            EditorApplication.delayCall += LoadMaterialParameters;
+        }
+        
         // 添加重置按钮
         GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f); // 黄色背景
-        if (GUILayout.Button("重置参数", GUILayout.Width(80)))
+        if (GUILayout.Button("重置参数", GUILayout.Width(60)))
         {
-            ResetMaterialParameters();
+            EditorApplication.delayCall += ResetMaterialParameters;
         }
         GUI.backgroundColor = Color.white;
         EditorGUILayout.EndHorizontal();
@@ -380,113 +395,338 @@ public class PBR_MobileGUI : ShaderGUI
     }
 
     /// <summary>
-    /// 重置材质参数为默认值（保留纹理）
+    /// 获取材质参数存档路径
     /// </summary>
-    private void ResetMaterialParameters()
+    private string GetPresetPath(string presetName)
     {
-        if (!EditorUtility.DisplayDialog("重置参数", 
-            "确定要将所有参数重置为Shader默认值吗？\n\n注意：纹理和Toggle选项不会被重置。", 
-            "确定", "取消"))
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return null;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Library/VicTools/PBRM/" + shaderName;
+        
+        if (!System.IO.Directory.Exists(folderPath))
         {
-            return;
+            System.IO.Directory.CreateDirectory(folderPath);
         }
-
+        
+        return folderPath + "/" + presetName + ".json";
+    }
+    
+    /// <summary>
+    /// 存档材质参数（排除纹理）
+    /// </summary>
+    private void SaveMaterialParameters()
+    {
         Material material = m_MaterialEditor.target as Material;
         if (material == null || material.shader == null) return;
-
-        // 记录撤销操作
-        Undo.RecordObject(material, "Reset Material Parameters");
-
-        // 创建临时材质以获取shader默认值
-        Material tempMaterial = new Material(material.shader);
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string defaultPath = "Library/VicTools/PBRM/" + shaderName;
+        
+        // 确保目录存在
+        if (!System.IO.Directory.Exists(defaultPath))
+        {
+            System.IO.Directory.CreateDirectory(defaultPath);
+        }
+        
+        // 弹出输入框让用户输入存档名称
+        string presetName = EditorUtility.SaveFilePanel(
+            "保存材质参数存档",
+            defaultPath,
+            "MaterialPreset",
+            "json"
+        );
+        
+        if (string.IsNullOrEmpty(presetName)) return;
+        
+        // 提取文件名（不含扩展名）
+        string fileName = System.IO.Path.GetFileNameWithoutExtension(presetName);
+        
+        SaveMaterialParametersToFile(fileName);
+    }
+    
+    /// <summary>
+    /// 保存材质参数到指定文件
+    /// </summary>
+    private void SaveMaterialParametersToFile(string presetName)
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
         
         Shader shader = material.shader;
         int propertyCount = ShaderUtil.GetPropertyCount(shader);
-
-        // 保存当前的纹理和Toggle选项
-        System.Collections.Generic.Dictionary<string, Texture> savedTextures = new System.Collections.Generic.Dictionary<string, Texture>();
-        System.Collections.Generic.Dictionary<string, float> savedToggles = new System.Collections.Generic.Dictionary<string, float>();
+        
+        // 手动构建JSON
+        System.Text.StringBuilder sb = new System.Text.StringBuilder();
+        sb.AppendLine("{");
+        bool first = true;
         
         for (int i = 0; i < propertyCount; i++)
         {
             string propertyName = ShaderUtil.GetPropertyName(shader, i);
             ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
-
-            // 保存纹理
-            if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv)
-            {
-                if (material.HasProperty(propertyName))
-                {
-                    Texture tex = material.GetTexture(propertyName);
-                    if (tex != null)
-                    {
-                        savedTextures[propertyName] = tex;
-                    }
-                }
-                continue;
-            }
-
-            // 保存Toggle类型的Float参数
-            // Toggle通常以 _Use 或 _Enable 开头，或者包含特定关键词
-            if (propertyType == ShaderUtil.ShaderPropertyType.Float)
-            {
-                string lowerName = propertyName.ToLower();
-                if (propertyName.StartsWith("_Use") || 
-                    propertyName.StartsWith("_Enable") || 
-                    propertyName.StartsWith("_Debug") ||
-                    propertyName.StartsWith("_Preview") ||
-                    propertyName.StartsWith("_Disable") ||
-                    lowerName.Contains("toggle") ||
-                    propertyName == "_Cull" ||
-                    propertyName == "_FilpG" ||
-                    propertyName == "_InvertEmisMap")
-                {
-                    if (material.HasProperty(propertyName))
-                    {
-                        savedToggles[propertyName] = material.GetFloat(propertyName);
-                    }
-                    continue;
-                }
-            }
-
-            // 从临时材质复制默认值到当前材质
+            
             if (!material.HasProperty(propertyName)) continue;
-
+            
+            // 排除纹理
+            if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+            
+            if (!first) sb.AppendLine(",");
+            first = false;
+            
+            sb.Append("  \"" + propertyName + "\": ");
+            
             switch (propertyType)
             {
                 case ShaderUtil.ShaderPropertyType.Color:
-                    material.SetColor(propertyName, tempMaterial.GetColor(propertyName));
+                    Color color = material.GetColor(propertyName);
+                    sb.Append($"[{color.r}, {color.g}, {color.b}, {color.a}]");
                     break;
-
+                    
                 case ShaderUtil.ShaderPropertyType.Vector:
-                    material.SetVector(propertyName, tempMaterial.GetVector(propertyName));
+                    Vector4 vector = material.GetVector(propertyName);
+                    sb.Append($"[{vector.x}, {vector.y}, {vector.z}, {vector.w}]");
                     break;
-
+                    
                 case ShaderUtil.ShaderPropertyType.Float:
                 case ShaderUtil.ShaderPropertyType.Range:
-                    material.SetFloat(propertyName, tempMaterial.GetFloat(propertyName));
+                    sb.Append(material.GetFloat(propertyName).ToString());
                     break;
             }
         }
-
-        // 恢复纹理
-        foreach (var kvp in savedTextures)
+        
+        sb.AppendLine();
+        sb.AppendLine("}");
+        
+        // 保存到文件
+        string path = GetPresetPath(presetName);
+        System.IO.File.WriteAllText(path, sb.ToString());
+        
+        Debug.Log($"材质参数已保存到: {path}");
+    }
+    
+    /// <summary>
+    /// 读档材质参数
+    /// </summary>
+    private void LoadMaterialParameters()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string shaderName = material.shader.name.Replace("/", "_");
+        string defaultPath = "Library/VicTools/PBRM/" + shaderName;
+        
+        // 确保目录存在
+        if (!System.IO.Directory.Exists(defaultPath))
         {
-            material.SetTexture(kvp.Key, kvp.Value);
+            System.IO.Directory.CreateDirectory(defaultPath);
         }
-
-        // 恢复Toggle选项
-        foreach (var kvp in savedToggles)
+        
+        // 弹出文件选择框
+        string presetPath = EditorUtility.OpenFilePanel(
+            "加载材质参数存档",
+            defaultPath,
+            "json"
+        );
+        
+        if (string.IsNullOrEmpty(presetPath)) return;
+        
+        LoadMaterialParametersFromFile(presetPath);
+    }
+    
+    /// <summary>
+    /// 从文件加载材质参数
+    /// </summary>
+    private void LoadMaterialParametersFromFile(string filePath)
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        if (!System.IO.File.Exists(filePath))
         {
-            material.SetFloat(kvp.Key, kvp.Value);
+            Debug.LogWarning($"存档文件不存在: {filePath}");
+            return;
         }
-
-        // 销毁临时材质
-        Object.DestroyImmediate(tempMaterial);
-
-        // 刷新材质编辑器
+        
+        // 记录撤销操作
+        Undo.RecordObject(material, "Load Material Parameters");
+        
+        // 读取JSON
+        string json = System.IO.File.ReadAllText(filePath);
+        
+        // 使用简单的JSON解析（因为EditorJsonUtility不支持Dictionary）
+        // 手动解析JSON
+        var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
+        
+        foreach (var line in lines)
+        {
+            if (line.Contains(":"))
+            {
+                // 简单解析 "propertyName": value
+                string trimmed = line.Trim().TrimEnd(',');
+                int colonIndex = trimmed.IndexOf(':');
+                if (colonIndex < 0) continue;
+                
+                string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
+                string valueStr = trimmed.Substring(colonIndex + 1).Trim();
+                
+                if (!material.HasProperty(propertyName)) continue;
+                
+                // 判断值类型
+                if (valueStr.StartsWith("["))
+                {
+                    // 数组类型（Color或Vector）
+                    valueStr = valueStr.Trim('[', ']');
+                    string[] parts = valueStr.Split(',');
+                    if (parts.Length == 4)
+                    {
+                        float[] values = new float[4];
+                        for (int i = 0; i < 4; i++)
+                        {
+                            float.TryParse(parts[i].Trim(), out values[i]);
+                        }
+                        
+                        // 尝试设置为Color或Vector
+                        try
+                        {
+                            material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
+                        }
+                        catch
+                        {
+                            material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                        }
+                    }
+                }
+                else
+                {
+                    // Float类型
+                    if (float.TryParse(valueStr, out float floatValue))
+                    {
+                        material.SetFloat(propertyName, floatValue);
+                    }
+                }
+            }
+        }
+        
+        // 刷新材质
         EditorUtility.SetDirty(material);
         
-        Debug.Log($"材质 '{material.name}' 的参数已重置为Shader默认值（纹理和 {savedToggles.Count} 个Toggle选项保留）");
+        // 刷新材质编辑器
+        if (m_MaterialEditor != null)
+        {
+            m_MaterialEditor.Repaint();
+        }
+        
+        // 刷新场景视图
+        SceneView.RepaintAll();
+        
+        // 强制更新shader关键字
+        material.shader = material.shader;
+        
+        Debug.Log($"材质参数已从存档加载: {filePath}");
+    }
+    
+    /// <summary>
+    /// 重置材质参数为默认值（使用Default存档或shader默认值）
+    /// </summary>
+    private void ResetMaterialParameters()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+        
+        string defaultPresetPath = GetPresetPath("Default");
+        
+        // 检查Default存档是否存在
+        if (System.IO.File.Exists(defaultPresetPath))
+        {
+            // 使用Default存档
+            if (EditorUtility.DisplayDialog("重置参数", 
+                "将使用Default存档重置参数。\n\n注意：纹理不会被重置。", 
+                "确定", "取消"))
+            {
+                LoadMaterialParametersFromFile(defaultPresetPath);
+            }
+        }
+        else
+        {
+            // Default存档不存在，创建它
+            if (EditorUtility.DisplayDialog("创建Default存档", 
+                "Default存档不存在，将使用Shader默认值创建Default存档。\n\n注意：纹理不会被保存。", 
+                "确定", "取消"))
+            {
+                // 创建临时材质以获取shader默认值
+                Material tempMaterial = new Material(material.shader);
+                
+                Shader shader = material.shader;
+                int propertyCount = ShaderUtil.GetPropertyCount(shader);
+                
+                // 创建参数字典
+                System.Collections.Generic.Dictionary<string, object> parameters = new System.Collections.Generic.Dictionary<string, object>();
+                
+                for (int i = 0; i < propertyCount; i++)
+                {
+                    string propertyName = ShaderUtil.GetPropertyName(shader, i);
+                    ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
+                    
+                    if (!tempMaterial.HasProperty(propertyName)) continue;
+                    
+                    // 排除纹理
+                    if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                    
+                    switch (propertyType)
+                    {
+                        case ShaderUtil.ShaderPropertyType.Color:
+                            Color color = tempMaterial.GetColor(propertyName);
+                            parameters[propertyName] = new float[] { color.r, color.g, color.b, color.a };
+                            break;
+                            
+                        case ShaderUtil.ShaderPropertyType.Vector:
+                            Vector4 vector = tempMaterial.GetVector(propertyName);
+                            parameters[propertyName] = new float[] { vector.x, vector.y, vector.z, vector.w };
+                            break;
+                            
+                        case ShaderUtil.ShaderPropertyType.Float:
+                        case ShaderUtil.ShaderPropertyType.Range:
+                            parameters[propertyName] = tempMaterial.GetFloat(propertyName);
+                            break;
+                    }
+                }
+                
+                // 序列化为JSON（手动构建简单JSON）
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.AppendLine("{");
+                bool first = true;
+                foreach (var kvp in parameters)
+                {
+                    if (!first) sb.AppendLine(",");
+                    first = false;
+                    
+                    sb.Append("  \"" + kvp.Key + "\": ");
+                    
+                    if (kvp.Value is float[])
+                    {
+                        float[] arr = (float[])kvp.Value;
+                        sb.Append($"[{arr[0]}, {arr[1]}, {arr[2]}, {arr[3]}]");
+                    }
+                    else
+                    {
+                        sb.Append(kvp.Value.ToString());
+                    }
+                }
+                sb.AppendLine();
+                sb.AppendLine("}");
+                
+                // 保存Default存档
+                System.IO.File.WriteAllText(defaultPresetPath, sb.ToString());
+                
+                Object.DestroyImmediate(tempMaterial);
+                
+                Debug.Log($"Default存档已创建: {defaultPresetPath}");
+                
+                // 加载Default存档
+                LoadMaterialParametersFromFile(defaultPresetPath);
+            }
+        }
     }
 }

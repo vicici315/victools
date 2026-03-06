@@ -3,7 +3,7 @@ Shader "Custom/Glass_MobileNew"
     Properties
     {
         [Header((Glass Color))]
-        [MainColor]_GlassColor ("Glass Color", Color) = (1,1,1,0.5)
+        [MainColor]_BaseColor ("Glass Color", Color) = (1,1,1,0.5)
         _Diffuse ("Diffuse", Range(0, 1)) = 0.8
         _Fresnel ("Fresnel", Range(0, 8)) = 0.6
         _Transparency ("Transparency", Range(0, 1)) = 0.8
@@ -104,7 +104,7 @@ Shader "Custom/Glass_MobileNew"
             SAMPLER(sampler_BumpMap);
 
             CBUFFER_START(UnityPerMaterial)
-                half4 _GlassColor;
+                half4 _BaseColor;
                 half _Fresnel;
                 half _Transparency;
                 half _LayerBlendFactor;
@@ -140,7 +140,7 @@ Shader "Custom/Glass_MobileNew"
             // 计算多层透明混合
             half3 CalculateMultiLayerTransparency(half3 baseColor, half3 sceneColor, half transparency, half layerBlendFactor, half fresnel)
             {
-                half baseAlpha = transparency * _GlassColor.a;
+                half baseAlpha = transparency * _BaseColor.a;
                 half fresnelAlpha = lerp(baseAlpha, 1.0, fresnel);
                 half blendFactor = saturate(layerBlendFactor * (fresnel*1.82));
                 
@@ -183,14 +183,14 @@ Shader "Custom/Glass_MobileNew"
                 
                 half NdotL = saturate(dot(normalWS, mainLight.direction));
                 half3 diffuse = lightColor * NdotL;
-                half3 specular = SimpleSpecular(normalWS, mainLight.direction, viewDirWS, _Roughness, lightColor) * (_GlassColor.rgb+0.2);
+                half3 specular = SimpleSpecular(normalWS, mainLight.direction, viewDirWS, _Roughness, lightColor) * (_BaseColor.rgb+0.2);
                 
                 // 菲涅尔效应
                 half fresnel = 1.0 - saturate(dot(viewDirWS, normalWS));
                 fresnel = fastPow(fresnel, _Fresnel);
                 
                 // 计算基础玻璃颜色
-                half3 glassBaseColor = _GlassColor.rgb * saturate(diffuse+_Diffuse);
+                half3 glassBaseColor = _BaseColor.rgb * saturate(diffuse+_Diffuse);
                 
                 // 应用多层透明混合
                 half3 finalColor = CalculateMultiLayerTransparency(
@@ -208,7 +208,7 @@ Shader "Custom/Glass_MobileNew"
                 finalColor = MixFog(finalColor, IN.fogFactor);
                 
                 // 计算最终透明度
-                half finalAlpha = _GlassColor.a * _Transparency;
+                half finalAlpha = _BaseColor.a * _Transparency;
                 finalAlpha = lerp(finalAlpha, 1.0, fresnel * 0.2); // 边缘稍微增加不透明度
                 
                 return half4(finalColor, finalAlpha);

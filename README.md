@@ -13,11 +13,18 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 【性能分析1.7】 对象统计模块添加静态对象统计快速选择
 
-- PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响；添加[重置参数]按钮还原所有参数默认值
+- PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响（该版本高光更符合真实能量更高明亮）
+  - 添加【存档】【读档】【重置参数】按钮还原所有参数默认值（读取Default存档）
+
+    ![image-20260306151929212](./README.assets/image-20260306151929212.png)
 
 - 工具主窗口左上角添加【Menu】辅助功能菜单，包含（`校正(PBR_Mobile)烘焙高光方向`、`校正PBR_Mobile5.8高光数值`）
 
-![image-20260305153243070](./README.assets/image-20260305153243070.png)
+  ![image-20260305153243070](./README.assets/image-20260305153243070.png)
+
+- 添加适合车窗玻璃材质`Custom/Glass_carWindow`
+
+  ![image-20260306154648216](./README.assets/Glass_carWindow2.gif)
 
 ### 版本 2.7.7
 
