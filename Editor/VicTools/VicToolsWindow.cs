@@ -10,10 +10,10 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.7.6";
+        public const string Ver = "2.7.8";
 
         /// 性能分析器窗口标签名（包含版本号）
-        public const string PerformanceAnalyzerWindowName = "[性能分析 v1.6]";
+        public const string PerformanceAnalyzerWindowName = "[性能分析 v1.7]";
     }
     
     /// 子窗口抽象基类 - 参考ES3Window的SubWindow设计
@@ -1381,9 +1381,7 @@ namespace VicTools
                 CurrentWindow.OnDisable();
         }
 
-        /// <summary>
         /// 处理选择变化事件 - 更新全局选中对象数量
-        /// </summary>
         private void OnSelectionChanged()
         {
             // 更新全局选中对象数量
@@ -1452,6 +1450,10 @@ namespace VicTools
             
             // 添加帮助和配置按钮 - 放在窗口右上角
             EditorGUILayout.BeginHorizontal();
+            if (GUILayout.Button(new GUIContent("Menu", "辅助工具菜单"), GUILayout.Width(44), GUILayout.Height(14)))
+            {
+                ShowMenuDropdown();
+            }
             GUILayout.FlexibleSpace(); // 将按钮推到右侧
             
             // 帮助按钮
@@ -1648,6 +1650,72 @@ namespace VicTools
         private void ShowHelpDialog()
         {
             VicToolsHelpWindow.ShowWindow();
+        }
+
+        /// <summary>
+        /// 显示Menu下拉菜单
+        /// </summary>
+        private void ShowMenuDropdown()
+        {
+            GenericMenu menu = new GenericMenu();
+            
+            menu.AddItem(new GUIContent("● 校正(PBR_Mobile)烘焙高光方向"), false, SceneTools.ApplyLightDirectionToMaterials);
+            // 添加"校正PBR_Mobile5.8 高光"菜单项
+            menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.8 高光数值"), false, CorrectPBRMobile58Specular);
+            
+            menu.ShowAsContext();
+        }
+
+        /// 校正PBR_Mobile5.8高光 - 调整材质的SpecularScale参数
+        private void CorrectPBRMobile58Specular()
+        {
+            // 查找所有使用PBR_Mobile shader的材质
+            string[] materialGuids = AssetDatabase.FindAssets("t:Material");
+            int correctedCount = 0;
+            int totalPBRMaterials = 0;
+            
+            foreach (string guid in materialGuids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
+                
+                if (material != null && material.shader != null && 
+                    material.shader.name == "Custom/PBR_Mobile")
+                {
+                    totalPBRMaterials++;
+                    
+                    // 检查是否有_SpecularScale属性
+                    if (material.HasProperty("_SpecularScale"))
+                    {
+                        float currentScale = material.GetFloat("_SpecularScale");
+                        
+                        // 如果当前值大于等于2，说明可能是为了补偿之前的削减而设置的高值
+                        // 将其调整为合理范围（除以约25倍，因为之前被0.04削减）
+                        if (currentScale >= 2.0f)
+                        {
+                            float newScale = Mathf.Clamp(currentScale / 25.0f, 1.0f, 12.0f);
+                            material.SetFloat("_SpecularScale", newScale);
+                            EditorUtility.SetDirty(material);
+                            correctedCount++;
+                            
+                            Debug.Log($"校正材质: {material.name} - SpecularScale: {currentScale:F2} → {newScale:F2}");
+                        }
+                    }
+                }
+            }
+            
+            // 保存所有修改
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            
+            // 显示结果
+            string message = $"校正完成！\n\n" +
+                           $"扫描到 {totalPBRMaterials} 个PBR_Mobile材质\n" +
+                           $"校正了 {correctedCount} 个材质的高光参数\n\n" +
+                           $"说明：PBR_Mobile5.8版本移除了specularColor削减，\n" +
+                           $"高光亮度恢复正常，之前设置的高SpecularScale值已自动调整。";
+            
+            EditorUtility.DisplayDialog("PBR_Mobile5.8 高光校正", message, "确定");
         }
 
         /// <summary>

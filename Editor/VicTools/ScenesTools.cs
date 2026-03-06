@@ -95,7 +95,7 @@ public class ResourceBoxFileItem
         private Vector2 _resourceBoxScrollPosition; // 资源箱滚动位置
         private string _searchText = ""; // 搜索文本
         private Material _selectedMaterial; // 用于存储用户手动选择的材质
-        private Texture2D _lightDirIcon; // lightDir.png图标
+        // private Texture2D _lightDirIcon; // lightDir.png图标
         private Texture2D _switchPBRMIcon; // lightDir.png图标
         private bool _setStatic = false;
         private bool _selPrefab = false;
@@ -164,7 +164,7 @@ public class ResourceBoxFileItem
             UpdateSelectedObjectsInResourceBox();
             // 加载lightDir图标 - 使用Unity包路径（兼容开发环境和打包发布）
             // 方法1：直接使用包路径（推荐，因为package.json中的name是固定的）
-            string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
+            // string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
             string switchPBRMicon = "Packages/com.youdoo.victools/Editor/VicTools/switchPBRM.png";
             
             // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
@@ -178,15 +178,15 @@ public class ResourceBoxFileItem
             // #endif
             
             // 加载lightDir图标
-            _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
+            // _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
             _switchPBRMIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(switchPBRMicon);
             
             // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
-            if (_lightDirIcon == null)
-            {
-                Debug.LogWarning($"无法加载lightDir图标，路径: {lightDirIcon}");
-                // 可以尝试其他备用路径或使用默认图标
-            }
+            // if (_lightDirIcon == null)
+            // {
+            //     Debug.LogWarning($"无法加载lightDir图标，路径: {lightDirIcon}");
+            //     // 可以尝试其他备用路径或使用默认图标
+            // }
         }
 
         public override void OnDisable()
@@ -1132,14 +1132,7 @@ public class ResourceBoxFileItem
                     SceneTools.SwitchPBRLightingShader(_setStatic);
                 }
             }
-            // 添加lightDir图标按钮 - 在"设置层级"按钮左边
-            if (_lightDirIcon != null)
-            {
-                if (GUILayout.Button(new GUIContent(_lightDirIcon, "校正(PBR_Mobile)烘焙高光方向"), GUILayout.Height(35), GUILayout.Width(38)))
-                {
-                    SceneTools.ApplyLightDirectionToMaterials();
-                }
-            }
+
             GUI.backgroundColor = new Color(0.4f, 0.5f, 0.7f);
             if (GUILayout.Button(new GUIContent("设置层级", "设置所有选择对象放入最后选择的对象中"), GUILayout.Height(30)))
             {

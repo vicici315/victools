@@ -43,6 +43,9 @@ namespace VicTools
         private readonly List<GameObject> _receiveGIObjects = new();
         private readonly List<GameObject> _staticBatchingObjects = new();
         private readonly Dictionary<string, List<GameObject>> _giObjectsByType = new();
+        
+        // 静态对象相关
+        private readonly List<GameObject> _staticObjects = new();
 
         // 资源利用率检查相关
         private readonly List<string> _unusedResources = new();
@@ -346,6 +349,10 @@ namespace VicTools
             _staticBatchingObjects.Clear();
             _giObjectsByType.Clear();
             _performanceData.contributeGICount = 0;
+            
+            // 清空静态对象数据
+            _staticObjects.Clear();
+            _performanceData.staticObjectCount = 0;
 
             foreach (var gameObject in allGameObjects)
             {
@@ -359,6 +366,13 @@ namespace VicTools
                 if (!_objectsByType.ContainsKey(objectType))
                     _objectsByType[objectType] = new List<GameObject>();
                 _objectsByType[objectType].Add(gameObject);
+                
+                // 检查是否为静态对象（只要有一项静态标志被勾选即判断为静态）
+                if (GameObjectUtility.GetStaticEditorFlags(gameObject) != 0)
+                {
+                    _staticObjects.Add(gameObject);
+                    _performanceData.staticObjectCount++;
+                }
 
                 // 收集渲染数据
                 var sceneDataRenderer = gameObject.GetComponent<Renderer>();
@@ -718,82 +732,19 @@ namespace VicTools
             DrawSelectableCount("AudioSource", _performanceData.audioSourceCount.ToString("N0"));
             EditorGUILayout.EndHorizontal();
             
+            EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
+            EditorGUILayout.LabelField("静态:", normalStyle, GUILayout.Width(50));
+            DrawSelectableCount("Static", _performanceData.staticObjectCount.ToString("N0"));
+            EditorGUILayout.EndHorizontal();
+            
             // 添加快速选择按钮
-            EditorGUILayout.Space();
-            DrawQuickSelectionButtons(contentWidth);
+            // EditorGUILayout.Space();
+            // DrawQuickSelectionButtons(contentWidth);
 
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space();
         }
 
-        /// 绘制快速选择按钮
-        private void DrawQuickSelectionButtons(float contentWidth)
-        {
-            var style = EditorStyle.Get;
-            
-            EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
-            EditorGUILayout.LabelField("快速选择:", style.normalfont, GUILayout.Width(80));
-            
-            // 选择所有网格对象
-            bool hasMeshObjects = HasObjectsOfType("MeshRenderer");
-            GUI.enabled = hasMeshObjects;
-            if (GUILayout.Button("所有网格", style.normalButton, GUILayout.Width(80)))
-            {
-                SelectAllObjectsOfType("MeshRenderer");
-            }
-            GUI.enabled = true;
-            
-            // 选择所有灯光
-            bool hasLightObjects = HasObjectsOfType("Light");
-            GUI.enabled = hasLightObjects;
-            if (GUILayout.Button("所有灯光", style.normalButton, GUILayout.Width(80)))
-            {
-                SelectAllObjectsOfType("Light");
-            }
-            GUI.enabled = true;
-            
-            // 选择所有粒子系统
-            bool hasParticleObjects = HasObjectsOfType("ParticleSystem");
-            GUI.enabled = hasParticleObjects;
-            if (GUILayout.Button("所有粒子", style.normalButton, GUILayout.Width(80)))
-            {
-                SelectAllObjectsOfType("ParticleSystem");
-            }
-            GUI.enabled = true;
-            EditorGUILayout.EndHorizontal();
-            
-            EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField("", GUILayout.Width(80)); // 占位符
-            // 选择所有碰撞体
-            bool hasColliderObjects = HasObjectsOfType("Collider");
-            GUI.enabled = hasColliderObjects;
-            if (GUILayout.Button("所有碰撞体", style.normalButton, GUILayout.Width(80)))
-            {
-                SelectAllObjectsOfType("Collider");
-            }
-            GUI.enabled = true;
-            
-            // 选择所有刚体
-            bool hasRigidbodyObjects = HasObjectsOfType("Rigidbody");
-            GUI.enabled = hasRigidbodyObjects;
-            if (GUILayout.Button("所有刚体", style.normalButton, GUILayout.Width(80)))
-            {
-                SelectAllObjectsOfType("Rigidbody");
-            }
-            GUI.enabled = true;
-            
-            // 选择所有音频源
-            bool hasAudioSourceObjects = HasObjectsOfType("AudioSource");
-            GUI.enabled = hasAudioSourceObjects;
-            if (GUILayout.Button("所有音频", style.normalButton, GUILayout.Width(80)))
-            {
-                SelectAllObjectsOfType("AudioSource");
-            }
-            GUI.enabled = true;
-            EditorGUILayout.EndHorizontal();
-            
-            // 全局光照选择按钮已移至专门的全局光照操作区域
-        }
 
         /// 检查指定类型的对象是否存在
         private bool HasObjectsOfType(string objectType)
@@ -1049,6 +1000,10 @@ namespace VicTools
             {
                 hasObjects = _allTextures.Count > 0;
             }
+            else if (objectType == "Static")
+            {
+                hasObjects = _staticObjects.Count > 0;
+            }
             else
             {
                 hasObjects = (_objectsByType.ContainsKey(objectType) && _objectsByType[objectType].Count > 0) ||
@@ -1072,6 +1027,10 @@ namespace VicTools
                 else if (objectType == "Texture")
                 {
                     ShowTextureSelectionMenu();
+                }
+                else if (objectType == "Static")
+                {
+                    ShowStaticObjectSelectionMenu();
                 }
                 else
                 {
@@ -1230,6 +1189,58 @@ namespace VicTools
                             sizeInfo = $" ({tex2D.width}x{tex2D.height})";
                         }
                         sb.AppendLine($"  - {texture.name}{sizeInfo} (类型: {textureType})");
+                    }
+                    Debug.Log(sb.ToString());
+                });
+            }
+            
+            menu.ShowAsContext();
+        }
+
+        /// 显示静态对象选择菜单
+        private void ShowStaticObjectSelectionMenu()
+        {
+            GenericMenu menu = new GenericMenu();
+            
+            // 添加选择所有静态对象的选项
+            menu.AddItem(new GUIContent($"选择所有静态对象 ({_staticObjects.Count}个)"), false, () => {
+                Selection.objects = _staticObjects.ToArray();
+                if (_staticObjects.Count > 0)
+                    EditorGUIUtility.PingObject(_staticObjects[0]);
+            });
+            
+            menu.AddSeparator("");
+            
+            // 添加选择单个静态对象的选项
+            foreach (var obj in _staticObjects.Take(20)) // 限制显示数量避免菜单过长
+            {
+                string objectName = obj.name;
+                if (objectName.Length > 30)
+                    objectName = objectName.Substring(0, 27) + "...";
+                
+                // 显示静态标志信息
+                var staticFlags = GameObjectUtility.GetStaticEditorFlags(obj);
+                string flagsInfo = $" [{staticFlags}]";
+                
+                menu.AddItem(new GUIContent($"{objectName}{flagsInfo}"), false, (userData) => {
+                    GameObject selectedObj = (GameObject)userData;
+                    Selection.activeGameObject = selectedObj;
+                    EditorGUIUtility.PingObject(selectedObj);
+                }, obj);
+            }
+            
+            // 如果对象数量超过20个，添加查看更多选项
+            if (_staticObjects.Count > 20)
+            {
+                menu.AddSeparator("");
+                menu.AddItem(new GUIContent($"... 还有 {_staticObjects.Count - 20} 个静态对象"), false, () => {
+                    // 在控制台输出所有静态对象名称
+                    StringBuilder sb = new StringBuilder();
+                    sb.AppendLine($"所有静态对象 ({_staticObjects.Count}个):");
+                    foreach (var obj in _staticObjects)
+                    {
+                        var staticFlags = GameObjectUtility.GetStaticEditorFlags(obj);
+                        sb.AppendLine($"  - {obj.name} (位置: {obj.transform.position}, 标志: {staticFlags})");
                     }
                     Debug.Log(sb.ToString());
                 });
@@ -4364,6 +4375,7 @@ namespace VicTools
         public int rigidbodyCount;
         public int audioSourceCount;
         public int contributeGICount; // 开启全局光照贡献的模型数量
+        public int staticObjectCount; // 静态对象数量
         public int totalTriangles;
         public int totalVertices;
         public long textureMemory;

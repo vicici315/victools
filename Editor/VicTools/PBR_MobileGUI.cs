@@ -161,7 +161,17 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawGlobalSettings()
     {
+        EditorGUILayout.BeginHorizontal();
         GUILayout.Label("全局设置", EditorStyles.boldLabel);
+        
+        // 添加重置按钮
+        GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f); // 黄色背景
+        if (GUILayout.Button("重置参数", GUILayout.Width(80)))
+        {
+            ResetMaterialParameters();
+        }
+        GUI.backgroundColor = Color.white;
+        EditorGUILayout.EndHorizontal();
         
         // 只在非 Trans 版本显示禁用环境光选项
         if (!isTransShader && disableEnvironment != null)
@@ -367,5 +377,116 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
         m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
+    }
+
+    /// <summary>
+    /// 重置材质参数为默认值（保留纹理）
+    /// </summary>
+    private void ResetMaterialParameters()
+    {
+        if (!EditorUtility.DisplayDialog("重置参数", 
+            "确定要将所有参数重置为Shader默认值吗？\n\n注意：纹理和Toggle选项不会被重置。", 
+            "确定", "取消"))
+        {
+            return;
+        }
+
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+
+        // 记录撤销操作
+        Undo.RecordObject(material, "Reset Material Parameters");
+
+        // 创建临时材质以获取shader默认值
+        Material tempMaterial = new Material(material.shader);
+        
+        Shader shader = material.shader;
+        int propertyCount = ShaderUtil.GetPropertyCount(shader);
+
+        // 保存当前的纹理和Toggle选项
+        System.Collections.Generic.Dictionary<string, Texture> savedTextures = new System.Collections.Generic.Dictionary<string, Texture>();
+        System.Collections.Generic.Dictionary<string, float> savedToggles = new System.Collections.Generic.Dictionary<string, float>();
+        
+        for (int i = 0; i < propertyCount; i++)
+        {
+            string propertyName = ShaderUtil.GetPropertyName(shader, i);
+            ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
+
+            // 保存纹理
+            if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv)
+            {
+                if (material.HasProperty(propertyName))
+                {
+                    Texture tex = material.GetTexture(propertyName);
+                    if (tex != null)
+                    {
+                        savedTextures[propertyName] = tex;
+                    }
+                }
+                continue;
+            }
+
+            // 保存Toggle类型的Float参数
+            // Toggle通常以 _Use 或 _Enable 开头，或者包含特定关键词
+            if (propertyType == ShaderUtil.ShaderPropertyType.Float)
+            {
+                string lowerName = propertyName.ToLower();
+                if (propertyName.StartsWith("_Use") || 
+                    propertyName.StartsWith("_Enable") || 
+                    propertyName.StartsWith("_Debug") ||
+                    propertyName.StartsWith("_Preview") ||
+                    propertyName.StartsWith("_Disable") ||
+                    lowerName.Contains("toggle") ||
+                    propertyName == "_Cull" ||
+                    propertyName == "_FilpG" ||
+                    propertyName == "_InvertEmisMap")
+                {
+                    if (material.HasProperty(propertyName))
+                    {
+                        savedToggles[propertyName] = material.GetFloat(propertyName);
+                    }
+                    continue;
+                }
+            }
+
+            // 从临时材质复制默认值到当前材质
+            if (!material.HasProperty(propertyName)) continue;
+
+            switch (propertyType)
+            {
+                case ShaderUtil.ShaderPropertyType.Color:
+                    material.SetColor(propertyName, tempMaterial.GetColor(propertyName));
+                    break;
+
+                case ShaderUtil.ShaderPropertyType.Vector:
+                    material.SetVector(propertyName, tempMaterial.GetVector(propertyName));
+                    break;
+
+                case ShaderUtil.ShaderPropertyType.Float:
+                case ShaderUtil.ShaderPropertyType.Range:
+                    material.SetFloat(propertyName, tempMaterial.GetFloat(propertyName));
+                    break;
+            }
+        }
+
+        // 恢复纹理
+        foreach (var kvp in savedTextures)
+        {
+            material.SetTexture(kvp.Key, kvp.Value);
+        }
+
+        // 恢复Toggle选项
+        foreach (var kvp in savedToggles)
+        {
+            material.SetFloat(kvp.Key, kvp.Value);
+        }
+
+        // 销毁临时材质
+        Object.DestroyImmediate(tempMaterial);
+
+        // 刷新材质编辑器
+        EditorUtility.SetDirty(material);
+        
+        Debug.Log($"材质 '{material.name}' 的参数已重置为Shader默认值（纹理和 {savedToggles.Count} 个Toggle选项保留）");
     }
 }

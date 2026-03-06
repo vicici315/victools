@@ -25,12 +25,13 @@
 // PBR_Mobile5.5 完善自身阴影（使用Lambert光照作为遮罩来平滑阴影锯齿）
 // PBR_Mobile5.6 修复反射被烘焙光照覆盖问题
 // PBR_Mobile5.7 烘焙投影支持，使用Unity标准的Subtractive模式方法；优化偏移明暗交界线减少ShadowMap投影噪点
+// PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响
 Shader "Custom/PBR_Mobile"
 {
     Properties
     {
         [Toggle(_DISABLEENVIRONMENT)] _DisableEnvironment ("Disable Environment", Float) = 0
-        [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 1
+        [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 0
         [Header(1  (Base Properties))]
         [Space(5)]
         [MainColor] _BaseColor ("Base Color", Color) = (1,1,1,1)
@@ -40,7 +41,7 @@ Shader "Custom/PBR_Mobile"
         [Space(5)]
         _Metallic ("Metallic", Range(0, 1)) = 0.0
         _Roughness ("Roughness", Range(0, 2)) = 0.5
-        _SpecularScale ("Specular Scale", Range(1, 12)) = 2
+        _SpecularScale ("Specular Scale", Range(0.1, 2)) = 1
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
         _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
         _Brightness ("Brightness", Range(0.5, 20)) = 1.0
@@ -460,7 +461,7 @@ Shader "Custom/PBR_Mobile"
                 return lightColor * specular * shadowAttenuation * 2.0; 
             }
             
-            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic)
+            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic, half shadowAttenuation)
             {
                 
                 half3 finalLightDir = lightDir;
@@ -478,7 +479,8 @@ Shader "Custom/PBR_Mobile"
                 half metallicFactor = metallic * metallic; 
                 half3 adjustedBakedGI = lerp(bakedGI, half3(1, 1, 1), metallicFactor);
                 
-                return adjustedBakedGI * specular * _SpecularScale;
+                // 烘焙高光也应该受实时阴影影响
+                return adjustedBakedGI * specular * _SpecularScale * shadowAttenuation;
             }
 
             half3 CalculateCustomPointLights(float3 worldPos, MaterialProperties mat, float3 viewDir)
@@ -522,14 +524,17 @@ Shader "Custom/PBR_Mobile"
                         half NdotH = saturate(dot(mat.normalWS, halfDir));
                         
                         #if USE_FAST_MATH
-                            specular = fastPow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * attenuation;
+                            half specularTerm = fastPow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * attenuation;
                         #else
-                            specular = pow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * attenuation;
+                            half specularTerm = pow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * attenuation;
                         #endif
+                        
+                        // 高光直接使用lightColor，不削减
+                        specular = lightColor * specularTerm;
                     }
                     
-                    // 使用预计算的diffuseColor和specularColor
-                    totalLight += mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                    // 漫反射使用diffuseColor，高光直接使用不削减
+                    totalLight += mat.diffuseColor * diffuse + specular * _SpecularScale;
                 }
                 
                 return totalLight;
@@ -609,11 +614,14 @@ Shader "Custom/PBR_Mobile"
                     {
                         half3 halfDir = normalize(lightDir + viewDir);
                         half NdotH = saturate(dot(mat.normalWS, halfDir));
-                        specular = fastPow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * distanceAttenuation * spotAttenuation * textureModulation;
+                        half specularTerm = fastPow(max(NdotH, 0.001), mat.shininess) * mat.smoothness * distanceAttenuation * spotAttenuation;
+                        
+                        // 高光直接使用lightColor和纹理调制，不削减
+                        specular = lightColor * specularTerm * textureModulation;
                     }
                     
-                    // 使用预计算的diffuseColor和specularColor
-                    totalLight += mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                    // 漫反射使用diffuseColor，高光直接使用不削减
+                    totalLight += mat.diffuseColor * diffuse + specular * _SpecularScale;
                 }
                 
                 return totalLight;
@@ -792,20 +800,22 @@ Shader "Custom/PBR_Mobile"
                     ambient *= shadowTint;
                 #endif
                 
-                half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                // 高光直接使用，不乘以specularColor（保持完整亮度）
+                half3 finalColor = ambient + mat.diffuseColor * diffuse + specular * _SpecularScale;
                 
-                // 烘焙高光（保留原来的效果）
+                // 烘焙高光（保留原来的效果，但不削减亮度，且受阴影影响）
                 half3 bakedSpecular = 0;
                 #ifdef LIGHTMAP_ON
-                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic);
-                    finalColor += mat.specularColor * bakedSpecular;
+                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
+                    finalColor += bakedSpecular;
                 #endif
                 #else
                 // 禁用环境光时，只使用实时光照
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
                 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
                 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
-                half3 finalColor = mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                // 高光直接使用，不乘以specularColor（保持完整亮度）
+                half3 finalColor = mat.diffuseColor * diffuse + specular * _SpecularScale;
                 #endif 
                 
                 finalColor *= _Brightness;
