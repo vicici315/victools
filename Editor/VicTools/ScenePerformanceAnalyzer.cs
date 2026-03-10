@@ -8,9 +8,7 @@ using System.IO;
 
 namespace VicTools
 {
-    /// <summary>
     /// 场景性能分析器 - 提供详细的场景性能分析报告
-    /// </summary>
     public class ScenePerformanceAnalyzer : SubWindow
     {
         // 性能数据
@@ -84,7 +82,6 @@ namespace VicTools
         private bool _showDetailedStatisticsSection = true;
         private bool _showResourceUtilization = true;
 
-        
         public ScenePerformanceAnalyzer(string name, EditorWindow parent) : base(VicToolsConfig.PerformanceAnalyzerWindowName, parent)
         {
             _performanceData = new PerformanceData();
@@ -308,9 +305,7 @@ namespace VicTools
 
             EditorGUILayout.EndVertical();
         }
-        /// <summary>
         /// 刷新性能数据
-        /// </summary>
         private void RefreshPerformanceData()
         {
             _performanceData = new PerformanceData();
@@ -332,9 +327,7 @@ namespace VicTools
             _lastRefreshTime = Time.realtimeSinceStartup;
         }
 
-        /// <summary>
         /// 收集场景数据
-        /// </summary>
         private void CollectSceneData()
         {
             var allGameObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
@@ -468,9 +461,7 @@ namespace VicTools
             _allTextures.AddRange(uniqueTextures);
         }
 
-        /// <summary>
         /// 检查全局光照设置
-        /// </summary>
         private void CheckGlobalIlluminationSettings(GameObject gameObject, Renderer renderer)
         {
             var isContributeGI = false;
@@ -528,9 +519,7 @@ namespace VicTools
             AddComponentObject("StaticBatching", gameObject);
         }
 
-        /// <summary>
         /// 分析性能问题
-        /// </summary>
         private void AnalyzePerformance()
         {
             // 检查灯光数量
@@ -594,9 +583,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 绘制场景信息部分
-        /// </summary>
         private void DrawSceneInfoSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
@@ -651,9 +638,7 @@ namespace VicTools
             EditorGUILayout.Space();
         }
 
-        /// <summary>
         /// 绘制渲染管线信息部分
-        /// </summary>
         private void DrawRenderPipelineSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
@@ -691,9 +676,7 @@ namespace VicTools
             EditorGUILayout.Space();
         }
 
-        /// <summary>
         /// 绘制对象统计部分
-        /// </summary>
         private void DrawObjectStatisticsSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
@@ -744,7 +727,6 @@ namespace VicTools
             EditorGUILayout.EndVertical();
             EditorGUILayout.Space();
         }
-
 
         /// 检查指定类型的对象是否存在
         private bool HasObjectsOfType(string objectType)
@@ -1249,9 +1231,7 @@ namespace VicTools
             menu.ShowAsContext();
         }
 
-        /// <summary>
         /// 添加组件对象到字典
-        /// </summary>
         private void AddComponentObject(string componentType, GameObject gameObject)
         {
             if (!_componentObjects.ContainsKey(componentType))
@@ -1259,9 +1239,7 @@ namespace VicTools
             _componentObjects[componentType].Add(gameObject);
         }
 
-        /// <summary>
         /// 选择指定类型的所有对象
-        /// </summary>
         private void SelectObjectsOfType(string objectType)
         {
             if (_objectsByType.ContainsKey(objectType) && _objectsByType[objectType].Count > 0)
@@ -1271,9 +1249,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 选择指定组件的所有对象
-        /// </summary>
         private void SelectObjectsWithComponent(string componentType)
         {
             if (_componentObjects.ContainsKey(componentType) && _componentObjects[componentType].Count > 0)
@@ -1283,9 +1259,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 获取对象类型
-        /// </summary>
         private string GetObjectType(GameObject gameObject)
         {
             // 特殊组件类型检测
@@ -1312,7 +1286,6 @@ namespace VicTools
             
             return "GameObject";
         }
-
 
         /// 估算纹理内存
         private long EstimateTextureMemory(Texture2D texture)
@@ -1389,7 +1362,6 @@ namespace VicTools
             return memory;
         }
 
-
         /// 格式化内存大小显示
         private static string FormatMemorySize(long bytes)
         {
@@ -1405,7 +1377,6 @@ namespace VicTools
             
             return $"{size:0.##} {sizes[order]}";
         }
-
 
         // ReSharper disable Unity.PerformanceAnalysis
         /// 绘制选中对象三角面数信息
@@ -1651,11 +1622,8 @@ namespace VicTools
             EditorGUILayout.Space();
         }
 
-
         // ReSharper disable Unity.PerformanceAnalysis
-        /// <summary>
         /// 绘制全局光照检查部分
-        /// </summary>
         private void DrawGlobalIlluminationSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             // EditorGUILayout.BeginVertical();
@@ -1702,9 +1670,7 @@ namespace VicTools
             EditorGUILayout.Space();
         }
 
-        /// <summary>
         /// 绘制全局光照操作按钮
-        /// </summary>
         private void DrawGlobalIlluminationActions(float contentWidth)
         {
             var style = EditorStyle.Get;
@@ -1750,9 +1716,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 选择所有贡献GI对象
-        /// </summary>
         private void SelectAllContributeGIObjects()
         {
             if (_contributeGIObjects.Count > 0)
@@ -1767,9 +1731,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 选择所有接收GI对象
-        /// </summary>
         private void SelectAllReceiveGIObjects()
         {
             if (_receiveGIObjects.Count > 0)
@@ -1784,9 +1746,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 选择所有静态批处理对象
-        /// </summary>
         private void SelectAllStaticBatchingObjects()
         {
             if (_staticBatchingObjects.Count > 0)
@@ -1801,9 +1761,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 绘制资源利用率检查部分
-        /// </summary>
         private void DrawResourceUtilizationSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             // 父容器也需要设置 ExpandHeight，才能让子元素的 ExpandHeight 生效
@@ -1915,7 +1873,6 @@ namespace VicTools
                 }
                 GUI.backgroundColor = Color.white;
                 EditorGUILayout.EndHorizontal();
-                
                 
                 // 排除模式列表
                 EditorGUILayout.Space();
@@ -2238,13 +2195,9 @@ namespace VicTools
             EditorGUILayout.Space();
         }
 
-        /// <summary>
         /// 扫描未使用资源
-        /// </summary>
-        /// <summary>
         /// 扫描未使用资源 - 优化版本
         /// 使用基于依赖关系的项目级扫描，支持进度显示
-        /// </summary>
         private void ScanUnusedResources()
         {
             _isScanningResources = true;
@@ -2738,9 +2691,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 递归收集资源的所有依赖
-        /// </summary>
         private void CollectDependencies(string assetPath, HashSet<string> usedAssets)
         {
             // 避免重复处理
@@ -2786,9 +2737,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 收集 Prefab 的嵌套依赖，包括通过 GUID 引用的缺失 Prefab
-        /// </summary>
         private void CollectPrefabDependencies(string prefabPath, HashSet<string> usedAssets)
         {
             try
@@ -2833,9 +2782,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 获取构建场景列表
-        /// </summary>
         private List<string> GetBuildScenes()
         {
             List<string> buildScenes = new List<string>();
@@ -2871,9 +2818,7 @@ namespace VicTools
             return buildScenes;
         }
 
-        /// <summary>
         /// 检查资源是否被构建场景引用
-        /// </summary>
         private bool IsReferencedByBuildScenes(string assetPath)
         {
             // 获取构建场景列表
@@ -2914,9 +2859,7 @@ namespace VicTools
             return false;
         }
 
-        /// <summary>
         /// 清理过期缓存
-        /// </summary>
         private void CleanupExpiredCache()
         {
             float currentTime = Time.realtimeSinceStartup;
@@ -2954,9 +2897,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查资源是否被使用（改进版，支持Addressables和更多特殊文件夹）
-        /// </summary>
         private bool IsResourceUsed(string assetPath)
         {
             // 定期清理过期缓存
@@ -2980,9 +2921,7 @@ namespace VicTools
             return isUsed;
         }
         
-        /// <summary>
         /// 内部资源使用检查逻辑（增强版）
-        /// </summary>
         private bool IsResourceUsedInternal(string assetPath)
         {
             // 0. 检查是否在排除列表中
@@ -3043,9 +2982,7 @@ namespace VicTools
             return IsResourceUsedFallback(assetPath);
         }
         
-        /// <summary>
         /// 检查资源是否在特殊文件夹中
-        /// </summary>
         private bool IsInSpecialFolder(string assetPath)
         {
             // Resources文件夹 - 打包时会被自动包含
@@ -3084,9 +3021,7 @@ namespace VicTools
             return false;
         }
         
-        /// <summary>
         /// 检查资源是否被Addressables系统引用（优化版）
-        /// </summary>
         private bool IsReferencedByAddressables(string assetPath)
         {
             #if UNITY_2021_3_OR_NEWER
@@ -3137,9 +3072,7 @@ namespace VicTools
             #endif
         }
         
-        /// <summary>
         /// 检查资源是否在Addressables设置中
-        /// </summary>
         private bool IsAssetInAddressablesSettings(string guid)
         {
             #if UNITY_2021_3_OR_NEWER
@@ -3185,9 +3118,7 @@ namespace VicTools
             #endif
         }
         
-        /// <summary>
         /// 检查资源是否被Addressables组引用
-        /// </summary>
         private bool IsAssetReferencedByAddressablesGroups(string guid)
         {
             #if UNITY_2021_3_OR_NEWER
@@ -3267,9 +3198,7 @@ namespace VicTools
             #endif
         }
         
-        /// <summary>
         /// 检查资源是否在Addressables标签中
-        /// </summary>
         private bool IsAssetInAddressablesLabels(string guid)
         {
             #if UNITY_2021_3_OR_NEWER
@@ -3292,9 +3221,7 @@ namespace VicTools
             #endif
         }
         
-        /// <summary>
         /// 检查项目是否启用了Addressables
-        /// </summary>
         private bool IsAddressablesEnabled()
         {
             #if UNITY_2021_3_OR_NEWER
@@ -3313,9 +3240,7 @@ namespace VicTools
             #endif
         }
         
-        /// <summary>
         /// 检查资源是否被预制件引用
-        /// </summary>
         private bool IsReferencedByPrefabs(string assetPath)
         {
             try
@@ -3347,9 +3272,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查资源是否被材质引用
-        /// </summary>
         private bool IsReferencedByMaterials(string assetPath)
         {
             try
@@ -3381,9 +3304,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查资源是否被动画控制器引用
-        /// </summary>
         private bool IsReferencedByAnimators(string assetPath)
         {
             try
@@ -3433,9 +3354,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查资源是否被脚本化对象引用
-        /// </summary>
         private bool IsReferencedByScriptableObjects(string assetPath)
         {
             try
@@ -3471,9 +3390,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查资源是否在代码中被引用（增强版）
-        /// </summary>
         private bool IsReferencedInCode(string assetPath)
         {
             try
@@ -3510,9 +3427,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查脚本是否引用了指定资源（增强版）
-        /// </summary>
         private bool CheckScriptForResourceReference(string scriptPath, string assetPath, string fileName, string assetName)
         {
             try
@@ -3609,9 +3524,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 检查资源是否被序列化字段引用
-        /// </summary>
         private bool IsReferencedBySerializedField(string scriptContent, string assetPath, string fileName)
         {
             // 这是一个简化的检查，实际实现可能需要更复杂的解析
@@ -3661,9 +3574,7 @@ namespace VicTools
             return false;
         }
         
-        /// <summary>
         /// 获取Addressables资源地址
-        /// </summary>
         private string GetAddressableAddress(string assetPath)
         {
             #if UNITY_2021_3_OR_NEWER
@@ -3712,9 +3623,7 @@ namespace VicTools
             #endif
         }
         
-        /// <summary>
         /// 获取资源相对于Resources文件夹的路径
-        /// </summary>
         private string GetRelativeResourcePath(string assetPath)
         {
             if (!assetPath.Contains("/Resources/"))
@@ -3730,9 +3639,7 @@ namespace VicTools
                    .Replace("\\", "/"); // 统一使用正斜杠
         }
         
-        /// <summary>
         /// 获取Resources文件夹相对路径
-        /// </summary>
         private string GetResourcesRelativePath(string assetPath)
         {
             if (!assetPath.Contains("/Resources/"))
@@ -3756,9 +3663,7 @@ namespace VicTools
             return null;
         }
         
-        /// <summary>
         /// 备用检查逻辑（当无法获取构建场景时使用）
-        /// </summary>
         private bool IsResourceUsedFallback(string assetPath)
         {
             // 获取引用此资源的所有资源
@@ -3808,9 +3713,7 @@ namespace VicTools
             return false;
         }
         
-        /// <summary>
         /// 检查资源A是否引用了资源B
-        /// </summary>
         private bool IsAssetReferencedBy(string assetPathA, string assetPathB)
         {
             if (assetPathA == assetPathB)
@@ -3827,9 +3730,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 获取资源类型
-        /// </summary>
         private string GetResourceType(string fileExtension)
         {
             switch (fileExtension)
@@ -3869,9 +3770,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 选择资源
-        /// </summary>
         private void SelectResource(string resourcePath)
         {
             UnityEngine.Object asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(resourcePath);
@@ -3883,9 +3782,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 删除资源
-        /// </summary>
         private void DeleteResource(string resourcePath)
         {
             // 检查资源是否被引用（使用扫描时收集的依赖信息）
@@ -3962,9 +3859,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 选择所有未使用资源
-        /// </summary>
         private void SelectAllUnusedResources()
         {
             List<UnityEngine.Object> assets = new List<UnityEngine.Object>();
@@ -3988,9 +3883,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 删除所有未使用资源
-        /// </summary>
         private void DeleteAllUnusedResources()
         {
             // 获取筛选后的资源数量
@@ -4099,9 +3992,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 获取筛选后的资源数量
-        /// </summary>
         private int GetFilteredResourcesCount()
         {
             if (_unusedResources.Count == 0 || _resourceTypeFilters.Count == 0)
@@ -4122,9 +4013,7 @@ namespace VicTools
             return count;
         }
 
-        /// <summary>
         /// 根据警告级别获取颜色
-        /// </summary>
         private Color GetWarningColor(PerformanceWarningLevel level)
         {
             switch (level)
@@ -4140,9 +4029,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 加载模块显示开关的存档设置
-        /// </summary>
         private void LoadModuleToggleStates()
         {
             string prefix = "VicTools.ScenePerformanceAnalyzer.";
@@ -4157,9 +4044,7 @@ namespace VicTools
             _showResourceUtilization = EditorPrefs.GetBool(prefix + "ShowResourceUtilization", true);
         }
 
-        /// <summary>
         /// 保存模块显示开关的存档设置
-        /// </summary>
         private void SaveModuleToggleStates()
         {
             string prefix = "VicTools.ScenePerformanceAnalyzer.";
@@ -4174,9 +4059,7 @@ namespace VicTools
             EditorPrefs.SetBool(prefix + "ShowResourceUtilization", _showResourceUtilization);
         }
 
-        /// <summary>
         /// 保存排除列表设置到EditorPrefs
-        /// </summary>
         private void SaveExclusionSettings()
         {
             string prefix = "VicTools.ScenePerformanceAnalyzer.Exclusion.";
@@ -4192,9 +4075,7 @@ namespace VicTools
             Debug.Log("排除列表设置已保存");
         }
 
-        /// <summary>
         /// 从EditorPrefs加载排除列表设置
-        /// </summary>
         private void LoadExclusionSettings()
         {
             string prefix = "VicTools.ScenePerformanceAnalyzer.Exclusion.";
@@ -4226,9 +4107,7 @@ namespace VicTools
             Debug.Log($"排除列表设置已加载: {_excludedPaths.Count} 个路径, {_excludedPatterns.Count} 个模式");
         }
 
-        /// <summary>
         /// 检查资源是否在排除列表中
-        /// </summary>
         private bool IsResourceExcluded(string assetPath)
         {
             // 检查路径排除
@@ -4254,9 +4133,7 @@ namespace VicTools
             return false;
         }
 
-        /// <summary>
         /// 检查字符串是否匹配通配符模式
-        /// </summary>
         private bool MatchesWildcardPattern(string input, string pattern)
         {
             try
@@ -4275,9 +4152,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 添加Project窗口中选中的目录到排除列表
-        /// </summary>
         private void AddSelectedProjectFolderToExclusion()
         {
             // 获取Project窗口中选中的对象
@@ -4358,9 +4233,7 @@ namespace VicTools
         }
     }
 
-    /// <summary>
     /// 性能数据类
-    /// </summary>
     [System.Serializable]
     public class PerformanceData
     {
@@ -4381,9 +4254,7 @@ namespace VicTools
         public long textureMemory;
     }
 
-    /// <summary>
     /// 性能警告类
-    /// </summary>
     [System.Serializable]
     public class PerformanceWarning
     {
@@ -4399,9 +4270,7 @@ namespace VicTools
         }
     }
 
-    /// <summary>
     /// 性能警告级别
-    /// </summary>
     public enum PerformanceWarningLevel
     {
         Info,
@@ -4409,37 +4278,25 @@ namespace VicTools
         Critical
     }
 
-    /// <summary>
     /// 资源缓存条目 - 智能缓存系统的核心数据结构
-    /// </summary>
     internal class ResourceCacheEntry
     {
-        /// <summary>
         /// 资源是否被使用
-        /// </summary>
         public bool IsUsed { get; set; }
         
-        /// <summary>
         /// 缓存创建时间
-        /// </summary>
         public float CreationTime { get; set; }
         
-        /// <summary>
         /// 资源文件最后修改时间（用于检测文件变更）
-        /// </summary>
         public System.DateTime FileLastWriteTime { get; set; }
         
-        /// <summary>
         /// 检查缓存是否过期
-        /// </summary>
         public bool IsExpired(float currentTime)
         {
             return (currentTime - CreationTime) > ScenePerformanceAnalyzer.CACHE_EXPIRY_TIME;
         }
         
-        /// <summary>
         /// 文件是否已修改（需要重新检查）
-        /// </summary>
         public bool IsFileModified(string assetPath)
         {
             try
@@ -4456,9 +4313,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 创建新的缓存条目
-        /// </summary>
         public static ResourceCacheEntry Create(bool isUsed, string assetPath)
         {
             System.DateTime fileTime = System.DateTime.MinValue;
@@ -4483,9 +4338,7 @@ namespace VicTools
         }
     }
 
-    /// <summary>
     /// 字符串列表包装器 - 用于JSON序列化
-    /// </summary>
     [System.Serializable]
     public class StringListWrapper
     {

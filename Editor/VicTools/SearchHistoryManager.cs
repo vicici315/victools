@@ -5,7 +5,6 @@ using System.Collections.Generic;
 
 namespace VicTools
 {
-    /// <summary>
     /// 搜索历史记录管理器 - 可复用的工具类
     /// 
     /// 设计理念：
@@ -23,7 +22,6 @@ namespace VicTools
     /// 3. 下拉选择器UI组件
     /// 4. 清除历史记录功能
     /// 5. 回车键事件处理
-    /// </summary>
     public class SearchHistoryManager
     {
         // 内部存储的搜索历史记录列表
@@ -38,28 +36,22 @@ namespace VicTools
         // 最大历史记录数量限制
         private int maxHistoryCount;
         
-        /// <summary>
         /// 搜索历史记录
-        /// </summary>
         public List<string> SearchHistory => searchHistory;
         
-        /// <summary>
         /// 获取搜索历史记录列表
-        /// </summary>
         /// <returns>搜索历史记录列表</returns>
         public List<string> GetSearchHistory()
         {
             return new List<string>(searchHistory);
         }
         
-        /// <summary>
         /// 构造函数
         /// 
         /// 重要：每个工具应该使用不同的uniqueKeyPrefix来避免历史记录冲突
         /// 例如：
         /// - ScenesTools: "VicTools_ScenesTools"
         /// - ProjectTools: "ProjectTools_PathHistory"
-        /// </summary>
         /// <param name="uniqueKeyPrefix">唯一键前缀，用于区分不同的搜索历史记录</param>
         /// <param name="maxHistory">最大历史记录数量，默认10</param>
         public SearchHistoryManager(string uniqueKeyPrefix, int maxHistory = 10)
@@ -73,7 +65,6 @@ namespace VicTools
             LoadSearchHistory();
         }
         
-        /// <summary>
         /// 添加搜索文本到历史记录
         /// 
         /// 功能特点：
@@ -81,7 +72,6 @@ namespace VicTools
         /// 2. 最新优先：新添加的文本放在列表开头
         /// 3. 数量限制：自动限制历史记录数量
         /// 4. 自动保存：添加后自动持久化到EditorPrefs
-        /// </summary>
         /// <param name="text">搜索文本</param>
         public void AddToSearchHistory(string text)
         {
@@ -106,7 +96,6 @@ namespace VicTools
             SaveSearchHistory();
         }
         
-        /// <summary>
         /// 保存搜索历史记录到EditorPrefs
         /// 
         /// 持久化机制：
@@ -117,7 +106,6 @@ namespace VicTools
         /// 存储格式：
         /// - 使用Unity内置的JsonUtility进行序列化
         /// - 通过StringListWrapper包装器类处理List<string>的序列化
-        /// </summary>
         public void SaveSearchHistory()
         {
             if (searchHistory.Count == 0)
@@ -132,7 +120,6 @@ namespace VicTools
             EditorPrefs.SetString(searchHistoryKey, historyJson);
         }
         
-        /// <summary>
         /// 从EditorPrefs加载搜索历史记录
         /// 
         /// 加载流程：
@@ -145,7 +132,6 @@ namespace VicTools
         /// - 捕获JSON反序列化异常
         /// - 记录警告日志但不中断程序执行
         /// - 提供默认的空列表作为回退方案
-        /// </summary>
         public void LoadSearchHistory()
         {
             if (EditorPrefs.HasKey(searchHistoryKey))
@@ -169,7 +155,6 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 保存上次搜索文本
         /// 
         /// 用途：
@@ -180,7 +165,6 @@ namespace VicTools
         /// 存储策略：
         /// - 非空文本：保存到EditorPrefs
         /// - 空文本：删除存储键，避免存储无效数据
-        /// </summary>
         /// <param name="searchText">要保存的搜索文本</param>
         public void SaveLastSearchText(string searchText)
         {
@@ -194,7 +178,6 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 加载上次搜索文本
         /// 
         /// 恢复机制：
@@ -205,7 +188,6 @@ namespace VicTools
         /// 使用场景：
         /// - 编辑器窗口初始化时恢复上次搜索状态
         /// - 提供连续的工作体验
-        /// </summary>
         /// <returns>上次保存的搜索文本，如果不存在则返回空字符串</returns>
         public string LoadLastSearchText()
         {
@@ -216,7 +198,6 @@ namespace VicTools
             return "";
         }
         
-        /// <summary>
         /// 清除搜索历史记录
         /// 
         /// 清理操作：
@@ -228,14 +209,12 @@ namespace VicTools
         /// - 用户手动清理历史记录
         /// - 系统重置操作
         /// - 隐私保护需求
-        /// </summary>
         public void ClearSearchHistory()
         {
             searchHistory.Clear();
             SaveSearchHistory();
         }
         
-        /// <summary>
         /// 将指定的历史记录项移到最前面
         /// 
         /// 使用场景：
@@ -248,7 +227,6 @@ namespace VicTools
         /// 2. 将该项插入到列表开头
         /// 3. 应用数量限制规则
         /// 4. 自动持久化更改
-        /// </summary>
         /// <param name="historyItem">要移到最前面的历史记录项</param>
         public void MoveHistoryToFront(string historyItem)
         {
@@ -271,7 +249,6 @@ namespace VicTools
             SaveSearchHistory();
         }
 
-        /// <summary>
         /// 绘制搜索历史选择器（下拉选择器）
         /// 
         /// UI组件功能：
@@ -289,7 +266,6 @@ namespace VicTools
         /// - 固定宽度99像素，保持UI一致性
         /// - 自动处理空历史记录情况
         /// - 修复了Unity编辑器断言失败错误
-        /// </summary>
         /// <param name="currentSearchText">当前搜索文本引用（ref参数，直接修改调用方的变量）</param>
         /// <param name="onHistorySelected">历史记录被选择时的回调函数，可选参数</param>
         public void DrawSearchHistorySelector(ref string currentSearchText, System.Action<string> onHistorySelected = null)
@@ -343,7 +319,6 @@ namespace VicTools
             // }
         }
 
-        /// <summary>
         /// 绘制清除历史记录按钮
         /// 
         /// 布局选项：
@@ -358,7 +333,6 @@ namespace VicTools
         /// 使用场景：
         /// - 工具栏：通常使用右对齐模式
         /// - 表单：通常使用左对齐模式
-        /// </summary>
         /// <param name="buttonText">按钮显示文本，默认为"<清除历史>"</param>
         /// <param name="style">按钮样式，可选参数，默认使用GUI.skin.button</param>
         /// <param name="alignRight">是否右对齐布局，默认为false</param>
@@ -385,7 +359,6 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 处理回车键事件
         /// 
         /// 功能说明：
@@ -401,7 +374,6 @@ namespace VicTools
         /// - 文本验证：搜索文本不能为空
         /// 
         /// 注意：当前实现中部分逻辑被注释，可根据需要启用
-        /// </summary>
         /// <param name="searchText">当前搜索文本</param>
         /// <param name="controlName">搜索文本框控件名称，必须提供唯一的控件名称</param>
         /// <param name="onEnterPressed">回车键按下时的回调函数，可选参数</param>
@@ -458,7 +430,6 @@ namespace VicTools
             return false;
         }
 
-        /// <summary>
         /// 用于JSON序列化的字符串列表包装器
         /// 
         /// 设计目的：
@@ -470,17 +441,13 @@ namespace VicTools
         /// {
         ///   "items": ["记录1", "记录2", "记录3"]
         /// }
-        /// </summary>
         [System.Serializable]
         private class StringListWrapper
         {
             public List<string> items = new List<string>();
         }
         
-        
-        /// <summary>
         /// 验证文件路径是否存在 - 路径合法检测功能
-        /// </summary>
         /// <param name="path">要验证的路径</param>
         /// <returns>如果路径存在返回true，否则返回false并显示错误提示</returns>
         private bool ValidateFilePath(string path)

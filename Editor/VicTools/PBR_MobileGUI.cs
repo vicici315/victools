@@ -314,7 +314,7 @@ public class PBR_MobileGUI : ShaderGUI
             EditorGUI.indentLevel++;
             // 将自发光颜色和贴图显示在同一行
             m_MaterialEditor.TexturePropertyWithHDRColor(new GUIContent("自发光"), emissionMap, emissionColor, false);
-            m_MaterialEditor.RangeProperty(emissionScale, "自发光缩放");
+            m_MaterialEditor.RangeProperty(emissionScale, "自发光强度");
             m_MaterialEditor.ShaderProperty(invertEmisMap, "反转自发光贴图");
             EditorGUI.indentLevel--;
         }

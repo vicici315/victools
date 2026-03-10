@@ -249,7 +249,7 @@ Shader "Custom/Glass_carWindow"
                 half shadowAttenuation = mainLight.shadowAttenuation;
                 
                 // 计算高光（传入fresnel，让边缘高光更亮）
-                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) *AdjustSaturation(_BaseColor.rgb,0.5)*(fresnel + 0.2 * _SpecularStrength);
+                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) *AdjustSaturation(_BaseColor.rgb,0.5)*(fresnel + 0.1)* _SpecularStrength;
                 
                 // 确保高光可见（调试用）
                 // return half4(specular * 10.0, 1.0); // 取消注释此行可以只看高光
@@ -257,7 +257,7 @@ Shader "Custom/Glass_carWindow"
                 finalColor += specular;
                 
                 // 简单的环境光
-                half3 ambient = half3(0.051, 0.051, 0.051);
+                half3 ambient = half3(0.05, 0.05, 0.05);
                 finalColor += ambient;
                 
                 // 应用雾效

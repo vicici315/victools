@@ -10,7 +10,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.7.8";
+        public const string Ver = "2.7.9";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.7]";
@@ -37,7 +37,6 @@ namespace VicTools
         public virtual void OnDestroy() { }
         public virtual void OnHierarchyChange() { }
         
-
         // ReSharper disable Unity.PerformanceAnalysis
         /// 创建带事件处理的Slider控件 - 公共方法，可在任何子窗口中使用
         /// <param name="label">Slider标签</param>
@@ -61,7 +60,6 @@ namespace VicTools
             Parent?.Repaint();
             return newValue;
         }
-
 
         /// 创建带事件处理的整数Slider控件 - 公共方法，可在任何子窗口中使用
         /// 使用自定义实现避免滑动图标显示问题
@@ -148,7 +146,6 @@ namespace VicTools
             return newValue;
         }
         
-
         // ReSharper disable Unity.PerformanceAnalysis
         /// 创建带自定义样式的Toggle控件 - 内置选中时颜色变化功能，支持点击标签切换状态
         /// <param name="label">Toggle标签</param>
@@ -255,7 +252,6 @@ namespace VicTools
             return newValue;
         }
 
-
         // ReSharper disable Unity.PerformanceAnalysis
         /// 创建带自定义样式的文本输入控件 - 使用Unity Editor自带组件，支持长文本滚动和自动光标聚焦
         /// 完全修复了控件名称冲突和焦点管理问题，确保每个文本框都有稳定唯一的控件名称
@@ -358,7 +354,6 @@ namespace VicTools
 
             return newText;
         }
-
 
         /// 创建贴图尺寸选择器 - 专门用于选择常用贴图尺寸
         /// <param name="label">选择器标签</param>
@@ -477,7 +472,6 @@ namespace VicTools
             return newSize;
 
         }
-
 
         /// 创建字符串选项选择器 - 专门用于选择字符串选项
         /// <param name="label">选择器标签</param>
@@ -606,7 +600,6 @@ namespace VicTools
         }
     }
 
-    
     /// VicTools 主窗口 - 优化版本
     public class VicToolsWindow : EditorWindow
     {
@@ -649,14 +642,12 @@ namespace VicTools
             window.Show();
         }
 
-
         // 动态菜单项 - 使用MenuItem的validate函数来避免硬编码依赖
         // [MenuItem("Tools/VicTools/场景工具", false, 2001)]
         // public static void ShowScenesWindow()
         // {
         //     ShowWindowByTypeName("ScenesTools");
         // }
-
 
         // ReSharper disable Unity.PerformanceAnalysis
         private void InitSubWindows()
@@ -690,7 +681,6 @@ namespace VicTools
             }
         }
         
-
         /// 查找所有继承自SubWindow的子窗口类型
         private static Type[] FindAllSubWindowTypes()
         {
@@ -706,7 +696,6 @@ namespace VicTools
             return allTypes;
         }
         
-
         /// 创建子窗口实例
         private SubWindow CreateSubWindowInstance(Type type)
         {
@@ -745,7 +734,6 @@ namespace VicTools
             }
         }
         
-
         /// 获取子窗口的默认名称
         private static string GetDefaultWindowName(Type type)
         {
@@ -761,9 +749,7 @@ namespace VicTools
             return name;
         }
 
-        /// <summary>
         /// 按自定义固定顺序排列子窗口
-        /// </summary>
         /// <param name="subWindows">子窗口数组</param>
         /// <returns>按自定义顺序排列的子窗口数组</returns>
         private SubWindow[] OrderSubWindowsByCustomSequence(SubWindow[] subWindows)
@@ -797,9 +783,7 @@ namespace VicTools
             return orderedWindows.ToArray();
         }
         
-        /// <summary>
         /// 从EditorPrefs加载自定义窗口顺序
-        /// </summary>
         /// <returns>窗口名称数组</returns>
         private static string[] LoadCustomWindowOrder()
         {
@@ -807,9 +791,7 @@ namespace VicTools
             return string.IsNullOrEmpty(orderString) ? Array.Empty<string>() : orderString.Split(';');
         }
         
-        /// <summary>
         /// 保存自定义窗口顺序到EditorPrefs
-        /// </summary>
         /// <param name="order">窗口名称数组</param>
         private void SaveCustomWindowOrder(string[] order)
         {
@@ -817,9 +799,7 @@ namespace VicTools
             EditorPrefs.SetString("VicTools.CustomWindowOrder", orderString);
         }
         
-        /// <summary>
         /// 获取所有可用的子窗口名称
-        /// </summary>
         /// <returns>子窗口名称数组</returns>
         private string[] GetAllWindowNames()
         {
@@ -961,9 +941,7 @@ namespace VicTools
             EditorGUILayout.EndScrollView();
         }
         
-        /// <summary>
         /// 处理拖拽逻辑 - 完全重写版本
-        /// </summary>
         /// <param name="orderList">窗口顺序列表</param>
         private void HandleDragLogic(List<string> orderList)
         {
@@ -1083,9 +1061,7 @@ namespace VicTools
             GUI.backgroundColor = Color.white;
         }
 
-        /// <summary>
         /// 处理拖拽事件
-        /// </summary>
         /// <param name="rect">标签区域矩形</param>
         /// <param name="index">当前项的索引</param>
         private void HandleDragEvents(Rect rect, int index)
@@ -1109,9 +1085,7 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 应用窗口顺序变化 - 重新初始化子窗口数组
-        /// </summary>
         private void ApplyWindowOrderChanges()
         {
             // 保存当前窗口状态
@@ -1236,9 +1210,7 @@ namespace VicTools
             EditorApplication.delayCall += DelayedWindowRestore;
         }
         
-        /// <summary>
         /// 延迟窗口恢复 - 确保窗口完全初始化后再应用位置和尺寸
-        /// </summary>
         private void DelayedWindowRestore()
         {
             // 移除回调，确保只执行一次
@@ -1305,9 +1277,7 @@ namespace VicTools
             EnsureWindowFocus();
         }
         
-        /// <summary>
         /// 确保窗口获得焦点并显示在前面 - 优化版本
-        /// </summary>
         private void EnsureWindowFocus()
         {
             // 方法1：立即获取焦点
@@ -1644,24 +1614,20 @@ namespace VicTools
             }
         }
 
-
-
         /// 显示帮助对话框 - 使用自定义窗口支持链接
         private void ShowHelpDialog()
         {
             VicToolsHelpWindow.ShowWindow();
         }
 
-        /// <summary>
         /// 显示Menu下拉菜单
-        /// </summary>
         private void ShowMenuDropdown()
         {
             GenericMenu menu = new GenericMenu();
             
             menu.AddItem(new GUIContent("● 校正(PBR_Mobile)烘焙高光方向"), false, SceneTools.ApplyLightDirectionToMaterials);
             // 添加"校正PBR_Mobile5.8 高光"菜单项
-            menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.8 高光数值"), false, CorrectPBRMobile58Specular);
+            menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.8 高光数值（2.0）"), false, CorrectPBRMobile58Specular);
             
             menu.ShowAsContext();
         }
@@ -1691,14 +1657,14 @@ namespace VicTools
                         
                         // 如果当前值大于等于2，说明可能是为了补偿之前的削减而设置的高值
                         // 将其调整为合理范围（除以约25倍，因为之前被0.04削减）
-                        if (currentScale >= 2.0f)
+                        if (currentScale != 2.0f)
                         {
-                            float newScale = Mathf.Clamp(currentScale / 25.0f, 1.0f, 12.0f);
-                            material.SetFloat("_SpecularScale", newScale);
+                            // float newScale = Mathf.Clamp(currentScale / 25.0f, 1.0f, 12.0f);
+                            material.SetFloat("_SpecularScale", 2);
                             EditorUtility.SetDirty(material);
                             correctedCount++;
                             
-                            Debug.Log($"校正材质: {material.name} - SpecularScale: {currentScale:F2} → {newScale:F2}");
+                            // Debug.Log($"校正材质: {material.name} - SpecularScale: {currentScale:F2} → {newScale:F2}");
                         }
                     }
                 }
@@ -1718,9 +1684,7 @@ namespace VicTools
             EditorUtility.DisplayDialog("PBR_Mobile5.8 高光校正", message, "确定");
         }
 
-        /// <summary>
         /// 加载保存的常规窗口尺寸
-        /// </summary>
         private void LoadNormalWindowSize()
         {
             // 从EditorPrefs加载保存的常规窗口尺寸
@@ -1744,9 +1708,7 @@ namespace VicTools
             Repaint();
         }
         
-        /// <summary>
         /// 保存常规窗口尺寸
-        /// </summary>
         private void SaveNormalWindowSize()
         {
             // 只有当当前不是性能分析窗口时才保存常规窗口尺寸
@@ -1759,9 +1721,7 @@ namespace VicTools
             EditorPrefs.SetFloat("VicTools.NormalWindowSize.Height", _normalWindowSize.y);
         }
 
-        /// <summary>
         /// 加载窗口位置和停靠状态 - 增强版本
-        /// </summary>
         private void LoadWindowPositionAndDockState()
         {
             // 使用增强的停靠状态检测
@@ -1824,9 +1784,7 @@ namespace VicTools
             // 更新内部状态
         }
 
-        /// <summary>
         /// 保存窗口位置和停靠状态
-        /// </summary>
         private void SaveWindowPositionAndDockState()
         {
             // 检测当前窗口是否停靠
@@ -1850,9 +1808,7 @@ namespace VicTools
             _lastWindowSize = position.size;
         }
 
-        /// <summary>
         /// 检测窗口是否处于停靠状态 - 增强版本
-        /// </summary>
         /// <returns>如果窗口停靠返回true，否则返回false</returns>
         private bool IsWindowDocked()
         {
@@ -1897,9 +1853,7 @@ namespace VicTools
             return IsWindowPositionDocked();
         }
         
-        /// <summary>
         /// 增强的窗口停靠状态检测 - 综合多种检测方法
-        /// </summary>
         /// <returns>如果窗口停靠返回true，否则返回false</returns>
         private bool IsWindowDockedEnhanced()
         {
@@ -1924,9 +1878,7 @@ namespace VicTools
             return behaviorDocked;
         }
         
-        /// <summary>
         /// 使用反射检测窗口停靠状态
-        /// </summary>
         /// <returns>如果窗口停靠返回true</returns>
         private bool IsWindowDockedByReflection()
         {
@@ -1946,9 +1898,7 @@ namespace VicTools
             return false;
         }
         
-        /// <summary>
         /// 检测窗口是否最大化
-        /// </summary>
         /// <returns>如果窗口最大化返回true</returns>
         private bool IsWindowMaximized()
         {
@@ -1968,9 +1918,7 @@ namespace VicTools
             return false;
         }
         
-        /// <summary>
         /// 通过窗口行为检测停靠状态
-        /// </summary>
         /// <returns>如果窗口行为显示停靠状态返回true</returns>
         private bool IsWindowBehaviorDocked()
         {
@@ -2006,9 +1954,7 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 通过窗口位置检测停靠状态（增强的备用方法）
-        /// </summary>
         /// <returns>如果窗口位置显示停靠状态返回true</returns>
         private bool IsWindowPositionDocked()
         {
@@ -2035,9 +1981,7 @@ namespace VicTools
             return isNearEdge || isFullWidth || isFullHeight || isWithinEditorBounds;
         }
         
-        /// <summary>
         /// 检查窗口是否在Unity编辑器主窗口边界内
-        /// </summary>
         /// <returns>如果窗口在编辑器主窗口内返回true</returns>
         private bool IsWindowWithinEditorBounds()
         {
@@ -2062,10 +2006,8 @@ namespace VicTools
             }
         }
         
-        /// <summary>
         /// 强制应用窗口位置 - 最终的窗口位置恢复保障机制
         /// 当所有其他恢复方法都失败时使用此方法（仅在停靠式窗口设置关闭时）
-        /// </summary>
         private void ForceApplyWindowPosition()
         {
             Debug.Log("使用强制窗口位置恢复方法");

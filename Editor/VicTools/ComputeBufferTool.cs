@@ -55,7 +55,6 @@ public class ComputeBufferTool : EditorWindow
         // LoadWindowPosition(window);
     }
 
-
     // private static void LoadWindowPosition(EditorWindow window)
     // {
     //     // 使用唯一键名保存窗口位置
@@ -81,14 +80,12 @@ public class ComputeBufferTool : EditorWindow
     //     }
     // }
 
-    
     /// 窗口关闭时保存当前位置到 EditorPrefs
     private void OnDestroy()
     {
         SaveWindowPosition();
     }
 
-    
     /// 保存窗口位置到 EditorPrefs
     private void SaveWindowPosition()
     {
@@ -127,7 +124,6 @@ public class ComputeBufferTool : EditorWindow
         // 使用垂直布局，将内容分为两部分：可滚动区域和底部固定区域
         EditorGUILayout.BeginVertical();
         
-
         // GUILayout.Label("Compute Buffer Tool", EditorStyles.boldLabel);
 
         // [SEARCH: 管理器状态] - 管理器状态显示区域
@@ -178,7 +174,6 @@ public class ComputeBufferTool : EditorWindow
                     int spotLightCount = _manager.UpdateSpotLightsBuffer();
                     int totalLightCount = pointLightCount + spotLightCount;
                     EditorGUILayout.LabelField($"活动光源数量: {totalLightCount} (点光: {pointLightCount}, 聚光: {spotLightCount})");
-
 
                     // 添加其他编辑器工具按钮 - 并排排列
                     EditorGUILayout.BeginHorizontal();
@@ -395,7 +390,6 @@ public class ComputeBufferTool : EditorWindow
             }
         }
         
-        
         // 第二部分：底部固定区域 - 自定义材质选择工具
         // 这个区域始终显示在窗口底部，不会被_toolTargetMaterials列表顶没
         EditorGUILayout.Space();
@@ -405,7 +399,6 @@ public class ComputeBufferTool : EditorWindow
         separatorStyle.normal.background = CreateColorTexture(1, 1, new Color(0.7f, 0.5f, 0.0f)); // 黄色分隔线
         separatorStyle.normal.background.hideFlags = HideFlags.HideAndDontSave;
         GUILayout.Box("", separatorStyle, GUILayout.Height(2), GUILayout.ExpandWidth(true));
-        
         
         // [SEARCH: 自定义材质选择工具] - 自定义材质选择工具区域
         // 自定义材质选择功能 - 始终显示，不依赖于管理器状态
@@ -480,7 +473,6 @@ public class ComputeBufferTool : EditorWindow
         }
     }
 
-
     // ReSharper disable Unity.PerformanceAnalysis
     /// 创建管理器对象 - 自动创建空物体并挂载ComputeBufferLightManager组件
     private void CreateManagerObject()
@@ -554,7 +546,6 @@ public class ComputeBufferTool : EditorWindow
             EditorUtility.DisplayDialog("错误", $"创建管理器对象时出错: {e.Message}", "确定");
         }
     }
-
 
     // [SEARCH: 缓冲区管理功能] - 缓冲区管理功能区域
     // ReSharper disable Unity.PerformanceAnalysis
@@ -666,7 +657,6 @@ public class ComputeBufferTool : EditorWindow
         }
     }
 
-    
     // ReSharper disable Unity.PerformanceAnalysis
     /// 选择场景中与选择物体相同材质的物体
     /// 自动获取当前场景中选择的物体的材质，并选择所有使用相同材质的物体
@@ -782,8 +772,6 @@ public class ComputeBufferTool : EditorWindow
         }
     }
 
-
-    
     // ReSharper disable Unity.PerformanceAnalysis
     /// 删除当前场景中的ComputeBufferLightManager管理器对象
     /// 安全地删除管理器对象，包括清理GPU资源和重置系统状态
@@ -864,7 +852,6 @@ public class ComputeBufferTool : EditorWindow
             EditorUtility.DisplayDialog("错误", $"删除管理器对象时出错: {e.Message}", "确定");
         }
     }
-
 
     // [SEARCH: 材质选择方法] - 材质选择方法区域
     // private void SelectObjectsUsingMaterial(Material targetMaterial)
@@ -964,7 +951,6 @@ public class ComputeBufferTool : EditorWindow
         }
     }
 
-    
     /// 工具启动时执行的函数。重写此方法以添加自定义启动逻辑。
     protected virtual void OnToolStartup()
     {
@@ -1250,7 +1236,6 @@ public class ComputeBufferTool : EditorWindow
             }
         }
     }
-    /// <summary>
     /// 选择管理器中收集的所有材质球
     /// 这个方法会从ComputeBufferLightManager的targetMaterials列表中获取所有材质，
     /// 并在Project窗口中选择这些材质球
@@ -1320,9 +1305,7 @@ public class ComputeBufferTool : EditorWindow
         }
     }
     
-    /// <summary>
     /// 创建纯色纹理
-    /// </summary>
     /// <param name="width">纹理宽度</param>
     /// <param name="height">纹理高度</param>
     /// <param name="color">纹理颜色</param>

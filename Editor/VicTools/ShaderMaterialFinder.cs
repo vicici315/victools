@@ -4,7 +4,6 @@ using UnityEditor;
 using System.Collections.Generic;
 using System.Linq;
 
-
 namespace VicTools
 {
 
@@ -308,7 +307,6 @@ namespace VicTools
             EditorGUILayout.EndVertical();
         }
         
-
         /// 查找使用指定着色器的所有材质
         private void FindMaterialsByShader()
         {
@@ -385,7 +383,6 @@ namespace VicTools
             Parent?.Repaint();
         }
         
-
         /// 选择所有找到的材质
         private void SelectAllMaterials()
         {
@@ -469,7 +466,6 @@ namespace VicTools
             Parent?.Repaint();
         }
         
-
         /// 从当前选择的着色器开始搜索
         [MenuItem("Assets/查找使用该着色器的材质", false, 300)]
         private static void FindMaterialsFromSelection()
@@ -494,7 +490,6 @@ namespace VicTools
             }
         }
         
-
         /// 验证菜单项是否可用
         [MenuItem("Assets/查找使用该着色器的材质", true, 300)]
         private static bool ValidateFindMaterialsFromSelection()
@@ -502,7 +497,6 @@ namespace VicTools
             return Selection.activeObject is Shader;
         }
         
-
         /// 从当前选择的材质查找使用的着色器
         [MenuItem("Assets/查找该材质使用的着色器", false, 301)]
         private static void FindShaderFromMaterial()
@@ -534,7 +528,6 @@ namespace VicTools
             }
         }
         
-
         /// 验证菜单项是否可用
         [MenuItem("Assets/查找该材质使用的着色器", true, 301)]
         private static bool ValidateFindShaderFromMaterial()

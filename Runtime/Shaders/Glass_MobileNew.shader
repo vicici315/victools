@@ -10,7 +10,7 @@ Shader "Custom/Glass_MobileNew"
         _LayerBlendFactor ("Layer Blend Factor", Range(0, 2)) = 1.0
         
         [Header((Refraction))]
-        _RefractionStrength ("Refraction Strength", Range(-0.1, 0.1)) = 0.02
+        _RefractionStrength ("Refraction Strength", Range(-0.81, 0.81)) = 0.02
         [Toggle(_DISABLE_REFRACTION)] _DisableRefraction ("Disable Refraction", Float) = 0
         
         [Header((Normal Map))]
@@ -168,12 +168,30 @@ Shader "Custom/Glass_MobileNew"
                 );
                 normalWS = normalize(mul(normalTS, TBN));
                 
-                // 折射效果
+                // 菲涅尔效应
+                half fresnel = 1.0 - saturate(dot(viewDirWS, normalWS));
+                fresnel = fastPow(fresnel, _Fresnel);
+                // 折射效果 - 以物体中心为轴心进行扭曲缩放
                 half3 sceneColor;
                 #ifdef _DISABLE_REFRACTION
                     sceneColor = SampleSceneColor(screenUV).rgb;
                 #else
-                    half2 refractionOffset = normalWS.xy * _RefractionStrength;
+                    // 计算物体中心（对象空间原点）在屏幕空间的位置
+                    float3 objectCenterWS = TransformObjectToWorld(float3(0, 0, 0));
+                    float4 objectCenterCS = TransformWorldToHClip(objectCenterWS);
+                    float2 objectCenterScreenUV = objectCenterCS.xy / objectCenterCS.w;
+                    
+                    // 计算从中心到当前像素的方向向量
+                    float2 directionFromCenter = screenUV - objectCenterScreenUV;
+                    
+                    // 使用法线强度调制扭曲效果（法线越偏离，扭曲越强）
+                    half normalDistortion = length(normalWS.xy) * _BumpScale;
+                    
+                    // 以中心为轴心进行径向扭曲缩放
+                    // _RefractionStrength > 0: 向外扩张（放大效果）
+                    // _RefractionStrength < 0: 向内收缩（缩小效果）
+                    float2 refractionOffset = directionFromCenter * _RefractionStrength*(fresnel+0.3) * (1.0 + normalDistortion);
+                    
                     sceneColor = SampleSceneColor(screenUV + refractionOffset).rgb;
                 #endif
                 
@@ -185,9 +203,6 @@ Shader "Custom/Glass_MobileNew"
                 half3 diffuse = lightColor * NdotL;
                 half3 specular = SimpleSpecular(normalWS, mainLight.direction, viewDirWS, _Roughness, lightColor) * (_BaseColor.rgb+0.2);
                 
-                // 菲涅尔效应
-                half fresnel = 1.0 - saturate(dot(viewDirWS, normalWS));
-                fresnel = fastPow(fresnel, _Fresnel);
                 
                 // 计算基础玻璃颜色
                 half3 glassBaseColor = _BaseColor.rgb * saturate(diffuse+_Diffuse);
@@ -208,7 +223,7 @@ Shader "Custom/Glass_MobileNew"
                 finalColor = MixFog(finalColor, IN.fogFactor);
                 
                 // 计算最终透明度
-                half finalAlpha = _BaseColor.a * _Transparency;
+                half finalAlpha = _Transparency;
                 finalAlpha = lerp(finalAlpha, 1.0, fresnel * 0.2); // 边缘稍微增加不透明度
                 
                 return half4(finalColor, finalAlpha);

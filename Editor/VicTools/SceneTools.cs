@@ -89,10 +89,8 @@ namespace VicTools
             }
         }
 
-        /// <summary>
         /// 切换选中对象的材质着色器在 PBR_Mobile 和 PBR_Lighting 之间
         /// 公共函数调用方法：SceneTools.SwitchPBRLightingShader();
-        /// </summary>
         /// <param name="useStaticObjects">true: 处理场景中所有静态对象; false: 只处理选中的对象</param>
         public static void SwitchPBRLightingShader(bool useStaticObjects = false)
         {

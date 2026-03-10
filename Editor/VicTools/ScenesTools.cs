@@ -83,7 +83,6 @@ public class ResourceBoxFileItem
     public string displayName; // 添加displayName字段，用于保存对象的显示名称
 }
 
-
     /// 场景工具子窗口
     public class ScenesTools : SubWindow
     {
@@ -216,7 +215,6 @@ public class ResourceBoxFileItem
             // 保存资源箱数据（自动保存，不显示提示框）
             // SaveResourceBox();
         }
-
 
         /// 当游戏运行状态发生变化时调用
         private void OnPlayModeStateChanged(PlayModeStateChange state)
@@ -360,11 +358,9 @@ public class ResourceBoxFileItem
             // }
             // GUI.backgroundColor = Color.white;
 
-
             // 使用搜索历史管理器绘制历史记录选择器
             _searchHistoryManager.DrawSearchHistorySelector(ref _searchText, SelectObjectsByName);
             EditorGUILayout.EndHorizontal();
-
 
             // 清除历史记录按钮 - 右对齐
             // searchHistoryManager.DrawClearHistoryButton("删除历史", style.normalfont_Hui, true);
@@ -375,7 +371,6 @@ public class ResourceBoxFileItem
 
             EditorGUILayout.EndVertical();
             // [1]VerticalLayoutEnd();
-
 
             // 显示选择的对象数量
             // if (selectedObjectsCount > 0)
@@ -663,7 +658,6 @@ public class ResourceBoxFileItem
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
 
-
             EditorGUILayout.EndVertical();
 
             // 资源箱文件管理区域
@@ -714,7 +708,6 @@ public class ResourceBoxFileItem
             }
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
-
 
             EditorGUILayout.EndVertical();
 
@@ -1526,8 +1519,6 @@ public class ResourceBoxFileItem
             Debug.Log($"已将材质 '{materialToAdd.name}' 放入资源箱");
         }
 
-        
-
         /// 保存资源箱数据到全局文件（优化版本，解决重名问题）
         /// <param name="showConfirmation">是否显示确认提示框</param>
         private void SaveResourceBox(bool showConfirmation = true)
@@ -1645,9 +1636,7 @@ public class ResourceBoxFileItem
             // Debug.Log($"资源箱数据已保存到全局文件，包含 {resourceBoxData.Count} 个对象（包括 {resourceBoxData.Count(item => item.guid == "NULL:OBJECT")} 个null对象）");
         }
         
-        /// <summary>
         /// 保存资源箱数据到全局文件
-        /// </summary>
         /// <param name="jsonData">JSON格式的资源箱数据</param>
         private void SaveResourceBoxToGlobalFile(string jsonData)
         {
@@ -1986,9 +1975,7 @@ public class ResourceBoxFileItem
             }
         }
 
-        /// <summary>
         /// 从displayName中提取原始对象名称
-        /// </summary>
         private string ExtractOriginalNameFromDisplayName(string displayName)
         {
             // displayName格式示例: 
@@ -2082,9 +2069,7 @@ public class ResourceBoxFileItem
             return $"SCENE:{scenePath}:{fullPath}:{gameObject.GetInstanceID()}";
         }
 
-        /// <summary>
         /// 通过唯一标识符查找场景中的GameObject（优化版本，解决重名问题）
-        /// </summary>
         private GameObject FindGameObjectByIdentifier(string identifier)
         {
             if (string.IsNullOrEmpty(identifier)) return null;
@@ -2234,9 +2219,7 @@ public class ResourceBoxFileItem
             return foundObject;
         }
 
-        /// <summary>
         /// 通过完整路径查找场景中的GameObject
-        /// </summary>
         private GameObject FindGameObjectByPath(string fullPath)
         {
             if (string.IsNullOrEmpty(fullPath)) return null;
@@ -2247,9 +2230,7 @@ public class ResourceBoxFileItem
             return (from rootObject in rootObjects select rootObject.transform.Find(fullPath) into foundTransform where foundTransform select foundTransform.gameObject).FirstOrDefault();
         }
 
-        /// <summary>
         /// 通过模糊匹配查找场景中的GameObject（最终备用方案）
-        /// </summary>
         private static GameObject FindGameObjectByFuzzyMatching(string objectPath)
         {
             var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
@@ -2261,19 +2242,14 @@ public class ResourceBoxFileItem
             return (from obj in allObjects where obj.name == targetName let currentPath = GetGameObjectFullPath(obj) where currentPath.EndsWith(objectPath) || objectPath.EndsWith(currentPath) select obj).FirstOrDefault();
         }
         
-
-        /// <summary>
         /// 资源箱数据序列化类
-        /// </summary>
         [Serializable]
         private class ResourceBoxData
         {
             public List<ResourceBoxItem> items;
         }
 
-        /// <summary>
         /// 资源箱项目序列化类
-        /// </summary>
         [Serializable]
         private class ResourceBoxItem
         {
@@ -2286,9 +2262,7 @@ public class ResourceBoxFileItem
 
         #region 资源箱文件管理方法
 
-        /// <summary>
         /// 刷新可用资源箱文件列表
-        /// </summary>
         private void RefreshAvailableFiles()
         {
             _availableFiles.Clear();
@@ -2316,9 +2290,7 @@ public class ResourceBoxFileItem
             }
         }
 
-        /// <summary>
         /// 保存资源箱数据到文件（优化版本，解决重名问题）
-        /// </summary>
         /// <param name="showConfirmation">是否显示确认提示框</param>
         private void SaveResourceBoxToFile(bool showConfirmation = true)
         {
@@ -2431,9 +2403,7 @@ public class ResourceBoxFileItem
             }
         }
 
-        /// <summary>
         /// 从文件加载资源箱数据
-        /// </summary>
         private void LoadResourceBoxFromFile()
         {
             if (_availableFiles.Count == 0 || _selectedFileIndex < 0 || _selectedFileIndex >= _availableFiles.Count)
@@ -2702,8 +2672,6 @@ public class ResourceBoxFileItem
 
         #endregion
 
-        
-
         /// 更新选中数量显示
         private void UpdateSelectedCountDisplay()
         {
@@ -2727,9 +2695,7 @@ public class ResourceBoxFileItem
             }
         }
 
-        /// <summary>
         /// 重新检查资源箱中的null对象，尝试在当前场景中重新加载它们
-        /// </summary>
         private void RecheckNullObjectsInResourceBox()
         {
             bool hasChanges = false;
@@ -2776,9 +2742,7 @@ public class ResourceBoxFileItem
             }
         }
 
-        /// <summary>
         /// 在当前场景中按名称查找对象
-        /// </summary>
         private GameObject FindObjectByNameInCurrentScene(string objectName)
         {
             var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
@@ -2792,9 +2756,7 @@ public class ResourceBoxFileItem
             return null;
         }
 
-        /// <summary>
         /// 获取GameObject的完整路径（从根对象到当前对象的路径）
-        /// </summary>
         private static string GetGameObjectFullPath(GameObject gameObject)
         {
             if (!gameObject) return "";

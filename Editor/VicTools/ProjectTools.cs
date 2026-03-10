@@ -49,7 +49,6 @@ namespace VicTools
         }
     }
 
-    
     /// 项目资源工具子窗口
     public class ProjectTools : SubWindow
     {
@@ -145,7 +144,6 @@ namespace VicTools
             EditorPrefs.SetBool("ProjectTools_useParameters", _useParameters);
         }
 
-        
         // ReSharper disable Unity.PerformanceAnalysis
         /// 将值吸附到最近的2的次方值
         
@@ -213,7 +211,6 @@ namespace VicTools
         private void DrawTextureMaxSizeSection()
         {
             var style = EditorStyle.Get;
-            
             
             EditorGUILayout.LabelField("★ 批量设置贴图", style.subheading);
             
@@ -304,7 +301,6 @@ namespace VicTools
                 // 这里只更新文本，不保存历史
             }, 1, 0, TextAnchor.MiddleLeft, null, null, "ProjectTools_pathField");
 
-            
             // 使用搜索历史管理器绘制历史记录选择器
             _searchHistoryManager.DrawSearchHistorySelector(ref _filePath, (selectedHistory) => {
 
@@ -314,7 +310,6 @@ namespace VicTools
 
             EditorGUILayout.EndHorizontal();
             
-
             // 使用紧凑布局让两个Toggle控件向左靠拢且没有间隔
             EditorGUILayout.BeginHorizontal();
             
@@ -363,7 +358,6 @@ namespace VicTools
             // 确保subffix变量与当前选择同步
             // string[] suffixOptions = new string[] { "", "_N", "_D", "_S", "_M", "_E", "_R" };
             // subffix = suffixOptions[suffixIndex];
-            
             
             // 添加弹性空间将控件推到左侧
             GUILayout.FlexibleSpace();
@@ -862,7 +856,6 @@ namespace VicTools
             return false;
         }
 
-        
         /// 清除处理记录 - 带确认提示
         // private void ClearProcessedTextures()
         // {
@@ -886,7 +879,6 @@ namespace VicTools
         //     }
         // }
 
-        
         /// 处理路径中后缀为"_N"的贴图
         private void ProcessPathTextures(string path, ref int textureCount, ref int successCount, ref int skippedCount)
         {
@@ -895,7 +887,6 @@ namespace VicTools
             ProcessPathTexturesRecursive(path, ref textureCount, ref successCount, ref skippedCount, processedPaths);
         }
 
-        
         /// 递归处理路径中指定后缀的贴图（内部方法）
         private void ProcessPathTexturesRecursive(string path, ref int textureCount, ref int successCount, ref int skippedCount, HashSet<string> processedPaths)
         {
@@ -978,7 +969,6 @@ namespace VicTools
             }
         }
 
-        
         /// 获取Project窗口中选中的第一个对象的路径
         private void GetSelectedObjectPath()
         {
@@ -1035,7 +1025,6 @@ namespace VicTools
             Parent?.Repaint();
         }
 
-        
         /// 跳转到指定路径目录 - 使用正确的Unity API
         private void JumpToPath()
         {
@@ -1090,7 +1079,6 @@ namespace VicTools
             }
         }
 
-        
         // ReSharper disable Unity.PerformanceAnalysis
         // ReSharper disable Unity.PerformanceAnalysis
         // ReSharper disable Unity.PerformanceAnalysis
@@ -1273,7 +1261,6 @@ namespace VicTools
             EditorGUILayout.EndVertical();
         }
 
-        
         /// 生成重命名预览
         private void GenerateRenamePreview()
         {            
@@ -1438,7 +1425,6 @@ namespace VicTools
             return false;
         }
 
-        
         /// 生成新名称
         private string GenerateNewName(string originalName, int index)
         {
@@ -1467,7 +1453,6 @@ namespace VicTools
             return $"{_renamePrefix}_{numberPart}{_renameSuffix}";
         }
 
-        
         /// 执行批量重命名 - 支持Assets对象和场景物件
         private void ExecuteBatchRename()
         {
@@ -1680,7 +1665,6 @@ namespace VicTools
             public int index;
         }
         
-        
         /// 资产重命名信息
         private struct AssetRenameInfo
         {
@@ -1688,7 +1672,6 @@ namespace VicTools
             public string newName;
             public Object asset;
         }
-        
         
         /// 更新资产引用，确保场景中的引用不会丢失
         private void UpdateAssetReferences(string originalPath, string newName)
@@ -1737,7 +1720,6 @@ namespace VicTools
                 Debug.LogError($"更新资产引用失败: {e.Message}");
             }
         }
-        
         
         /// 更新场景中的引用
         private static void UpdateSceneReferences(string scenePath, string originalGuid, string newGuid)
@@ -1796,7 +1778,6 @@ namespace VicTools
             }
         }
         
-        
         /// 更新预制体中的引用
         private static void UpdatePrefabReferences(string prefabPath, string originalGuid, string newGuid)
         {
@@ -1847,7 +1828,6 @@ namespace VicTools
                 Debug.LogError($"更新预制体引用失败 {prefabPath}: {e.Message}");
             }
         }
-        
         
         /// 更新材质中的引用（主要用于纹理引用）
         private static void UpdateMaterialReferences(string materialPath, string originalGuid, string newGuid)
@@ -2573,7 +2553,6 @@ namespace VicTools
                 // var fileName = System.IO.Path.GetFileNameWithoutExtension(assetPath);
                 var currentGenerateLightmapUVs = modelImporter.generateSecondaryUV;
                 
-
                 // 如果当前已经启用，则跳过
                 if (currentGenerateLightmapUVs)
                 {

@@ -57,7 +57,6 @@ namespace VicTools
         // public Texture2D saveIconSelected;
         // public Texture2D saveIconUnselected;
 
-		
 		/// 获取 EditorStyle 单例实例的静态属性
 		/// 使用懒加载模式：只有在第一次访问时才创建实例
 		/// 如果实例为 null，则立即创建实例，确保不会返回null

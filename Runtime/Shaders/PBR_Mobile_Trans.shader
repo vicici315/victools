@@ -29,7 +29,7 @@ Shader "Custom/PBR_Mobile_Trans"
         [Space(5)]
         _Metallic ("Metallic", Range(0, 1)) = 0.0
         _Roughness ("Roughness", Range(0, 2)) = 0.5
-        _SpecularScale ("Specular Scale", Range(0.1, 2)) = 1
+        _SpecularScale ("Specular Scale", Range(0.1, 5)) = 2
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
         _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
         _Brightness ("Brightness", Range(0.5, 2)) = 1.2
@@ -247,15 +247,29 @@ Shader "Custom/PBR_Mobile_Trans"
                 mat.normalWS = normalWS;
                 
                 // 预计算PBR属性（性能优化 - 避免在每个光源中重复计算）
-                mat.oneMinusMetallic = 1.0 - metallic;
-                mat.smoothness = 1.0 - roughness;
+                mat.oneMinusMetallic = 1.0 - mat.metallic;
+                mat.smoothness = 1.0 - mat.roughness;
                 
                 // 预计算能量守恒的漫反射和高光颜色
                 half oneMinusDielectricSpec = 0.96;
                 mat.diffuseColor = albedo * oneMinusDielectricSpec * mat.oneMinusMetallic;
                 
-                half3 baseSpecularColor = lerp(0.04, albedo, metallic);
-                half minSpecular = mad(0.03, mat.oneMinusMetallic, 0.01 * mat.oneMinusMetallic + 0.04 * metallic);
+                // 优化高光基础能量：提高非金属材质的基础高光强度
+                half dielectricSpecular = 0.12; // 从0.04提升到0.12，增强非金属高光
+                half3 baseSpecularColor = lerp(dielectricSpecular, mat.albedo, mat.metallic);
+                
+                // 使用粗糙度调制高光强度，粗糙度低时高光更强
+                // 降低粗糙度的影响，避免过度增强
+                half roughnessFactor = 1.0 - mat.roughness * 0.3; // 从0.5降低到0.3
+                baseSpecularColor *= roughnessFactor;
+                
+                // 金属度加成：金属材质获得额外的高光强度提升
+                // 使用更温和的曲线，避免高金属度时过曝
+                half metallicBoost = 1.0 + mat.metallic * mat.metallic * 0.8; // 使用平方曲线，最高1.8倍
+                baseSpecularColor *= metallicBoost;
+                
+                // 确保最小高光值，避免完全消失
+                half minSpecular = lerp(0.08, 0.15, mat.metallic); // 降低金属最大最小值
                 mat.specularColor = max(baseSpecularColor, minSpecular);
                 
                 // 预计算高光指数（避免在每个光源中重复pow运算）
@@ -530,7 +544,7 @@ Shader "Custom/PBR_Mobile_Trans"
                     bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
-                // 使用预计算的diffuseColor（性能优化）
+                // 使用预计算的diffuseColor和specularColor（性能优化）
                 half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
                 
                 // 计算实时光照
@@ -545,19 +559,19 @@ Shader "Custom/PBR_Mobile_Trans"
                     // shadowAttenuation: 1.0 = 无阴影, 0.0 = 完全阴影
                     half shadowStrength = 1.0 - shadowAttenuation;
                     half3 shadowTint = lerp(half3(1, 1, 1), unity_ShadowColor.rgb, shadowStrength);
-                    
+                    ambient = lerp(ambient,ambient*0.21, mat.metallic);
                     // 将实时阴影应用到烘焙光照上（保持烘焙的所有细节）
                     ambient *= shadowTint;
                 #endif
                 
                 // 组合烘焙光照和实时光照（高光不再被specularColor削减）
-                half3 finalColor = ambient + mat.diffuseColor * diffuse + specular * _SpecularScale;
+                half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
                 
                 // 烘焙高光（保留原来的效果）
                 half3 bakedSpecular = 0;
                 #ifdef LIGHTMAP_ON
                     bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
-                    finalColor += bakedSpecular;
+                    finalColor += mat.specularColor * bakedSpecular;
                 #endif
                 
                 finalColor *= _Brightness;
