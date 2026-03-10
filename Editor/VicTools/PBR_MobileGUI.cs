@@ -394,9 +394,7 @@ public class PBR_MobileGUI : ShaderGUI
         m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
     }
 
-    /// <summary>
     /// 获取材质参数存档路径
-    /// </summary>
     private string GetPresetPath(string presetName)
     {
         Material material = m_MaterialEditor.target as Material;
@@ -413,9 +411,7 @@ public class PBR_MobileGUI : ShaderGUI
         return folderPath + "/" + presetName + ".json";
     }
     
-    /// <summary>
     /// 存档材质参数（排除纹理）
-    /// </summary>
     private void SaveMaterialParameters()
     {
         Material material = m_MaterialEditor.target as Material;
@@ -446,9 +442,7 @@ public class PBR_MobileGUI : ShaderGUI
         SaveMaterialParametersToFile(fileName);
     }
     
-    /// <summary>
     /// 保存材质参数到指定文件
-    /// </summary>
     private void SaveMaterialParametersToFile(string presetName)
     {
         Material material = m_MaterialEditor.target as Material;
@@ -506,9 +500,7 @@ public class PBR_MobileGUI : ShaderGUI
         Debug.Log($"材质参数已保存到: {path}");
     }
     
-    /// <summary>
     /// 读档材质参数
-    /// </summary>
     private void LoadMaterialParameters()
     {
         Material material = m_MaterialEditor.target as Material;
@@ -535,9 +527,7 @@ public class PBR_MobileGUI : ShaderGUI
         LoadMaterialParametersFromFile(presetPath);
     }
     
-    /// <summary>
     /// 从文件加载材质参数
-    /// </summary>
     private void LoadMaterialParametersFromFile(string filePath)
     {
         Material material = m_MaterialEditor.target as Material;
@@ -627,9 +617,7 @@ public class PBR_MobileGUI : ShaderGUI
         Debug.Log($"材质参数已从存档加载: {filePath}");
     }
     
-    /// <summary>
     /// 重置材质参数为默认值（使用Default存档或shader默认值）
-    /// </summary>
     private void ResetMaterialParameters()
     {
         Material material = m_MaterialEditor.target as Material;
