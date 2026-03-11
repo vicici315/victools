@@ -1,4 +1,6 @@
-//性能分析1.5 优化未使用资源扫码准确度，精确查找BuildSetting中添加场景的资源使用，添加（扫描所有场景）选项
+//【性能分析1.5】 优化未使用资源扫码准确度，精确查找BuildSetting中添加场景的资源使用，添加（扫描所有场景）选项
+//【性能分析1.6】- 优化未使用资源扫描和删除逻辑，修复 Prefab 嵌套依赖检测问题
+//【性能分析1.7】 对象统计模块添加静态对象统计快速选择
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -1202,7 +1204,10 @@ namespace VicTools
                 
                 // 显示静态标志信息
                 var staticFlags = GameObjectUtility.GetStaticEditorFlags(obj);
-                string flagsInfo = $" [{staticFlags}]";
+                // 检查是否为全静态（所有位都设置）
+                int flagsValue = (int)staticFlags;
+                bool isFullyStatic = (flagsValue == -1) || (flagsValue == 2147483647);
+                string flagsInfo = isFullyStatic ? " [Static]" : $" [{staticFlags}]";
                 
                 menu.AddItem(new GUIContent($"{objectName}{flagsInfo}"), false, (userData) => {
                     GameObject selectedObj = (GameObject)userData;
@@ -1222,7 +1227,11 @@ namespace VicTools
                     foreach (var obj in _staticObjects)
                     {
                         var staticFlags = GameObjectUtility.GetStaticEditorFlags(obj);
-                        sb.AppendLine($"  - {obj.name} (位置: {obj.transform.position}, 标志: {staticFlags})");
+                        // 检查是否为全静态（所有位都设置）
+                        int flagsValue = (int)staticFlags;
+                        bool isFullyStatic = (flagsValue == -1) || (flagsValue == 2147483647);
+                        string flagsDisplay = isFullyStatic ? "Static" : staticFlags.ToString();
+                        sb.AppendLine($"  - {obj.name} (位置: {obj.transform.position}, 标志: {flagsDisplay})");
                     }
                     Debug.Log(sb.ToString());
                 });
