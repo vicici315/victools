@@ -11,7 +11,7 @@ Shader "Custom/Glass_MobileNew"
         [Header(Specular)]
         [Space(5)]
         _Smoothness ("Smoothness", Range(0.01, 1)) = 0.88
-        _SpecularStrength ("Specular Strength", Range(0, 1)) = 1
+        _SpecularStrength ("Specular Strength", Range(0, 1)) = 0.8
         _SceneBlurStrength ("Scene Blur Strength", Range(0, 1)) = 1
         
         [Header(Distortion)]
@@ -309,10 +309,10 @@ Shader "Custom/Glass_MobileNew"
                 half3 lightColor = mainLight.color * mainLight.distanceAttenuation;
                 half shadowAttenuation = mainLight.shadowAttenuation;
                 
-                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) * _SpecularStrength;
+                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) * (fresnel+0.12) * _SpecularStrength;
                 
                 // 优化：直接计算最终玻璃基础颜色
-                half3 glassBaseColor = lerp(_BaseColor.rgb * sceneColor, sceneColor, fresnel*0.5);
+                half3 glassBaseColor = lerp(_BaseColor.rgb * sceneColor, sceneColor, fresnel*0.8);
                 
                 // 反射计算（优化版）
                 half3 reflectionColor = half3(0, 0, 0);
@@ -325,7 +325,7 @@ Shader "Custom/Glass_MobileNew"
                     reflectionColor = SampleSphericalReflection(reflectionVector, reflectionBlur);
                     
                     // 优化：直接应用菲涅尔混合，避免中间变量
-                    glassBaseColor = lerp(glassBaseColor, glassBaseColor+ reflectionColor * (_ReflectionScale*2), (fresnel*_ReflectionScale));
+                    glassBaseColor = lerp(glassBaseColor, glassBaseColor+ reflectionColor * (_ReflectionScale), (fresnel*_ReflectionScale));
                 #endif
                 
                 // 优化：预计算高光亮度，避免重复计算

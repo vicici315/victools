@@ -65,6 +65,14 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.7.10",
+"PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比及对反射的颜色控制。",
+"Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果。",
+"添加毛发材质FurShell_Mobile_SingleC，支持团结引擎版本",
+                "■ v2.7.9",
+"PBR_Mobile5.8 优化高光基础能量：提高非金属材质的基础高光强度",
+"添加EmissionFlicker1.0 PBR_Mobile自发光闪烁脚本",
+"添加\"Custom\\Texture\"天空盒shader",
                 "■ v2.7.8",
 "【性能分析1.7】 对象统计模块添加静态对象统计快速选择",
 "PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响；添加【存档】【读档】【重置参数】按钮还原所有参数默认值，重置参数按钮默认读取Default存档（如果覆盖该存档则重置参数会读取Default文件中的设置）",

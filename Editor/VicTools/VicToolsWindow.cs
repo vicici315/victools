@@ -10,7 +10,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.7.9";
+        public const string Ver = "2.7.10";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.7]";
@@ -1627,7 +1627,7 @@ namespace VicTools
             
             menu.AddItem(new GUIContent("● 校正(PBR_Mobile)烘焙高光方向"), false, SceneTools.ApplyLightDirectionToMaterials);
             // 添加"校正PBR_Mobile5.8 高光"菜单项
-            menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.8 高光数值（2.0）"), false, CorrectPBRMobile58Specular);
+            menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.9 高光、反射数值"), false, CorrectPBRMobile58Specular);
             
             menu.ShowAsContext();
         }
@@ -1638,6 +1638,7 @@ namespace VicTools
             // 查找所有使用PBR_Mobile shader的材质
             string[] materialGuids = AssetDatabase.FindAssets("t:Material");
             int correctedCount = 0;
+            int reflCount = 0;
             int totalPBRMaterials = 0;
             
             foreach (string guid in materialGuids)
@@ -1660,11 +1661,16 @@ namespace VicTools
                         if (currentScale != 2.0f)
                         {
                             // float newScale = Mathf.Clamp(currentScale / 25.0f, 1.0f, 12.0f);
-                            material.SetFloat("_SpecularScale", 2);
+                            material.SetFloat("_SpecularScale", 2.0f);
                             EditorUtility.SetDirty(material);
                             correctedCount++;
                             
                             // Debug.Log($"校正材质: {material.name} - SpecularScale: {currentScale:F2} → {newScale:F2}");
+                        }
+                        if (material.GetFloat("_ReflectionStrength") <= 1.2f){
+                            material.SetFloat("_ReflectionStrength", 1.5f);
+                            EditorUtility.SetDirty(material);
+                            reflCount++;
                         }
                     }
                 }
@@ -1677,7 +1683,8 @@ namespace VicTools
             // 显示结果
             string message = $"校正完成！\n\n" +
                            $"扫描到 {totalPBRMaterials} 个PBR_Mobile材质\n" +
-                           $"校正了 {correctedCount} 个材质的高光参数\n\n" +
+                           $"校正了 {correctedCount} 个材质的高光参数\n" +
+                           $"校正了 {reflCount} 个材质的反射强度参数\n\n" +
                            $"说明：PBR_Mobile5.8版本移除了specularColor削减，\n" +
                            $"高光亮度恢复正常，之前设置的高SpecularScale值已自动调整。";
             

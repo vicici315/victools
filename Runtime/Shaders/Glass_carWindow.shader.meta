@@ -2,7 +2,10 @@ fileFormatVersion: 2
 guid: W38Z5yisB3IzwRNAQvBQEhmpbdVrqekCjPCCMkA63280otj94tU+Iqo=
 ShaderImporter:
   externalObjects: {}
-  defaultTextures: []
+  defaultTextures:
+  - _BumpMap: {instanceID: 0}
+  - _SphericalReflectionMap: {instanceID: 0}
+  - _FresnelRampTexture: {fileID: 2800000, guid: 6b0d614a04b47c441a6ab84c8d9eba42, type: 3}
   nonModifiableTextures: []
   userData: 
   assetBundleName: 

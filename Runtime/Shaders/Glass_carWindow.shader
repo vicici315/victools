@@ -1,5 +1,6 @@
 // URP车窗玻璃Shader - 支持透明、菲涅尔反射、球形环境贴图
 // 1.2 添加"Reflection Scale"参数，控制反射图的明显度
+// 1.3 优化反射，添加反射贴图位移，添加GUI控制，Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果
 Shader "Custom/Glass_carWindow"
 {
     Properties
@@ -24,14 +25,21 @@ Shader "Custom/Glass_carWindow"
         [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection Map", Float) = 1
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
-        _ReflectionScale ("Reflection Scale", Range(0.1, 3.0)) = 1.2
-        _ReflectionStrength ("Reflection Strength", Range(0, 12)) = 1.0
+        _ReflectionScale ("Reflection Scale", Range(0.1, 6.0)) = 1.2
+        _ReflectionOffset ("Reflection Offset", Range(0, 1)) = 0.5
         _ReflectionBlur ("Max Reflection Blur", Range(0, 6)) = 5.0
         
         [Header(Fresnel)]
         _FresnelPower ("Fresnel Power", Range(0.1, 10)) = 2.5
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.12
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.0
+        
+        [Header(Fresnel Ramp)]
+        [Space(5)]
+        [Toggle(_USEFRESNELRAMP)] _UseFresnelRamp("Use Fresnel Ramp", Float) = 0
+        _FresnelRampTexture ("Fresnel Ramp Texture", 2D) = "white" {}
+        _FresnelRampRow ("Fresnel Ramp Row", Range(0.01, 0.99)) = 0.99
+        _FresnelRampIntensity ("Fresnel Ramp Intensity", Range(0, 2)) = 0.2
         
         [Header(Render Settings)]
         [Space(5)]
@@ -63,6 +71,7 @@ Shader "Custom/Glass_carWindow"
             
             #pragma shader_feature_local _USENORMALMAP
             #pragma shader_feature_local _USEREFLECTION
+            #pragma shader_feature_local _USEFRESNELRAMP
             #pragma multi_compile_fog
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -73,6 +82,8 @@ Shader "Custom/Glass_carWindow"
             SAMPLER(sampler_SphericalReflectionMap);
             TEXTURE2D(_BumpMap);
             SAMPLER(sampler_BumpMap);
+            TEXTURE2D(_FresnelRampTexture);
+            SAMPLER(sampler_FresnelRampTexture);
 
             CBUFFER_START(UnityPerMaterial)
                 half4 _BaseColor;
@@ -84,9 +95,12 @@ Shader "Custom/Glass_carWindow"
                 half _FresnelScale;
                 float4 _BumpMap_ST;
                 half _BumpScale;
-                half _ReflectionStrength;
+                half _ReflectionOffset;
                 half _ReflectionScale;
                 half _ReflectionBlur;
+                float4 _FresnelRampTexture_ST;
+                half _FresnelRampRow;
+                half _FresnelRampIntensity;
             CBUFFER_END
 
             struct Attributes
@@ -117,8 +131,8 @@ Shader "Custom/Glass_carWindow"
             {
                 reflectionVector = normalize(reflectionVector);
                 return float2(
-                    reflectionVector.x / 4.01 + 0.5,
-                    reflectionVector.y / 4.01 + 0.5
+                    reflectionVector.x / 4.01 + _ReflectionOffset,
+                    reflectionVector.y / 4.01 + _ReflectionOffset
                 );
             }
             // 采样球形反射贴图
@@ -130,18 +144,45 @@ Shader "Custom/Glass_carWindow"
             }
             #endif
 
-            // 计算菲涅尔效果
-            float CalculateFresnel(float3 normalWS, float3 viewDirWS)
-            {
-                float fresnel = saturate(dot(normalWS, viewDirWS));
-                fresnel = _FresnelBias + _FresnelScale * pow(1.0 - fresnel, _FresnelPower);
-                return saturate(fresnel);
-            }
-
             // 快速pow函数 - 使用exp2/log2避免梯度线
             half fastPow(half x, half n) {
                 return exp2(n * log2(x));
             }
+
+            // 计算菲涅尔效果
+            float CalculateFresnel(float3 normalWS, float3 viewDirWS)
+            {
+                float fresnel = saturate(dot(normalWS, viewDirWS));
+                fresnel = _FresnelBias + _FresnelScale * fastPow(1.0 - fresnel, _FresnelPower);
+                return saturate(fresnel);
+            }
+            #ifdef _USEFRESNELRAMP
+            // 采样Fresnel Ramp纹理（使用固定的Fresnel计算）
+            // normalWS: 世界空间法线
+            // viewDirWS: 世界空间视角方向
+            // rampRow: 0-1的行选择值，选择纹理的哪一行
+            half3 SampleFresnelRamp(half3 normalWS, half3 viewDirWS, half rampRow)
+            {
+                // 使用固定的Fresnel计算（不受_FresnelPower等参数影响）
+                // 标准Fresnel公式：fresnel = 1 - dot(N, V)
+                half fresnelValue = saturate(dot(normalWS, viewDirWS));
+                // half fresnelValue = 1.0 - rawFresnel; // 0=中心，1=边缘
+                
+                // 确保fresnelValue在[0,1]范围内，从左到右完整铺满
+                fresnelValue = saturate(fastPow(fresnelValue,1.6));
+                
+                // 构建UV坐标
+                // X轴：固定Fresnel值（从左到右：内到外，0-1完整范围）
+                // Y轴：行选择（从下到上）
+                half2 rampUV = half2(fresnelValue, rampRow);
+                
+                // 采样Ramp纹理
+                half3 rampColor = SAMPLE_TEXTURE2D(_FresnelRampTexture, sampler_FresnelRampTexture, rampUV).rgb;
+                
+                return rampColor * _FresnelRampIntensity;
+            }
+            #endif
+
 
             // 玻璃高光 - 使用Phong反射模型（基于反射向量）
             // specular = lightColor * pow(saturate(dot(reflectDir, viewDir)), gloss)
@@ -232,12 +273,24 @@ Shader "Custom/Glass_carWindow"
                     float3 reflectionVector = reflect(-viewDirWS, normalWS);
                     
                     // 采样球形反射贴图
-                    float3 reflectionColor = SampleSphericalReflection(reflectionVector, lerp(_ReflectionBlur,0,_Smoothness)) * (glassColor);
-                    reflectionColor *= _ReflectionStrength;
+                    float3 reflectionColor = SampleSphericalReflection(reflectionVector, lerp(_ReflectionBlur,0,_Smoothness));
+                    reflectionColor *= _ReflectionScale;
                     
                     // 混合反射（fresnel后面乘以的值控制反射贴图的突出显示度）
-                    finalColor = lerp(glassColor, reflectionColor, saturate(fresnel*_ReflectionScale));
-                    // finalColor = reflectionColor;
+                    // finalColor = lerp(glassColor, reflectionColor*reflectionColor*glassColor, saturate(fresnel*_ReflectionScale));
+                    finalColor = reflectionColor*reflectionColor*glassColor;
+                #endif
+                
+                // ============================================
+                // Fresnel Ramp 渐变叠加
+                // ============================================
+                #ifdef _USEFRESNELRAMP
+                    // 采样Fresnel Ramp纹理（使用固定的Fresnel计算）
+                    float3 fresnelRampColor = SampleFresnelRamp(normalWS, viewDirWS, _FresnelRampRow);
+                    
+                    // 将Ramp颜色叠加到最终颜色上
+                    // 使用加法混合，让Ramp颜色增强玻璃效果
+                    finalColor += fresnelRampColor;
                 #endif
                 
                 // 获取主光源
@@ -249,7 +302,7 @@ Shader "Custom/Glass_carWindow"
                 half shadowAttenuation = mainLight.shadowAttenuation;
                 
                 // 计算高光（传入fresnel，让边缘高光更亮）
-                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) *AdjustSaturation(_BaseColor.rgb,0.5)*(fresnel + 0.1)* _SpecularStrength;
+                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) *AdjustSaturation(glassColor,0.5)*(fresnel + 0.1)* _SpecularStrength;
                 
                 // 确保高光可见（调试用）
                 // return half4(specular * 10.0, 1.0); // 取消注释此行可以只看高光
@@ -257,8 +310,8 @@ Shader "Custom/Glass_carWindow"
                 finalColor += specular;
                 
                 // 简单的环境光
-                half3 ambient = half3(0.05, 0.05, 0.05);
-                finalColor += ambient;
+                // half3 ambient = half3(0.05, 0.05, 0.05);
+                // finalColor += ambient;
                 
                 // 应用雾效
                 finalColor = MixFog(finalColor, input.fogFactor);
@@ -281,5 +334,6 @@ Shader "Custom/Glass_carWindow"
         }
     }
     
-    FallBack "Hidden/Universal Render Pipeline/FallbackError"
+    CustomEditor "Glass_carWindowGUI"
+    // FallBack "Hidden/Universal Render Pipeline/FallbackError"
 }
