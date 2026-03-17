@@ -189,7 +189,7 @@ public class PBR_MobileGUI : ShaderGUI
         EditorGUILayout.EndHorizontal();
         
         // 只在非 Trans 版本显示禁用环境光选项
-        if (!isTransShader && disableEnvironment != null)
+        if (disableEnvironment != null)
         {
             m_MaterialEditor.ShaderProperty(disableEnvironment, "禁用环境光");
         }

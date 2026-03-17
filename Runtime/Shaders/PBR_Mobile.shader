@@ -75,7 +75,7 @@ Shader "Custom/PBR_Mobile"
         [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
-        _ReflectionStrength ("Reflection Strength", Range(0, 6)) = 2.0
+        _ReflectionStrength ("Reflection Strength", Range(0, 6)) = 1.0
         _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
         [Space(5)]
         _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
@@ -345,7 +345,7 @@ Shader "Custom/PBR_Mobile"
                 float3 reflectionColor = SampleSphericalReflection(reflectionVector, _ReflectionBlur);
                 
                 // 增加反射贴图的对比强度
-                reflectionColor *= reflectionColor;
+                // reflectionColor *= reflectionColor;
                 
                 float fresnel = CalculateFresnel(normalWS, viewDirWS, _ReflectionFresnelPower, _ReflectionFresnelBias);
                 
