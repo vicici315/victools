@@ -1,4 +1,6 @@
 // 5.8 添加存档读档功能按钮
+// 6.0 支持多个材质球读档
+// 6.1 添加【统一阴影】按钮，用于统一设置“自身阴影衰减”值，使场景中阴影保持一致的明暗度（包括PBR_Mobile_Trans）
 using UnityEngine;
 using UnityEditor;
 
@@ -59,6 +61,9 @@ public class PBR_MobileGUI : ShaderGUI
     private MaterialProperty spotTextureIntensity;
     private MaterialProperty cullMode;
     private MaterialProperty _Cutoff;
+    private MaterialProperty _SrcBlend;
+    private MaterialProperty _DstBlend;
+    private MaterialProperty _ZWrite;
 
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
     {
@@ -80,10 +85,6 @@ public class PBR_MobileGUI : ShaderGUI
         
         // EditorGUILayout.Space(5);
         DrawBaseProperties();
-        if (isTransShader)
-        {
-            DrawAlphaCull();
-        }
         DrawMetallicRoughnessAO();
         // EditorGUILayout.Space(5);
         DrawNormalMap();
@@ -102,6 +103,10 @@ public class PBR_MobileGUI : ShaderGUI
             // EditorGUILayout.Space(5);
         }        
         
+        if (isTransShader)
+        {
+            DrawAlphaCull();
+        }
         EditorGUILayout.Space(5);
         DrawPerformance();
     }
@@ -158,6 +163,9 @@ public class PBR_MobileGUI : ShaderGUI
         spotTextureIntensity = FindProperty("_SpotTextureIntensity", m_Properties);
         cullMode = FindProperty("_Cull", m_Properties);
         _Cutoff = FindProperty("_Cutoff", m_Properties);
+        _SrcBlend = FindProperty("_SrcBlend", m_Properties, false);
+        _DstBlend = FindProperty("_DstBlend", m_Properties, false);
+        _ZWrite = FindProperty("_ZWrite", m_Properties, false);
     }
 
     private void DrawGlobalSettings()
@@ -167,23 +175,30 @@ public class PBR_MobileGUI : ShaderGUI
         
         // 添加存档按钮
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
-        if (GUILayout.Button("存档", GUILayout.Width(50)))
+        if (GUILayout.Button(new GUIContent("存档", "保存当前材质参数到文件（不包含纹理和基础颜色）"), GUILayout.Width(50)))
         {
             EditorApplication.delayCall += SaveMaterialParameters;
         }
         
         // 添加读档按钮
         GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f); // 绿色背景
-        if (GUILayout.Button("读档", GUILayout.Width(50)))
+        if (GUILayout.Button(new GUIContent("读档", "从文件加载材质参数\n支持批量应用到多个选中的材质"), GUILayout.Width(50)))
         {
             EditorApplication.delayCall += LoadMaterialParameters;
         }
         
         // 添加重置按钮
         GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f); // 黄色背景
-        if (GUILayout.Button("重置参数", GUILayout.Width(60)))
+        if (GUILayout.Button(new GUIContent("重置参数", "重置材质参数为Default存档或Shader默认值"), GUILayout.Width(60)))
         {
             EditorApplication.delayCall += ResetMaterialParameters;
+        }
+        
+        // 添加统一阴影按钮
+        GUI.backgroundColor = new Color(1.0f, 0.6f, 0.3f); // 橙色背景
+        if (GUILayout.Button(new GUIContent("统一阴影", "根据当前对象的Static状态\n统一设置场景中相同类型对象的【自身阴影衰减】参数"), GUILayout.Width(60)))
+        {
+            EditorApplication.delayCall += UnifyShadowScale;
         }
         GUI.backgroundColor = Color.white;
         EditorGUILayout.EndHorizontal();
@@ -205,6 +220,10 @@ public class PBR_MobileGUI : ShaderGUI
         GUILayout.Label("1 ▌基础属性 (Base Properties)", EditorStyles.boldLabel);
         m_MaterialEditor.ColorProperty(baseColor, "基础颜色");
         m_MaterialEditor.TextureProperty(baseMap, "颜色贴图 (RGB)");
+        if (isTransShader)
+        {
+            m_MaterialEditor.ShaderProperty(_Cutoff, "透明阈值");
+        }
     }
 
     private void DrawMetallicRoughnessAO()
@@ -386,7 +405,14 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawAlphaCull()
     {
-        m_MaterialEditor.ShaderProperty(_Cutoff, "透明阈值");
+        EditorGUILayout.Space(5);
+        if (_SrcBlend != null)
+            m_MaterialEditor.ShaderProperty(_SrcBlend, "源混合模式");
+        if (_DstBlend != null)
+            m_MaterialEditor.ShaderProperty(_DstBlend, "目标混合模式");
+        if (_ZWrite != null)
+            m_MaterialEditor.ShaderProperty(_ZWrite, "深度写入");
+    
     }
     private void DrawPerformance()
     {
@@ -463,8 +489,9 @@ public class PBR_MobileGUI : ShaderGUI
             
             if (!material.HasProperty(propertyName)) continue;
             
-            // 排除纹理
+            // 排除纹理和基础颜色
             if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+            if (propertyName == "_BaseColor") continue;
             
             if (!first) sb.AppendLine(",");
             first = false;
@@ -524,13 +551,46 @@ public class PBR_MobileGUI : ShaderGUI
         
         if (string.IsNullOrEmpty(presetPath)) return;
         
-        LoadMaterialParametersFromFile(presetPath);
+        // 获取所有选中的材质
+        Object[] targets = m_MaterialEditor.targets;
+        
+        if (targets.Length > 1)
+        {
+            // 多选模式：批量应用
+            if (EditorUtility.DisplayDialog("批量读档", 
+                $"将对 {targets.Length} 个材质应用此存档。\n\n注意：纹理和基础颜色不会被修改。", 
+                "确定", "取消"))
+            {
+                foreach (Object obj in targets)
+                {
+                    Material mat = obj as Material;
+                    if (mat != null && mat.shader != null)
+                    {
+                        // 检查shader是否匹配
+                        if (mat.shader.name == material.shader.name)
+                        {
+                            LoadMaterialParametersToMaterial(mat, presetPath);
+                        }
+                        else
+                        {
+                            Debug.LogWarning($"材质 {mat.name} 的Shader不匹配，已跳过。");
+                        }
+                    }
+                }
+                
+                Debug.Log($"批量读档完成：已应用到 {targets.Length} 个材质");
+            }
+        }
+        else
+        {
+            // 单选模式
+            LoadMaterialParametersFromFile(presetPath);
+        }
     }
     
-    /// 从文件加载材质参数
-    private void LoadMaterialParametersFromFile(string filePath)
+    /// 从文件加载材质参数到指定材质
+    private void LoadMaterialParametersToMaterial(Material material, string filePath)
     {
-        Material material = m_MaterialEditor.target as Material;
         if (material == null || material.shader == null) return;
         
         if (!System.IO.File.Exists(filePath))
@@ -545,8 +605,7 @@ public class PBR_MobileGUI : ShaderGUI
         // 读取JSON
         string json = System.IO.File.ReadAllText(filePath);
         
-        // 使用简单的JSON解析（因为EditorJsonUtility不支持Dictionary）
-        // 手动解析JSON
+        // 使用简单的JSON解析
         var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
         
         foreach (var line in lines)
@@ -562,6 +621,9 @@ public class PBR_MobileGUI : ShaderGUI
                 string valueStr = trimmed.Substring(colonIndex + 1).Trim();
                 
                 if (!material.HasProperty(propertyName)) continue;
+                
+                // 排除基础颜色
+                if (propertyName == "_BaseColor") continue;
                 
                 // 判断值类型
                 if (valueStr.StartsWith("["))
@@ -602,6 +664,18 @@ public class PBR_MobileGUI : ShaderGUI
         // 刷新材质
         EditorUtility.SetDirty(material);
         
+        // 强制更新shader关键字
+        material.shader = material.shader;
+    }
+    
+    /// 从文件加载材质参数（单个材质）
+    private void LoadMaterialParametersFromFile(string filePath)
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null) return;
+        
+        LoadMaterialParametersToMaterial(material, filePath);
+        
         // 刷新材质编辑器
         if (m_MaterialEditor != null)
         {
@@ -610,9 +684,6 @@ public class PBR_MobileGUI : ShaderGUI
         
         // 刷新场景视图
         SceneView.RepaintAll();
-        
-        // 强制更新shader关键字
-        material.shader = material.shader;
         
         Debug.Log($"材质参数已从存档加载: {filePath}");
     }
@@ -659,8 +730,9 @@ public class PBR_MobileGUI : ShaderGUI
                     
                     if (!tempMaterial.HasProperty(propertyName)) continue;
                     
-                    // 排除纹理
+                    // 排除纹理和基础颜色
                     if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                    if (propertyName == "_BaseColor") continue;
                     
                     switch (propertyType)
                     {
@@ -715,6 +787,135 @@ public class PBR_MobileGUI : ShaderGUI
                 // 加载Default存档
                 LoadMaterialParametersFromFile(defaultPresetPath);
             }
+        }
+    }
+    
+    /// <summary>
+    /// 统一场景中所有PBR_Mobile材质的自身阴影衰减参数
+    /// 根据当前选中对象的Static状态，只统一相同类型（静态或非静态）的对象
+    /// </summary>
+    private void UnifyShadowScale()
+    {
+        Material currentMaterial = m_MaterialEditor.target as Material;
+        if (currentMaterial == null || !currentMaterial.HasProperty("_ShadowScale"))
+        {
+            Debug.LogWarning("当前材质没有 _ShadowScale 参数");
+            return;
+        }
+        
+        // 获取当前材质的 _ShadowScale 值
+        float targetShadowScale = currentMaterial.GetFloat("_ShadowScale");
+        
+        // 查找当前材质所属的GameObject，判断其Static状态
+        bool currentIsStatic = false;
+        GameObject currentGameObject = null;
+        
+        // 在场景中查找使用当前材质的对象
+        Renderer[] allRenderers = Object.FindObjectsOfType<Renderer>();
+        foreach (Renderer renderer in allRenderers)
+        {
+            if (renderer.sharedMaterials != null)
+            {
+                foreach (Material mat in renderer.sharedMaterials)
+                {
+                    if (mat == currentMaterial)
+                    {
+                        currentGameObject = renderer.gameObject;
+                        
+                        // 检查当前对象的Static状态
+                        UnityEditor.StaticEditorFlags staticFlags = UnityEditor.GameObjectUtility.GetStaticEditorFlags(currentGameObject);
+                        bool hasStaticFlags = ((int)staticFlags) != 0;
+                        bool isStaticProperty = currentGameObject.isStatic;
+                        
+                        currentIsStatic = hasStaticFlags || isStaticProperty;
+                        break;
+                    }
+                }
+                if (currentGameObject != null) break;
+            }
+        }
+        
+        string staticTypeText = currentIsStatic ? "静态" : "非静态";
+        Debug.Log($"当前材质所属对象: {(currentGameObject != null ? currentGameObject.name : "未知")}, 类型: {staticTypeText}");
+        Debug.Log($"将统一设置所有{staticTypeText}对象的自身阴影衰减参数为: {targetShadowScale:F3}");
+        
+        // 查找场景中所有使用 PBR_Mobile 或 PBR_Mobile_Trans shader 的材质
+        string[] targetShaderNames = new string[]
+        {
+            "Custom/PBR_Mobile",
+            "Custom/PBR_Mobile_Trans"
+        };
+        
+        System.Collections.Generic.HashSet<Material> processedMaterials = new System.Collections.Generic.HashSet<Material>();
+        int modifiedCount = 0;
+        int skippedCount = 0;
+        
+        foreach (Renderer renderer in allRenderers)
+        {
+            GameObject go = renderer.gameObject;
+            if (go == null) continue;
+            
+            // 检查GameObject的Static状态
+            UnityEditor.StaticEditorFlags staticFlags = UnityEditor.GameObjectUtility.GetStaticEditorFlags(go);
+            bool hasStaticFlags = ((int)staticFlags) != 0;
+            bool isStaticProperty = go.isStatic;
+            bool objectIsStatic = hasStaticFlags || isStaticProperty;
+            
+            // 根据当前材质所属对象的Static状态，只处理相同类型的对象
+            if (objectIsStatic != currentIsStatic)
+            {
+                skippedCount++;
+                continue;
+            }
+            
+            Material[] materials = renderer.sharedMaterials;
+            
+            foreach (Material mat in materials)
+            {
+                if (mat == null || mat.shader == null) continue;
+                
+                // 检查是否已处理过此材质（避免重复）
+                if (processedMaterials.Contains(mat)) continue;
+                
+                // 检查是否是目标 shader
+                bool isTargetShader = false;
+                foreach (string shaderName in targetShaderNames)
+                {
+                    if (mat.shader.name == shaderName)
+                    {
+                        isTargetShader = true;
+                        break;
+                    }
+                }
+                
+                if (isTargetShader && mat.HasProperty("_ShadowScale"))
+                {
+                    // 记录撤销操作
+                    Undo.RecordObject(mat, "Unify Shadow Scale");
+                    
+                    // 设置 _ShadowScale 值
+                    mat.SetFloat("_ShadowScale", targetShadowScale);
+                    
+                    // 标记材质为已修改
+                    EditorUtility.SetDirty(mat);
+                    
+                    processedMaterials.Add(mat);
+                    modifiedCount++;
+                }
+            }
+        }
+        
+        if (modifiedCount > 0)
+        {
+            Debug.Log($"统一阴影完成：已将 {modifiedCount} 个{staticTypeText}对象的材质自身阴影衰减参数设置为 {targetShadowScale:F3}");
+            Debug.Log($"跳过了 {skippedCount} 个{(currentIsStatic ? "非静态" : "静态")}对象");
+            
+            // 刷新场景视图
+            SceneView.RepaintAll();
+        }
+        else
+        {
+            Debug.LogWarning($"场景中没有找到符合条件的{staticTypeText}对象材质。跳过了 {skippedCount} 个{(currentIsStatic ? "非静态" : "静态")}对象");
         }
     }
 }

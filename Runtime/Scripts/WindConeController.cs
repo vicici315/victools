@@ -34,11 +34,11 @@ public class WindConeController : MonoBehaviour
     public float coneRange = 5.0f;
     
     [Tooltip("圆锥强度倍增")]
-    public float coneIntensity = 2.0f;
+    public float coneIntensity = 5.0f;
     
     [Tooltip("圆锥内风频率加大值")]
     [Range(0.0f, 10.0f)]
-    public float frequencyBoost = 2.0f;
+    public float frequencyBoost = 5.0f;
     
     [Header("缓冲过渡参数")]
     [Tooltip("启用缓冲过渡，平滑风源移动")]
@@ -825,13 +825,22 @@ public float resumeAnimationSpeed = 1.0f;
         // 计算圆锥底面中心
         Vector3 baseCenter = position + direction * range;
         
-        // 计算两个垂直向量
-        Vector3 up = Vector3.up;
-        Vector3 right = Vector3.right;
+        // 计算两个垂直向量 - 修复垂直方向时的问题
+        Vector3 up;
+        Vector3 right;
         
-        // 如果方向不是垂直的，调整up和right向量
-        if (Mathf.Abs(Vector3.Dot(direction, Vector3.up)) < 0.99f)
+        // 检查方向是否接近垂直（与Vector3.up的点积接近1或-1）
+        float dotWithUp = Mathf.Abs(Vector3.Dot(direction.normalized, Vector3.up));
+        
+        if (dotWithUp > 0.99f)
         {
+            // 方向接近垂直，使用Vector3.forward作为参考
+            right = Vector3.Cross(direction, Vector3.forward).normalized;
+            up = Vector3.Cross(right, direction).normalized;
+        }
+        else
+        {
+            // 方向不垂直，使用Vector3.up作为参考
             right = Vector3.Cross(direction, Vector3.up).normalized;
             up = Vector3.Cross(right, direction).normalized;
         }

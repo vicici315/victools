@@ -1,4 +1,5 @@
 // 场景工具 v2.14 添加lighting材质(用于烘焙打灯时查看实时灯光效果)快速切换功能按钮
+// 场景工具 v2.16 添加【选择材质】按钮，用于选择场景中选中对象的材质球
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -119,7 +120,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.15]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.16]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -556,19 +557,16 @@ public class ResourceBoxFileItem
             }
             GUI.backgroundColor = Color.cyan;
             
-            var selectButtonContent = new GUIContent("选择相同材质对象", "选择使用选择对象相同材质的所有对象");
+            var selectButtonContent = new GUIContent("选择相同材质对象", "选择使用选中对象相同材质的所有对象");
             if (GUILayout.Button(selectButtonContent, style.normalButton, GUILayout.Width(130)))
             {
-                // 优先使用selectedMaterial，如果为空则使用选中对象的材质
-                // if (selectedMaterial != null)
-                // {
-                //     SelectObjectsUsingMaterial(selectedMaterial);
-                // }
-                // else
-                // {
-                    // 选择场景中与选择物体相同材质的物体
-                    SelectObjectsUsingSelectedObjectMaterial();
-                // }
+                SelectObjectsUsingSelectedObjectMaterial();
+            }
+            
+            var selectObjMatContent = new GUIContent("选择材质", "选择场景中选中对象的材质球");
+            if (GUILayout.Button(selectObjMatContent, style.normalButton, GUILayout.Width(80)))
+            {
+                SelectObjectsMaterial();
             }
 
             EditorGUILayout.EndHorizontal();
@@ -1398,6 +1396,62 @@ public class ResourceBoxFileItem
             {
                 Debug.LogWarning($"场景中没有找到使用材质 '{targetMaterial.name}' 的模型");
             }
+        }
+
+        /// 选择场景中选中对象的材质球
+        /// 将选中对象使用的所有材质在Project窗口中选中
+        private void SelectObjectsMaterial()
+        {
+            // 获取当前选中的所有GameObject
+            var selectedGameObjects = Selection.gameObjects;
+            
+            if (selectedGameObjects == null || selectedGameObjects.Length == 0)
+            {
+                Debug.LogWarning("请先在场景中选择一个或多个对象");
+                EditorUtility.DisplayDialog("提示", "请先在场景中选择一个或多个对象", "确定");
+                return;
+            }
+
+            // 收集所有选中对象的材质
+            var materials = new HashSet<Material>();
+            
+            foreach (var go in selectedGameObjects)
+            {
+                // 获取对象上的所有Renderer组件（包括子对象）
+                var renderers = go.GetComponentsInChildren<Renderer>(true);
+                
+                foreach (var renderer in renderers)
+                {
+                    if (renderer.sharedMaterials == null) continue;
+                    
+                    foreach (var mat in renderer.sharedMaterials)
+                    {
+                        // 排除null材质
+                        if (mat != null)
+                        {
+                            materials.Add(mat);
+                        }
+                    }
+                }
+            }
+
+            if (materials.Count == 0)
+            {
+                Debug.LogWarning("选中的对象没有找到任何材质");
+                EditorUtility.DisplayDialog("提示", "选中的对象没有找到任何材质", "确定");
+                return;
+            }
+
+            // 在Project窗口中选中这些材质
+            Selection.objects = materials.ToArray();
+            
+            // 高亮显示第一个材质
+            if (materials.Count > 0)
+            {
+                EditorGUIUtility.PingObject(materials.First());
+            }
+
+            Debug.Log($"已选择 {materials.Count} 个材质球");
         }
 
         /// 将selectedMaterial材质放入资源箱

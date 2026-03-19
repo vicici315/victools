@@ -16,6 +16,7 @@
 // 继承PBR_Mobile5.8 高光亮度还原 - 移除specularColor削减，保持完整高光亮度；烘焙高光受实时阴影影响
 // 继承PBR_Mobile5.9 高光算法优化 - 使用反射向量法替代Blinn-Phong，边缘高光产生自然拉伸效果；移除硬编码倍增
 //      添加_DisableEnvironment参数 - 支持禁用环境光，只使用实时光照；修复finalColor缺少ambient的bug
+// 继承PBR_Mobile6.0 完善所有效果，继承原始表现效果（支持ShadowMap透明投影）
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
@@ -92,7 +93,11 @@ Shader "Custom/PBR_Mobile_Trans"
         [HideInInspector] _SpotTextureIntensity ("Spot Texture Intensity", Range(0, 2)) = 1.0
         
         [Header(8  (Transparent))]
-        [Space(5)]        
+        [Space(5)]
+        // 透明裁剪模式（推荐）：_SrcBlend=1(One), _DstBlend=0(Zero), _ZWrite=1
+        // 支持透明裁剪阴影，不会被黑色覆盖
+        // 半透明模式：_SrcBlend=5(SrcAlpha), _DstBlend=10(OneMinusSrcAlpha), _ZWrite=0
+        // 真正的半透明效果，但阴影投射会有问题
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend("Dst Blend", Float) = 0
         
@@ -277,7 +282,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 // 预计算高光指数（避免在每个光源中重复pow运算）
                 half smoothnessCubed = mat.smoothness * mat.smoothness * mat.smoothness;
-                mat.shininess = mad(smoothnessCubed, 512.0, 2.0);
+                mat.shininess = mad(smoothnessCubed, 128.0, 2.0);
                 
                 return mat;
             }
@@ -346,18 +351,14 @@ Shader "Custom/PBR_Mobile_Trans"
 
             half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 lightColor, half shadowAttenuation)
             {
-                // 使用反射向量法（相比Blinn-Phong，在边缘能产生更自然的拉伸效果）
+                // 计算光线的反射向量
                 half3 reflectDir = reflect(-lightDir, normalWS);
+                // 计算反射向量与视线方向的点积
                 half RdotV = saturate(dot(reflectDir, viewDir));
                 
-                // 计算高光项
-                half specular = fastPow(max(RdotV, 0.001), shininess)*smoothness;
+                half specular = fastPow(max(RdotV, 0.001), shininess) * smoothness;
                 
-                // 应用smoothness调制（控制高光强度）
-                // specular *= smoothness;
-                
-                // 返回最终高光（包含光源颜色和阴影衰减）
-                return lightColor * specular * shadowAttenuation;
+                return lightColor * specular * shadowAttenuation * 2.0; 
             }
             
             half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic, half shadowAttenuation)
@@ -369,17 +370,12 @@ Shader "Custom/PBR_Mobile_Trans"
                     finalLightDir = normalize(_BakedSpecularDirection);
                 }
                 
-                // 使用反射向量法（与SimpleSpecular保持一致）
+                // 计算光线的反射向量
                 half3 reflectDir = reflect(-finalLightDir, normalWS);
-                half RdotV = saturate(dot(reflectDir, viewDir));
+                half NdotH = saturate(dot(reflectDir, viewDir));
                 
-                // 计算高光项
-                half specular = fastPow(max(RdotV, 0.001), shininess);
+                half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
                 
-                // 应用smoothness调制
-                specular *= smoothness;
-                
-                // 金属度影响烘焙光照的混合
                 half metallicFactor = metallic * metallic; 
                 half3 adjustedBakedGI = lerp(bakedGI, half3(1, 1, 1), metallicFactor);
                 
@@ -603,7 +599,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 #ifdef _USEREFLECTION
                     reflectionContrib = CalculateSphericalReflection(mat.normalWS, viewDirWS, mat.metallic, mat.roughness, mat.uv, lightColor);
                     // 反射应该混合而不是累加，金属度高的材质反射替换漫反射
-                    finalColor = lerp(finalColor, finalColor + reflectionContrib *_BaseColor.rgb, mat.metallic);
+                    finalColor = lerp(finalColor, finalColor + reflectionContrib *mat.albedo, mat.metallic);
                     // 非金属材质的反射叠加
                     finalColor += reflectionContrib * (1.0 - mat.metallic) * 0.5;
                 #endif
@@ -654,6 +650,35 @@ Shader "Custom/PBR_Mobile_Trans"
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             
+            // 声明纹理和采样器（这些不影响SRP Batcher）
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+            
+            // 使用主pass中已声明的CBUFFER（不重复声明，保持SRP Batcher兼容）
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Roughness;
+                half _SpecularScale;
+                half _ShadowScale;
+                half _HalfLambert;
+                half _Brightness;
+                half _BumpScale;
+                half _OcclusionContrast;
+                half _OcclusionStrength;
+                half _EmissionScale;
+                half4 _EmissionColor;
+                half _Cutoff;
+                
+                float3 _BakedSpecularDirection;
+                
+                float _ReflectionStrength;
+                float _ReflectionBlur;
+                float _ReflectionFresnelPower;
+                float _ReflectionFresnelBias;
+            CBUFFER_END
+            
             float3 _LightDirection;
             float4 _ShadowBias; 
             
@@ -661,12 +686,14 @@ Shader "Custom/PBR_Mobile_Trans"
             { 
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
+                float2 uv : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             
             struct Varyings 
             { 
                 float4 positionCS : SV_POSITION;
+                float2 uv : TEXCOORD0;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
             
@@ -683,6 +710,9 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 output.positionCS = TransformWorldToHClip(positionWS);
                 
+                // 传递UV坐标用于透明度采样
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
+                
                 #if UNITY_REVERSED_Z
                     output.positionCS.z = min(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
                 #else
@@ -695,6 +725,14 @@ Shader "Custom/PBR_Mobile_Trans"
             half4 frag(Varyings input) : SV_Target 
             {
                 UNITY_SETUP_INSTANCE_ID(input);
+                
+                // 采样基础纹理的alpha通道
+                half alpha = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a;
+                
+                // 根据alpha cutoff裁剪透明部分
+                // 这会使透明区域不投射阴影到ShadowMap
+                clip(alpha - _Cutoff);
+                
                 return 0;
             }
             ENDHLSL

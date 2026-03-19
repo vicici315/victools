@@ -84,38 +84,47 @@ Shader "Custom/Glass_MobileNew"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
             
+            // 函数前向声明
+            inline half3 SampleSceneColorBlurred(float2 uv, float blurAmount);
+            
             // 手动模糊采样函数 - 使用多次采样模拟模糊效果
-            half3 SampleSceneColorBlurred(float2 uv, float blurAmount)
+            inline half3 SampleSceneColorBlurred(float2 uv, float blurAmount)
             {
+                half3 result;
+                
                 // 如果模糊量很小，直接返回原始采样
                 if (blurAmount < 0.01)
                 {
-                    return SampleSceneColor(uv).rgb;
+                    result = SampleSceneColor(uv).rgb;
+                }
+                else
+                {
+                    // 计算采样偏移（基于屏幕空间像素大小）
+                    float2 texelSize = _ScreenParams.zw - 1.0; // 1/width, 1/height
+                    float2 offset = texelSize * blurAmount;
+                    
+                    // 使用9点采样进行模糊（优化的高斯模糊）
+                    half3 color = half3(0, 0, 0);
+                    
+                    // 中心权重
+                    color += SampleSceneColor(uv).rgb * 0.25;
+                    
+                    // 4个主方向
+                    color += SampleSceneColor(uv + float2(offset.x, 0)).rgb * 0.125;
+                    color += SampleSceneColor(uv + float2(-offset.x, 0)).rgb * 0.125;
+                    color += SampleSceneColor(uv + float2(0, offset.y)).rgb * 0.125;
+                    color += SampleSceneColor(uv + float2(0, -offset.y)).rgb * 0.125;
+                    
+                    // 4个对角线方向
+                    color += SampleSceneColor(uv + float2(offset.x, offset.y)).rgb * 0.0625;
+                    color += SampleSceneColor(uv + float2(-offset.x, offset.y)).rgb * 0.0625;
+                    color += SampleSceneColor(uv + float2(offset.x, -offset.y)).rgb * 0.0625;
+                    color += SampleSceneColor(uv + float2(-offset.x, -offset.y)).rgb * 0.0625;
+                    
+                    result = color;
                 }
                 
-                // 计算采样偏移（基于屏幕空间像素大小）
-                float2 texelSize = _ScreenParams.zw - 1.0; // 1/width, 1/height
-                float2 offset = texelSize * blurAmount;
-                
-                // 使用9点采样进行模糊（优化的高斯模糊）
-                half3 color = half3(0, 0, 0);
-                
-                // 中心权重
-                color += SampleSceneColor(uv).rgb * 0.25;
-                
-                // 4个主方向
-                color += SampleSceneColor(uv + float2(offset.x, 0)).rgb * 0.125;
-                color += SampleSceneColor(uv + float2(-offset.x, 0)).rgb * 0.125;
-                color += SampleSceneColor(uv + float2(0, offset.y)).rgb * 0.125;
-                color += SampleSceneColor(uv + float2(0, -offset.y)).rgb * 0.125;
-                
-                // 4个对角线方向
-                color += SampleSceneColor(uv + float2(offset.x, offset.y)).rgb * 0.0625;
-                color += SampleSceneColor(uv + float2(-offset.x, offset.y)).rgb * 0.0625;
-                color += SampleSceneColor(uv + float2(offset.x, -offset.y)).rgb * 0.0625;
-                color += SampleSceneColor(uv + float2(-offset.x, -offset.y)).rgb * 0.0625;
-                
-                return color;
+                return result;
             }
             
             // 纹理声明应该始终存在，不要放在条件编译中
@@ -182,6 +191,7 @@ Shader "Custom/Glass_MobileNew"
                 half _FresnelPower;
                 half _FresnelBias;
                 half _FresnelScale;
+                half _ShadowStrength;
                 float4 _BumpMap_ST;
             CBUFFER_END
 
@@ -267,7 +277,6 @@ Shader "Custom/Glass_MobileNew"
                 // 菲涅尔效应（使用统一的计算函数）
                 half fresnel = CalculateFresnel(normalWS, viewDirWS);
                 // 折射效果 - 以物体中心为轴心进行扭曲缩放
-                half3 sceneColor;
                 float2 finalScreenUV = screenUV;
                 
                 #ifdef _USE_REFRACTION
@@ -300,7 +309,7 @@ Shader "Custom/Glass_MobileNew"
                 // _Smoothness: 0 = 粗糙（最大模糊），1 = 光滑（无模糊）
                 // _SceneBlurStrength: 控制整体模糊强度
                 float blurAmount = (1.0 - _Smoothness) * _SceneBlurStrength * 6.0; // 模糊强度范围 0-3
-                sceneColor = SampleSceneColorBlurred(finalScreenUV, blurAmount);
+                half3 sceneColor = SampleSceneColorBlurred(finalScreenUV, blurAmount);
                 
                 // 光照计算（优化版）
                 Light mainLight = GetMainLight();
@@ -350,7 +359,67 @@ Shader "Custom/Glass_MobileNew"
         }
         
         // ● 阴影投射Pass（优化简化版）
-
+        Pass
+        {
+            Name "ShadowCaster"
+            Tags{"LightMode" = "ShadowCaster"}
+            
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+            Cull[_Cull]
+            
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            
+            float3 _LightDirection;
+            float4 _ShadowBias; 
+            
+            struct Attributes 
+            { 
+                float4 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+            
+            struct Varyings 
+            { 
+                float4 positionCS : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+            
+            Varyings vert(Attributes input)
+            {
+                Varyings output;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
+                
+                float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
+                float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
+                
+                positionWS = positionWS + _LightDirection * _ShadowBias.x;
+                
+                output.positionCS = TransformWorldToHClip(positionWS);
+                
+                #if UNITY_REVERSED_Z
+                    output.positionCS.z = min(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
+                #else
+                    output.positionCS.z = max(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
+                #endif
+                
+                return output;
+            }
+            
+            half4 frag(Varyings input) : SV_Target 
+            {
+                UNITY_SETUP_INSTANCE_ID(input);
+                return 0;
+            }
+            ENDHLSL
+        }
         
     }
     

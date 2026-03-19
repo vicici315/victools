@@ -197,7 +197,7 @@ Shader "Custom/Glass_carWindow"
                 
                 // 计算光泽度指数（smoothness³ * 512 + 2）
                 half smoothnessCubed = _Smoothness * _Smoothness * _Smoothness;
-                half gloss = smoothnessCubed * 512.0 + 2.0;
+                half gloss = smoothnessCubed * 256.0 + 1.0;
                 
                 // 使用fastPow计算高光
                 half specular = fastPow(max(RdotV, 0.001), gloss);
@@ -278,7 +278,7 @@ Shader "Custom/Glass_carWindow"
                     
                     // 混合反射（fresnel后面乘以的值控制反射贴图的突出显示度）
                     // finalColor = lerp(glassColor, reflectionColor*reflectionColor*glassColor, saturate(fresnel*_ReflectionScale));
-                    finalColor = reflectionColor*reflectionColor*glassColor;
+                    finalColor = reflectionColor*glassColor;
                 #endif
                 
                 // ============================================

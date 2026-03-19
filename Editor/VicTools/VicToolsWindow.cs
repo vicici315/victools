@@ -10,10 +10,10 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.7.10";
+        public const string Ver = "2.8.0";
 
         /// 性能分析器窗口标签名（包含版本号）
-        public const string PerformanceAnalyzerWindowName = "[性能分析 v1.7]";
+        public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
     }
     
     /// 子窗口抽象基类 - 参考ES3Window的SubWindow设计

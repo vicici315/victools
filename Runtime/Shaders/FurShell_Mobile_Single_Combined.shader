@@ -1,6 +1,7 @@
 //FurShell 1.1 完善基础fur特性
 //FurShell 1.2 添加AlphaOffset优化毛发透明结构算法，优化毛发剔除效果BaseMapA颜色图A通道影响毛发长度
 //FurShell 1.3 添加UseVerShadow选项，可以使用像素阴影，优化Fresnel暗部过暗问题
+//FurShell 1.4 修改边缘光范围加大；修改变量_BaseColor；修改默认值
 Shader "Custom/FurShell_Mobile_SingleC"
 {
     Properties
@@ -9,19 +10,19 @@ Shader "Custom/FurShell_Mobile_SingleC"
         [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 1.0
         [Toggle(_USESELFSHADOW)] _UseSelfShadow ("Use Self Shadow", Float) = 1.0
         [Space]
-        [MainColor] _MainColor("Main Color", Color) = (1,1,1,1)
+        [MainColor] _BaseColor("Base Color", Color) = (1,1,1,1)
         [ToggleUI] _UseAlpha ("Use Alpha", Float) = 1.0
         _BaseMap("Base Map", 2D) = "white" {}
         _FurMap("Fur Map", 2D) = "white" {}
 //        _NormalMap("Fur Map", 2D) = "white" {}
         [IntRange] _ShellAmount("Shell Amount", Range(1, 20)) = 8
-        _FurLength("Fur Length", Range(0.0, 0.02)) = 0.009
-        _AlphaOffset("Alpha Offset", Range(0.0, 1.01)) = 0.2
+        _FurLength("Fur Length", Range(0.0, 0.02)) = 0.004
+        _AlphaOffset("Alpha Offset", Range(0.0, 1.01)) = 0.06
         _AlphaCutout("Alpha Cutout", Range(0.0, 1.0)) = 0.3
         _FurScale("Fur Density", Range(0.1, 50.0)) = 1.0
         _Occlusion("Occlusion", Range(0.0, 1.0)) = 0.23
         [Space]
-        [Toggle(_USETOUCH)] _UseTouch ("Use Touch", Float) = 0.0
+        [ToggleUI] _UseTouch ("Use Touch", Float) = 0.0
         [Space]
         [ToggleUI] _UseWind ("Use Wind", Float) = 0.0
         // 基础移动参数：控制毛发的整体运动
@@ -42,7 +43,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
         
         [Space(20)]
         // 背面剔除阈值
-        _FaceViewProdThresh("Direction Threshold", Range(0.0, 1.0)) = 0.002
+        _FaceViewProdThresh("Direction Threshold", Range(0.0001, 1.0)) = 0.001
         // 触摸挤压参数
         _TouchPosition("Touch Position", Vector) = (0, 0, 0, 1)  // xyz: 世界空间位置, w: 强度
         _TouchRadius("Touch Radius", Float) = 1.0
@@ -50,7 +51,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
         
         [Space(20)]
         // 圆锥形风力影响参数（模拟吹风机效果）
-        [Toggle(_USEWINDCONE)] _UseWindCone ("Use Wind Cone", Float) = 0.0
+        [ToggleUI] _UseWindCone ("Use Wind Cone", Float) = 0.0
         _WindConePosition("Wind Cone Position", Vector) = (0, 0, 0, 1)  // xyz: 圆锥中心位置, w: 强度倍增
         _WindConeDirection("Wind Cone Direction", Vector) = (0, 1, 0, 0)  // xyz: 圆锥方向, w: 未使用
         _WindConeAngle("Wind Cone Angle", Range(0.0, 90.0)) = 30.0  // 圆锥角度（度）
@@ -98,8 +99,8 @@ Shader "Custom/FurShell_Mobile_SingleC"
             #pragma fragment frag
             #pragma shader_feature_local _USESELFSHADOW
             #pragma shader_feature_local _USEVERSHADOW
-            #pragma shader_feature_local _USETOUCH
-            #pragma shader_feature_local _USEWINDCONE
+            // #pragma shader_feature_local _USETOUCH
+            // #pragma shader_feature_local _USEWINDCONE
             #pragma shader_feature_local _USEDISTANCEATTEN
             
             // 首先包含必要的URP头文件以定义TEXTURE2D和SAMPLER宏
@@ -116,12 +117,13 @@ Shader "Custom/FurShell_Mobile_SingleC"
             float _AlphaCutout;
             float _Occlusion;
             float _UseWind;
+            float _UseTouch;
             float _FurScale;
             float _UseAlpha;
             float4 _BaseMove;
             float4 _WindFreq;
             float4 _WindMove;
-            float4 _MainColor;
+            // float4 _BaseColor;  // 注释掉，由UnlitInput.hlsl定义
             float3 _AmbientColor;
             float _FaceViewProdThresh;
             // 边缘光参数
@@ -227,9 +229,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // ============================================
             // 开始嵌入 UnlitLambert.hlsl 内容
             // ============================================
-            // #ifndef FUR_SHELL_UNLIT_LAMBERT_HLSL
-            // #define FUR_SHELL_UNLIT_LAMBERT_HLSL
-
+            // 包含UnlitInput.hlsl获取_BaseColor、_BaseMap等定义
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitInput.hlsl"
 
             // 触摸挤压计算函数（改进版）- 使用预采样的BaseMap alpha值
@@ -517,26 +517,30 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 float3 move = moveFactor * _BaseMove.xyz;
                 
                 // 4. 触摸区域移动衰减：使用Lerp做渐变过渡，使效果更自然
-                // 计算变形后的基础位置到触摸点的距离（世界空间）
-                // 注意：这里使用deformedBasePosWS而不是posWS，因为posWS在此时可能还未被赋值
-                float3 touchPos = _TouchPosition.xyz;
-                float distanceToTouch = length(deformedBasePosWS - touchPos);
+                // 只有在启用触摸时才计算触摸衰减
+                if (_UseTouch > 0.5)
+                {
+                    // 计算变形后的基础位置到触摸点的距离（世界空间）
+                    // 注意：这里使用deformedBasePosWS而不是posWS，因为posWS在此时可能还未被赋值
+                    float3 touchPos = _TouchPosition.xyz;
+                    float distanceToTouch = length(deformedBasePosWS - touchPos);
+                    
+                    // 计算衰减因子：使用smoothstep实现平滑过渡
+                    // 当distanceToTouch为0时（触摸中心），falloff为1（完全禁用移动）
+                    // 当distanceToTouch为_TouchRadius时（触摸边缘），falloff为0（完全恢复移动）
+                    // 使用smoothstep实现平滑过渡，避免硬边界
+                    float falloff = 1.0 - smoothstep(_TouchRadius*0.5, _TouchRadius, distanceToTouch);
+                    
+                    // 根据衰减因子减弱所有移动
+                    // falloff为1时（触摸中心），移动完全消失
+                    // falloff为0时（触摸边缘），移动完全恢复
+                    // 使用lerp实现平滑过渡：移动值从原始值lerp到0
+                    windMove = lerp(float3(0, -0.9, 0), windMove, 1.0 - falloff);
+                    _WindMove.w = lerp(0, winmoveW, 1.0 - falloff);
+                    // move = lerp(float3(0, 0, 0), move, 1.0 - falloff);
+                }
                 
-                // 计算衰减因子：使用smoothstep实现平滑过渡
-                // 当distanceToTouch为0时（触摸中心），falloff为1（完全禁用移动）
-                // 当distanceToTouch为_TouchRadius时（触摸边缘），falloff为0（完全恢复移动）
-                // 使用smoothstep实现平滑过渡，避免硬边界
-                float falloff = 1.0 - smoothstep(_TouchRadius*0.5, _TouchRadius, distanceToTouch);
-                
-                // 根据衰减因子减弱所有移动
-                // falloff为1时（触摸中心），移动完全消失
-                // falloff为0时（触摸边缘），移动完全恢复
-                // 使用lerp实现平滑过渡：移动值从原始值lerp到0
-                windMove = lerp(float3(0, -0.9, 0), windMove, 1.0 - falloff);
-                _WindMove.w = lerp(0, winmoveW, 1.0 - falloff);
-                // move = lerp(float3(0, 0, 0), move, 1.0 - falloff);
-                
-                // 4. 最终毛发方向计算
+                // 5. 最终毛发方向计算
                 // 公式：shellDir = normalize(normalWS + move + windMove)
                 // - normalWS: 世界空间法线方向
                 // - move: 基础移动向量
@@ -608,7 +612,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 float3 diffuse = NdotL * mainLight.color * distanceAtten * shadowAttenuation;
                 
                 // 添加Fresnel到diffuse（模拟边缘光效果）
-                diffuse += lerp(0.3,1,fastPow(Fresnel,5));
+                diffuse += lerp(0.3,1,fastPow(Fresnel,2));
                 half baseAlpha = 1;
                 // 计算环境光
                 float3 ambient = SampleSH(normalWS);
@@ -618,7 +622,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 }
                 
                 // 合并灯光贡献（包含Fresnel）
-                float3 lighting = (diffuse + ambient) * lerp(float3(1,1,1), _MainColor.rgb, baseAlpha);
+                float3 lighting = (diffuse + ambient) * lerp(float3(1,1,1), _BaseColor.rgb, baseAlpha);
                 
                 // 预计算alpha相关因子（考虑基础遮挡）
                 float alphaFactor = _Occlusion; // 将光影计算移至顶点，这里就不能反转 1.0 - _Occlusion
@@ -661,7 +665,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 float3 deformedBasePosWS[3];    //声明一个包含3个元素的数组，用于存储每个顶点变形后的世界空间位置
                 float3 normalWS[3];     //用于存储每个顶点的世界空间法线
                 
-                #ifdef _USETOUCH
+                if (_UseTouch>0.5){
                 [unroll] for (int k = 0; k < 3; k++)
                 {
                     VertexPositionInputs vertexInput = GetVertexPositionInputs(input[k].positionOS.xyz);
@@ -673,7 +677,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                     deformedBasePosWS[k] = ApplyTouchDeformation(basePosWS, normalInput.normalWS, uv);
                     normalWS[k] = normalize(normalInput.normalWS);
                 }
-                #else
+                }else{
                 // 当_USETOUCH未定义时，仍然需要初始化数组
                 [unroll] for (int k = 0; k < 3; k++)
                 {
@@ -683,7 +687,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                     deformedBasePosWS[k] = vertexInput.positionWS;
                     normalWS[k] = normalize(normalInput.normalWS);
                 }
-                #endif
+                }
 // 推荐：移除 [loop]，让编译器自动展开（或显式 [unroll]）`[unroll]` 指令提示编译器展开循环，提高GPU执行效率
                 for (int i = MAX_SHELL_LAYERS - 1; i >= -1; i--)
                 {
@@ -781,7 +785,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                         
                         // 重新计算diffuse（使用像素级阴影）
                         float3 pixelDiffuse = NdotL * mainLight.color * pixelShadowAtten;
-                        pixelDiffuse += lerp(0.3,1.1,fastPow(fresnel,4));
+                        pixelDiffuse += lerp(0.3,1.1,fastPow(fresnel,2));   //边缘光
                         
                         // 环境光
                         float3 ambient = SampleSH(input.normalWS);
@@ -792,7 +796,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                         {
                             colorAlpha = baseColor.a;
                         }
-                        lighting = (pixelDiffuse + ambient) * lerp(float3(1,1,1), _MainColor.rgb, colorAlpha);
+                        lighting = (pixelDiffuse + ambient) * lerp(float3(1,1,1), _BaseColor.rgb, colorAlpha);
                     #endif
                 #endif
                 
@@ -826,8 +830,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // 开始嵌入 DepthSimple.hlsl 内容
             // ============================================
             // #ifndef FUR_SHELL_DEPTH_HLSL
-            // #define FUR_SHELL_DEPTH_HLSL
-
+            // 包含UnlitInput.hlsl获取_BaseColor、_BaseMap等定义
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitInput.hlsl"
 
             struct Attributes
@@ -877,8 +880,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // 开始嵌入 ShadowSimple.hlsl 内容
             // ============================================
             // #ifndef FUR_SHELL_SHADOW_HLSL
-            // #define FUR_SHELL_SHADOW_HLSL
-
+            // 包含UnlitInput.hlsl获取_BaseColor、_BaseMap等定义
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitInput.hlsl"
 
             struct Attributes
@@ -910,4 +912,6 @@ Shader "Custom/FurShell_Mobile_SingleC"
             ENDHLSL
         }
     }
+    CustomEditor "FurShell_MobileGUI"
 }
+

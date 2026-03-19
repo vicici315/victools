@@ -1,3 +1,4 @@
+// 资源工具 v1.5 修改设置尺寸判断为大于等于设定值
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic; // 用于List、HashSet等集合类型
@@ -95,7 +96,7 @@ namespace VicTools
         private readonly List<string> _processedMeshes = new List<string>();
         private Vector2 _processedMeshesScrollPosition;
 
-        public ProjectTools(string name, EditorWindow parent) : base("[资源工具 v1.4]", parent)
+        public ProjectTools(string name, EditorWindow parent) : base("[资源工具 v1.5]", parent)
         {
             // 初始化路径历史管理器，使用唯一的键名避免与场景工具冲突
             _searchHistoryManager = new SearchHistoryManager("ProjectTools_PathHistory", 10);
@@ -232,8 +233,8 @@ namespace VicTools
             
             // 贴图尺寸选择器 - 使用基类的专用方法
             // ("参数名字文本", 当前值, onSizeChanged事件, 标签宽度, 选择器宽度, 样式, 标签样式, 尺寸选项数组)
-            _filterValue = base.CreateEnumPopupSizeSelector("设置尺寸大于:", _filterValue, null, 92, 100, null, style.normalfont, null);
-            _maxSizeValue = base.CreateEnumPopupSizeSelector(" 改为:", _maxSizeValue, null, 41, 100, null, style.normalfont, null);
+            _filterValue = base.CreateEnumPopupSizeSelector("设置尺寸大于等于:", _filterValue, null, 117, 100, null, style.normalfont, null);
+            _maxSizeValue = base.CreateEnumPopupSizeSelector(" 新尺寸:", _maxSizeValue, null, 51, 100, null, style.normalfont, null);
             
             GUILayout.FlexibleSpace(); // 添加弹性空间，让控件向左靠拢
             // 恢复GUI状态
@@ -765,8 +766,8 @@ namespace VicTools
 
                     switch (_useTextureSizeFilter)
                     {
-                        // 检查过滤条件：当启用尺寸过滤且当前MaxSize小于等于过滤值时，完全跳过设置
-                        case true when currentMaxSize <= _filterValue:
+                        // 检查过滤条件：当启用尺寸过滤且当前MaxSize小于过滤值时，完全跳过设置
+                        case true when currentMaxSize < _filterValue:
                             Debug.Log($"跳过贴图 {assetPath} - 当前MaxSize ({currentMaxSize}) 等于或小于过滤值 ({_filterValue})");
                             return false; // 完全跳过设置
                         // 当未启用尺寸过滤时，跳过MaxSize设置，但仍然设置其他参数

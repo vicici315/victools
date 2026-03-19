@@ -27,6 +27,7 @@
 // PBR_Mobile5.7 烘焙投影支持，使用Unity标准的Subtractive模式方法；优化偏移明暗交界线减少ShadowMap投影噪点
 // PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响(暂时还原高光衰减)
 // PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比
+// PBR_Mobile6.0 完善所有效果，继承原始表现效果
 
 Shader "Custom/PBR_Mobile"
 {
@@ -75,7 +76,7 @@ Shader "Custom/PBR_Mobile"
         [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
-        _ReflectionStrength ("Reflection Strength", Range(0, 6)) = 1.0
+        _ReflectionStrength ("Reflection Strength", Range(0, 10)) = 2.0
         _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
         [Space(5)]
         _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
@@ -138,8 +139,8 @@ Shader "Custom/PBR_Mobile"
             }
             
             // 深度写入和测试（修复阴影遮挡问题的关键）
-            ZWrite On
-            ZTest LEqual
+            // ZWrite On
+            // ZTest LEqual
             
             Cull[_Cull]
             HLSLPROGRAM
@@ -450,7 +451,7 @@ Shader "Custom/PBR_Mobile"
                 
                 // 预计算高光指数（避免在每个光源中重复pow运算）
                 half smoothnessCubed = mat.smoothness * mat.smoothness * mat.smoothness;
-                mat.shininess = mad(smoothnessCubed, 256.0, 2.0);
+                mat.shininess = mad(smoothnessCubed, 128.0, 2.0);
                 
                 return mat;
             }
@@ -484,7 +485,7 @@ Shader "Custom/PBR_Mobile"
                 
                 half specular = fastPow(max(RdotV, 0.001), shininess) * smoothness;
                 
-                return lightColor * specular * shadowAttenuation; 
+                return lightColor * specular * shadowAttenuation * 2.0; 
             }
             
             half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic, half shadowAttenuation)
@@ -854,7 +855,7 @@ Shader "Custom/PBR_Mobile"
                 #ifdef _USEREFLECTION
                     reflectionContrib = CalculateSphericalReflection(mat.normalWS, viewDirWS, mat.metallic, mat.roughness, mat.uv, lightColor);
                     // 反射应该混合而不是累加，金属度高的材质反射替换漫反射
-                    finalColor = lerp(finalColor, finalColor + reflectionContrib *_BaseColor.rgb, mat.metallic);
+                    finalColor = lerp(finalColor, finalColor + reflectionContrib *mat.albedo, mat.metallic);
                     // 非金属材质的反射叠加
                     finalColor += (reflectionContrib * (1.0 - mat.metallic) * 0.5);
                 #endif

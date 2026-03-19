@@ -16,7 +16,8 @@ namespace VicTools
         // 性能数据
         private PerformanceData _performanceData;
         private Vector2 _scrollPosition;
-        private bool _autoRefresh = true;
+        private bool _autoRefresh = false;
+        private bool _debugMode = false; // 调试模式开关
         private float _lastRefreshTime;
         private const float RefreshInterval = 2.0f; // 自动刷新间隔（秒）
 
@@ -46,6 +47,10 @@ namespace VicTools
         
         // 静态对象相关
         private readonly List<GameObject> _staticObjects = new();
+        
+        // 错误对象相关
+        private readonly List<GameObject> _errorObjects = new();
+        private readonly Dictionary<string, List<GameObject>> _errorObjectsByType = new();
 
         // 资源利用率检查相关
         private readonly List<string> _unusedResources = new();
@@ -334,6 +339,9 @@ namespace VicTools
         {
             var allGameObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
             _performanceData.totalObjects = allGameObjects.Length;
+            
+            // 调试信息：开始错误检测
+            int checkedObjects = 0;
 
             var uniqueMaterials = new HashSet<Material>();
             var uniqueTextures = new HashSet<Texture>();
@@ -348,6 +356,11 @@ namespace VicTools
             // 清空静态对象数据
             _staticObjects.Clear();
             _performanceData.staticObjectCount = 0;
+            
+            // 清空错误对象数据
+            _errorObjects.Clear();
+            _errorObjectsByType.Clear();
+            _performanceData.errorObjectCount = 0;
 
             foreach (var gameObject in allGameObjects)
             {
@@ -368,6 +381,10 @@ namespace VicTools
                     _staticObjects.Add(gameObject);
                     _performanceData.staticObjectCount++;
                 }
+                
+                // 检查错误对象（SerializedObjectNotCreatableException: Object at index 0 is null）
+                CheckForErrorObjects(gameObject);
+                checkedObjects++;
 
                 // 收集渲染数据
                 var sceneDataRenderer = gameObject.GetComponent<Renderer>();
@@ -461,6 +478,12 @@ namespace VicTools
             // 存储材质和纹理引用以便交互选择
             _allMaterials.AddRange(uniqueMaterials);
             _allTextures.AddRange(uniqueTextures);
+            
+            // 调试信息：错误检测完成
+            if (_debugMode && _performanceData.errorObjectCount > 0)
+            {
+                Debug.Log($"[性能分析] 检查了 {checkedObjects} 个对象，发现 {_performanceData.errorObjectCount} 个错误对象");
+            }
         }
 
         /// 检查全局光照设置
@@ -519,6 +542,162 @@ namespace VicTools
             if (!gameObject.isStatic || renderer.allowOcclusionWhenDynamic != false) return;
             _staticBatchingObjects.Add(gameObject);
             AddComponentObject("StaticBatching", gameObject);
+        }
+        
+        /// 检查错误对象
+        private void CheckForErrorObjects(GameObject gameObject)
+        {
+            try
+            {
+                // 检查对象是否为 null 或已被销毁
+                if (gameObject == null || gameObject.Equals(null))
+                {
+                    return;
+                }
+                
+                // 检查 Missing Material
+                CheckForMissingMaterial(gameObject);
+                
+                // 检查 Missing Script
+                CheckForMissingScript(gameObject);
+                
+                // 检查是否有 Missing 组件（包括 SphereCollider）
+                var components = gameObject.GetComponents<Component>();
+                bool hasMissingComponent = false;
+                
+                for (int i = 0; i < components.Length; i++)
+                {
+                    var component = components[i];
+                    
+                    // 如果组件为 null，说明是 Missing 组件
+                    if (component == null)
+                    {
+                        hasMissingComponent = true;
+                        if (_debugMode)
+                        {
+                            Debug.LogWarning($"[错误检测] 对象 '{gameObject.name}' 在索引 {i} 处有 Missing 组件", gameObject);
+                        }
+                        continue;
+                    }
+                    
+                    // 尝试创建 Editor 来触发 SerializedObjectNotCreatableException
+                    // 这是 Unity Editor 在 Inspector 中绘制组件时使用的方法
+                    try
+                    {
+                        var editor = UnityEditor.Editor.CreateEditor(component);
+                        if (editor != null)
+                        {
+                            // 尝试访问 serializedObject，这会触发 SerializedObjectNotCreatableException
+                            var so = editor.serializedObject;
+                            // 如果能成功创建 serializedObject，说明组件没有严重错误
+                            Object.DestroyImmediate(editor);
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        // 捕获 SerializedObjectNotCreatableException 或其他序列化错误
+                        var exceptionType = ex.GetType().Name;
+                        if (_debugMode)
+                        {
+                            Debug.LogWarning($"[错误检测] 对象 '{gameObject.name}' 的组件 '{component.GetType().Name}' 创建 Editor 失败: {exceptionType} - {ex.Message}", gameObject);
+                        }
+                        
+                        if (exceptionType.Contains("SerializedObjectNotCreatableException") ||
+                            (ex.Message.Contains("Object at index") && ex.Message.Contains("is null")))
+                        {
+                            RecordErrorObject(gameObject, "SerializedObjectNotCreatableException");
+                            return;
+                        }
+                    }
+                }
+                
+                // 如果发现 Missing 组件，记录错误
+                if (hasMissingComponent)
+                {
+                    RecordErrorObject(gameObject, "MissingComponent");
+                    return;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // 捕获任何其他异常
+                if (_debugMode)
+                {
+                    Debug.LogWarning($"[错误检测] 检查对象 '{gameObject.name}' 时发生错误: {ex.GetType().Name} - {ex.Message}", gameObject);
+                }
+            }
+        }
+        
+        /// 检查 Missing Material
+        private void CheckForMissingMaterial(GameObject gameObject)
+        {
+            var renderer = gameObject.GetComponent<Renderer>();
+            if (renderer != null)
+            {
+                var materials = renderer.sharedMaterials;
+                bool hasMissingMaterial = false;
+                
+                for (int i = 0; i < materials.Length; i++)
+                {
+                    if (materials[i] == null)
+                    {
+                        hasMissingMaterial = true;
+                        if (_debugMode)
+                        {
+                            Debug.LogWarning($"[错误检测] 对象 '{gameObject.name}' 在材质槽 {i} 处有 Missing Material", gameObject);
+                        }
+                    }
+                }
+                
+                if (hasMissingMaterial)
+                {
+                    RecordErrorObject(gameObject, "MissingMaterial");
+                }
+            }
+        }
+        
+        /// 检查 Missing Script
+        private void CheckForMissingScript(GameObject gameObject)
+        {
+            var components = gameObject.GetComponents<Component>();
+            bool hasMissingScript = false;
+            
+            foreach (var component in components)
+            {
+                // Missing Script 会显示为 null
+                if (component == null)
+                {
+                    hasMissingScript = true;
+                    break;
+                }
+            }
+            
+            if (hasMissingScript)
+            {
+                RecordErrorObject(gameObject, "MissingScript");
+                if (_debugMode)
+                {
+                    Debug.LogWarning($"[错误检测] 对象 '{gameObject.name}' 有 Missing Script", gameObject);
+                }
+            }
+        }
+        
+        /// 记录错误对象
+        private void RecordErrorObject(GameObject gameObject, string errorType)
+        {
+            if (!_errorObjects.Contains(gameObject))
+            {
+                _errorObjects.Add(gameObject);
+                _performanceData.errorObjectCount++;
+                
+                // 按错误类型分类
+                if (!_errorObjectsByType.ContainsKey(errorType))
+                    _errorObjectsByType[errorType] = new List<GameObject>();
+                _errorObjectsByType[errorType].Add(gameObject);
+                
+                // 添加到组件对象以便选择
+                AddComponentObject("Error", gameObject);
+            }
         }
 
         /// 分析性能问题
@@ -581,6 +760,36 @@ namespace VicTools
                     "全局光照贡献对象过多",
                     $"当前场景有 {_performanceData.contributeGICount} 个对象开启了ContributeGlobalIllumination，可能影响光照烘焙性能",
                     PerformanceWarningLevel.Warning
+                ));
+            }
+            
+            // 检查错误对象（包括 Missing Material 和 Missing Script）
+            if (_performanceData.errorObjectCount > 0)
+            {
+                // 统计各类错误数量
+                int missingMaterialCount = _errorObjectsByType.ContainsKey("MissingMaterial") ? _errorObjectsByType["MissingMaterial"].Count : 0;
+                int missingScriptCount = _errorObjectsByType.ContainsKey("MissingScript") ? _errorObjectsByType["MissingScript"].Count : 0;
+                int otherErrorCount = _performanceData.errorObjectCount - missingMaterialCount - missingScriptCount;
+                
+                StringBuilder errorMessage = new StringBuilder();
+                errorMessage.Append($"发现 {_performanceData.errorObjectCount} 个错误对象");
+                
+                List<string> errorDetails = new List<string>();
+                if (missingMaterialCount > 0) errorDetails.Add($"{missingMaterialCount}个缺材质");
+                if (missingScriptCount > 0) errorDetails.Add($"{missingScriptCount}个缺脚本");
+                if (otherErrorCount > 0) errorDetails.Add($"{otherErrorCount}个其他错误");
+                
+                if (errorDetails.Count > 0)
+                {
+                    errorMessage.Append($"（{string.Join("、", errorDetails)}）");
+                }
+                
+                errorMessage.Append("，可能导致运行时错误或显示异常");
+                
+                _performanceWarnings.Add(new PerformanceWarning(
+                    "场景中存在错误对象",
+                    errorMessage.ToString(),
+                    PerformanceWarningLevel.Critical
                 ));
             }
         }
@@ -682,7 +891,7 @@ namespace VicTools
         private void DrawObjectStatisticsSection(GUIStyle areaStyle, GUIStyle subheadingStyle, GUIStyle normalStyle, float contentWidth)
         {
             EditorGUILayout.BeginVertical(areaStyle);
-            EditorGUILayout.LabelField("对象统计 (点击数字选择对象)", subheadingStyle);
+            EditorGUILayout.LabelField("对象统计 (点击数字选择对象)（点击右上角'刷新数据'）", subheadingStyle);
             
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             EditorGUILayout.LabelField("网格:", normalStyle, GUILayout.Width(50));
@@ -720,6 +929,22 @@ namespace VicTools
             EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
             EditorGUILayout.LabelField("静态:", normalStyle, GUILayout.Width(50));
             DrawSelectableCount("Static", _performanceData.staticObjectCount.ToString("N0"));
+            EditorGUILayout.EndHorizontal();
+            
+            EditorGUILayout.BeginHorizontal(GUILayout.Width(contentWidth));
+            // 如果有错误对象，将标签显示为红色
+            if (_performanceData.errorObjectCount > 0)
+            {
+                var originalColor = GUI.contentColor;
+                GUI.contentColor = Color.red;
+                EditorGUILayout.LabelField("错误:", normalStyle, GUILayout.Width(50));
+                GUI.contentColor = originalColor;
+            }
+            else
+            {
+                EditorGUILayout.LabelField("错误:", normalStyle, GUILayout.Width(50));
+            }
+            DrawSelectableCount("Error", _performanceData.errorObjectCount.ToString("N0"));
             EditorGUILayout.EndHorizontal();
             
             // 添加快速选择按钮
@@ -909,6 +1134,11 @@ namespace VicTools
                 // 选择所有贡献GI的对象
                 objectsToSelect.AddRange(_contributeGIObjects);
             }
+            else if (warning.title.Contains("错误对象"))
+            {
+                // 选择所有错误对象
+                objectsToSelect.AddRange(_errorObjects);
+            }
             
             if (objectsToSelect.Count > 0)
             {
@@ -988,6 +1218,10 @@ namespace VicTools
             {
                 hasObjects = _staticObjects.Count > 0;
             }
+            else if (objectType == "Error")
+            {
+                hasObjects = _errorObjects.Count > 0;
+            }
             else
             {
                 hasObjects = (_objectsByType.ContainsKey(objectType) && _objectsByType[objectType].Count > 0) ||
@@ -1015,6 +1249,10 @@ namespace VicTools
                 else if (objectType == "Static")
                 {
                     ShowStaticObjectSelectionMenu();
+                }
+                else if (objectType == "Error")
+                {
+                    ShowErrorObjectSelectionMenu();
                 }
                 else
                 {
@@ -1239,7 +1477,238 @@ namespace VicTools
             
             menu.ShowAsContext();
         }
-
+        
+        /// 显示错误对象选择菜单
+        private void ShowErrorObjectSelectionMenu()
+        {
+            GenericMenu menu = new GenericMenu();
+            
+            // 添加选择所有错误对象的选项
+            menu.AddItem(new GUIContent($"选择所有错误对象 ({_errorObjects.Count}个)"), false, () => {
+                Selection.objects = _errorObjects.ToArray();
+                if (_errorObjects.Count > 0)
+                {
+                    EditorGUIUtility.PingObject(_errorObjects[0]);
+                    Debug.LogWarning($"已选择 {_errorObjects.Count} 个错误对象，请在 Inspector 中查看详情");
+                }
+            });
+            
+            menu.AddSeparator("");
+            
+            // 按错误类型分组显示
+            foreach (var errorTypePair in _errorObjectsByType)
+            {
+                string errorType = errorTypePair.Key;
+                List<GameObject> errorObjects = errorTypePair.Value;
+                
+                // 错误类型的友好名称
+                string errorTypeName = errorType switch
+                {
+                    "MissingComponent" => "Missing 组件",
+                    "SerializedObjectNotCreatableException" => "对象序列化错误 (SphereCollider等)",
+                    "MissingMaterial" => "Missing 材质",
+                    "MissingScript" => "Missing 脚本",
+                    _ => errorType
+                };
+                
+                // 添加错误类型分组标题
+                menu.AddItem(new GUIContent($"{errorTypeName} ({errorObjects.Count}个)"), false, () => {
+                    Selection.objects = errorObjects.ToArray();
+                    if (errorObjects.Count > 0)
+                    {
+                        EditorGUIUtility.PingObject(errorObjects[0]);
+                        Debug.LogWarning($"已选择 {errorObjects.Count} 个 {errorTypeName} 对象");
+                    }
+                });
+                
+                // 添加该类型下的单个对象
+                foreach (var obj in errorObjects.Take(10)) // 每个类型最多显示10个
+                {
+                    string objectName = obj.name;
+                    if (objectName.Length > 30)
+                        objectName = objectName.Substring(0, 27) + "...";
+                    
+                    // 检查对象的组件信息
+                    var components = obj.GetComponents<Component>();
+                    int missingCount = components.Count(c => c == null);
+                    string componentInfo = "";
+                    
+                    if (errorType == "MissingMaterial")
+                    {
+                        // 显示缺失材质数量
+                        var renderer = obj.GetComponent<Renderer>();
+                        if (renderer != null)
+                        {
+                            var materials = renderer.sharedMaterials;
+                            int missingMatCount = materials.Count(m => m == null);
+                            componentInfo = $" [缺失材质: {missingMatCount}]";
+                        }
+                    }
+                    else if (errorType == "MissingScript")
+                    {
+                        // 显示缺失脚本数量
+                        componentInfo = $" [缺失脚本: {missingCount}]";
+                    }
+                    else if (missingCount > 0)
+                    {
+                        componentInfo = $" [Missing: {missingCount}]";
+                    }
+                    else if (errorType == "SerializedObjectNotCreatableException")
+                    {
+                        // 尝试找出有问题的组件类型
+                        var componentTypes = new System.Collections.Generic.HashSet<string>();
+                        foreach (var comp in components)
+                        {
+                            if (comp != null)
+                            {
+                                var compType = comp.GetType().Name;
+                                if (compType.Contains("Collider"))
+                                {
+                                    componentTypes.Add(compType);
+                                }
+                            }
+                        }
+                        if (componentTypes.Count > 0)
+                        {
+                            componentInfo = $" [{string.Join(", ", componentTypes)}]";
+                        }
+                    }
+                    
+                    menu.AddItem(new GUIContent($"  {objectName}{componentInfo}"), false, (userData) => {
+                        GameObject selectedObj = (GameObject)userData;
+                        Selection.activeGameObject = selectedObj;
+                        EditorGUIUtility.PingObject(selectedObj);
+                        
+                        // 在控制台输出详细信息
+                        StringBuilder detailInfo = new StringBuilder();
+                        detailInfo.AppendLine($"对象: {selectedObj.name}");
+                        detailInfo.AppendLine($"位置: {selectedObj.transform.position}");
+                        detailInfo.AppendLine($"错误类型: {errorTypeName}");
+                        
+                        // 根据错误类型显示不同的详细信息
+                        if (errorType == "MissingMaterial")
+                        {
+                            var objRenderer = selectedObj.GetComponent<Renderer>();
+                            if (objRenderer != null)
+                            {
+                                var materials = objRenderer.sharedMaterials;
+                                detailInfo.AppendLine("材质列表:");
+                                for (int i = 0; i < materials.Length; i++)
+                                {
+                                    if (materials[i] == null)
+                                    {
+                                        detailInfo.AppendLine($"  [{i}] Missing Material");
+                                    }
+                                    else
+                                    {
+                                        detailInfo.AppendLine($"  [{i}] {materials[i].name}");
+                                    }
+                                }
+                            }
+                        }
+                        else if (errorType == "MissingScript")
+                        {
+                            var objComponents = selectedObj.GetComponents<Component>();
+                            detailInfo.AppendLine("组件列表:");
+                            for (int i = 0; i < objComponents.Length; i++)
+                            {
+                                if (objComponents[i] == null)
+                                {
+                                    detailInfo.AppendLine($"  [{i}] Missing Script");
+                                }
+                                else
+                                {
+                                    detailInfo.AppendLine($"  [{i}] {objComponents[i].GetType().Name}");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            var objComponents = selectedObj.GetComponents<Component>();
+                            int objMissingCount = objComponents.Count(c => c == null);
+                            
+                            if (objMissingCount > 0)
+                            {
+                                detailInfo.AppendLine($"Missing 组件数量: {objMissingCount}");
+                            }
+                            
+                            detailInfo.AppendLine("组件列表:");
+                            for (int i = 0; i < objComponents.Length; i++)
+                            {
+                                if (objComponents[i] == null)
+                                {
+                                    detailInfo.AppendLine($"  [{i}] Missing (可能是 SphereCollider 等)");
+                                }
+                                else
+                                {
+                                    detailInfo.AppendLine($"  [{i}] {objComponents[i].GetType().Name}");
+                                }
+                            }
+                        }
+                        
+                        Debug.LogWarning(detailInfo.ToString(), selectedObj);
+                    }, obj);
+                }
+                
+                if (errorObjects.Count > 10)
+                {
+                    menu.AddItem(new GUIContent($"  ... 还有 {errorObjects.Count - 10} 个"), false, null);
+                }
+                
+                menu.AddSeparator("");
+            }
+            
+            // 添加查看详细信息选项
+            menu.AddItem(new GUIContent("在控制台查看所有错误对象详情"), false, () => {
+                // 在控制台输出所有错误对象名称
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine($"=== 场景错误对象报告 ({_errorObjects.Count}个) ===");
+                
+                foreach (var errorTypePair in _errorObjectsByType)
+                {
+                    string errorTypeName = errorTypePair.Key switch
+                    {
+                        "MissingComponent" => "Missing 组件",
+                        "SerializedObjectNotCreatableException" => "对象序列化错误 (SphereCollider等)",
+                        "MissingMaterial" => "Missing 材质",
+                        "MissingScript" => "Missing 脚本",
+                        _ => errorTypePair.Key
+                    };
+                    
+                    sb.AppendLine($"\n【{errorTypeName}】 ({errorTypePair.Value.Count}个):");
+                    foreach (var obj in errorTypePair.Value)
+                    {
+                        var components = obj.GetComponents<Component>();
+                        int missingCount = components.Count(c => c == null);
+                        string missingInfo = missingCount > 0 ? $" [Missing组件数: {missingCount}]" : "";
+                        
+                        // 列出所有组件
+                        var componentList = new System.Collections.Generic.List<string>();
+                        foreach (var comp in components)
+                        {
+                            if (comp == null)
+                            {
+                                componentList.Add("Missing");
+                            }
+                            else
+                            {
+                                componentList.Add(comp.GetType().Name);
+                            }
+                        }
+                        
+                        sb.AppendLine($"  - {obj.name} (位置: {obj.transform.position}){missingInfo}");
+                        sb.AppendLine($"    组件: {string.Join(", ", componentList)}");
+                    }
+                }
+                
+                sb.AppendLine("\n提示: 选择对象后在 Inspector 中可以看到具体的 Missing 组件（如 SphereCollider）");
+                sb.AppendLine("SerializedObjectNotCreatableException 通常表示组件引用了已删除的资源");
+                Debug.LogWarning(sb.ToString());
+            });
+            
+            menu.ShowAsContext();
+        }
+        
         /// 添加组件对象到字典
         private void AddComponentObject(string componentType, GameObject gameObject)
         {
@@ -4051,6 +4520,7 @@ namespace VicTools
             _showPerformanceWarnings = EditorPrefs.GetBool(prefix + "ShowPerformanceWarnings", true);
             _showDetailedStatisticsSection = EditorPrefs.GetBool(prefix + "ShowDetailedStatisticsSection", true);
             _showResourceUtilization = EditorPrefs.GetBool(prefix + "ShowResourceUtilization", true);
+            _autoRefresh = EditorPrefs.GetBool(prefix + "AutoRefresh", true);
         }
 
         /// 保存模块显示开关的存档设置
@@ -4066,6 +4536,7 @@ namespace VicTools
             EditorPrefs.SetBool(prefix + "ShowPerformanceWarnings", _showPerformanceWarnings);
             EditorPrefs.SetBool(prefix + "ShowDetailedStatisticsSection", _showDetailedStatisticsSection);
             EditorPrefs.SetBool(prefix + "ShowResourceUtilization", _showResourceUtilization);
+            EditorPrefs.SetBool(prefix + "AutoRefresh", _autoRefresh);
         }
 
         /// 保存排除列表设置到EditorPrefs
@@ -4258,6 +4729,7 @@ namespace VicTools
         public int audioSourceCount;
         public int contributeGICount; // 开启全局光照贡献的模型数量
         public int staticObjectCount; // 静态对象数量
+        public int errorObjectCount; // 错误对象数量
         public int totalTriangles;
         public int totalVertices;
         public long textureMemory;
