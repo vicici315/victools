@@ -563,7 +563,7 @@ public class ResourceBoxFileItem
                 SelectObjectsUsingSelectedObjectMaterial();
             }
             
-            var selectObjMatContent = new GUIContent("选择材质", "选择场景中选中对象的材质球");
+            var selectObjMatContent = new GUIContent("选择材质", "选择场景中选中对象的材质球\n（注意：多个材质球选择时要3击鼠标进行选择）");
             if (GUILayout.Button(selectObjMatContent, style.normalButton, GUILayout.Width(80)))
             {
                 SelectObjectsMaterial();
