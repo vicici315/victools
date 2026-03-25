@@ -50,6 +50,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 ### 版本 2.7.10
 
 - PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比及对反射的颜色控制。
+
   ![PBR_Mobile58](./README.assets/PBR_Mobile58.gif)→![PBR_Mobile59](./README.assets/PBR_Mobile59.gif)
   
 - Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果
