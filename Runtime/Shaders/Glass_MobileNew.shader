@@ -16,18 +16,18 @@ Shader "Custom/Glass_MobileNew"
         
         [Header(Distortion)]
         [Space(5)]
-        [Toggle(_USE_NORMAL_MAP)] _UseNormalMap ("Use Normal Map", Float) = 0
+        [Toggle(_USENORMALMAP)] _UseNormalMap ("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0, 2)) = 0.6
         
         [Header(Refraction)]
         [Space(5)]
-        [Toggle(_USE_REFRACTION)] _UseRefraction ("Use Refraction", Float) = 1
+        [Toggle(_USEREFRACTION)] _UseRefraction ("Use Refraction", Float) = 1
         _RefractionStrength ("Refraction Strength", Range(-1.81, 1.81)) = -0.3
         
         [Header(Reflection)]
         [Space(5)]
-        [Toggle(_USE_REFLECTION)] _UseReflection("Use Reflection Map", Float) = 0
+        [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection Map", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionScale ("Reflection Scale", Range(0.0, 2.0)) = 1.0
         _ReflectionBlur ("Max Reflection Blur", Range(0, 6)) = 6.0
@@ -76,9 +76,9 @@ Shader "Custom/Glass_MobileNew"
             
             
             // 基础功能开关（按性能影响排序）
-            #pragma shader_feature_local _USE_NORMAL_MAP
-            #pragma shader_feature_local _USE_REFRACTION
-            #pragma shader_feature_local _USE_REFLECTION
+            #pragma shader_feature_local _USENORMALMAP
+            #pragma shader_feature_local _USEREFRACTION
+            #pragma shader_feature_local _USEREFLECTION
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -138,7 +138,7 @@ Shader "Custom/Glass_MobileNew"
             }
             
             // 快速球形UV映射
-            #ifdef _USE_REFLECTION
+            #ifdef _USEREFLECTION
             float2 fastSphericalUV(float3 reflectionVector)
             {
                 reflectionVector = normalize(reflectionVector);
@@ -261,7 +261,7 @@ Shader "Custom/Glass_MobileNew"
                 
                 // 法线贴图采样（可选）
                 half3 normalTS = half3(0, 0, 1); // 默认法线
-                #ifdef _USE_NORMAL_MAP
+                #ifdef _USENORMALMAP
                     normalTS = UnpackNormal(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv));
                     normalTS.xy *= _BumpScale;
                     normalTS.z = sqrt(1 - saturate(dot(normalTS.xy, normalTS.xy)));
@@ -279,7 +279,7 @@ Shader "Custom/Glass_MobileNew"
                 // 折射效果 - 以物体中心为轴心进行扭曲缩放
                 float2 finalScreenUV = screenUV;
                 
-                #ifdef _USE_REFRACTION
+                #ifdef _USEREFRACTION
                     // 计算物体中心（对象空间原点）在屏幕空间的位置
                     float3 objectCenterWS = TransformObjectToWorld(float3(0, 0, 0));
                     float4 objectCenterCS = TransformWorldToHClip(objectCenterWS);
@@ -290,7 +290,7 @@ Shader "Custom/Glass_MobileNew"
                     
                     // 使用法线强度调制扭曲效果（法线越偏离，扭曲越强）
                     half normalDistortion = 0;
-                    #ifdef _USE_NORMAL_MAP
+                    #ifdef _USENORMALMAP
                         normalDistortion = length(normalTS.xy) * _BumpScale;
                     #endif
                     
@@ -325,7 +325,7 @@ Shader "Custom/Glass_MobileNew"
                 
                 // 反射计算（优化版）
                 half3 reflectionColor = half3(0, 0, 0);
-                #ifdef _USE_REFLECTION
+                #ifdef _USEREFLECTION
                     // 优化：预计算反射向量和模糊度
                     float3 reflectionVector = reflect(-viewDirWS, normalWS);
                     float reflectionBlur = lerp(_ReflectionBlur, 0, _Smoothness);
@@ -424,5 +424,6 @@ Shader "Custom/Glass_MobileNew"
     }
     
     // 禁用阴影投射
-    FallBack "Hidden/Universal Render Pipeline/FallbackError"
+    // FallBack "Hidden/Universal Render Pipeline/FallbackError"
+    CustomEditor "Glass_carWindowGUI"
 }

@@ -906,5 +906,280 @@ namespace VicTools
             string successMessage = $"跳出层级完成：成功将 {objectsWithParent.Length} 个对象放置到最外层级\n（世界坐标已保持，可按 Ctrl+Z 撤销操作）";
             Debug.Log(successMessage);
         }
+        public static void PlaceObjectOnGround(bool forceRaycast = false)
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                Debug.LogWarning("请先选择要放置的对象");
+                EditorUtility.DisplayDialog("提示", "请先选择要放置的对象", "确定");
+                return;
+            }
+
+            Undo.SetCurrentGroupName("放置物体到表面");
+            int group = Undo.GetCurrentGroup();
+            
+            int successCount = 0;
+            int failCount = 0;
+            
+            foreach (GameObject obj in selectedObjects)
+            {
+                Undo.RecordObject(obj.transform, "放置物体到表面");
+                
+                if (forceRaycast)
+                {
+                    // Ctrl+点击：强制使用射线模式
+                    if (PlaceWithRaycast(obj))
+                        successCount++;
+                    else
+                        failCount++;
+                }
+                else
+                {
+                    Collider[] selfColliders = obj.GetComponentsInChildren<Collider>();
+                    
+                    if (selfColliders.Length > 0)
+                    {
+                        if (PlaceWithCollision(obj, selfColliders))
+                            successCount++;
+                        else
+                            failCount++;
+                    }
+                    else
+                    {
+                        if (PlaceWithRaycast(obj))
+                            successCount++;
+                        else
+                            failCount++;
+                    }
+                }
+            }
+            
+            Undo.CollapseUndoOperations(group);
+            
+            string mode = forceRaycast ? "射线模式" : "碰撞模式";
+            string message = $"放置完成（{mode}）：成功 {successCount} 个";
+            if (failCount > 0)
+                message += $"，失败 {failCount} 个";
+            Debug.Log(message);
+        }
+        
+        /// 使用碰撞检测方式落地：逐步下移对象，用 ComputePenetration 检测碰撞接触，精确贴合表面
+        private static bool PlaceWithCollision(GameObject obj, Collider[] selfColliders)
+        {
+            // 收集场景中所有非自身的启用碰撞体
+            Collider[] allColliders = Object.FindObjectsOfType<Collider>();
+            List<Collider> sceneColliders = new List<Collider>();
+            foreach (Collider col in allColliders)
+            {
+                if (col.gameObject == obj || col.transform.IsChildOf(obj.transform))
+                    continue;
+                if (!col.enabled || !col.gameObject.activeInHierarchy)
+                    continue;
+                sceneColliders.Add(col);
+            }
+            
+            if (sceneColliders.Count == 0)
+            {
+                Debug.LogWarning($"对象 '{obj.name}' 场景中没有其他碰撞体");
+                return false;
+            }
+            
+            Vector3 startPos = obj.transform.position;
+            float stepSize = 0.5f;       // 初始步长
+            float minStep = 0.0005f;     // 最小步长精度
+            float maxDropDistance = 1000f;
+            float totalDropped = 0f;
+            
+            // 阶段1：大步下移，直到检测到碰撞
+            bool foundContact = false;
+            
+            while (totalDropped < maxDropDistance)
+            {
+                obj.transform.position -= new Vector3(0, stepSize, 0);
+                totalDropped += stepSize;
+                
+                Physics.SyncTransforms();
+                
+                if (CheckPenetration(selfColliders, sceneColliders))
+                {
+                    // 检测到碰撞，回退到上一步
+                    obj.transform.position += new Vector3(0, stepSize, 0);
+                    totalDropped -= stepSize;
+                    foundContact = true;
+                    break;
+                }
+            }
+            
+            if (!foundContact)
+            {
+                obj.transform.position = startPos;
+                Debug.LogWarning($"对象 '{obj.name}' 下方 {maxDropDistance} 单位内没有检测到碰撞表面");
+                return false;
+            }
+            
+            // 阶段2：二分细化，逐步缩小步长精确定位
+            while (stepSize > minStep)
+            {
+                stepSize *= 0.5f;
+                
+                obj.transform.position -= new Vector3(0, stepSize, 0);
+                Physics.SyncTransforms();
+                
+                if (CheckPenetration(selfColliders, sceneColliders))
+                {
+                    // 穿透了，回退
+                    obj.transform.position += new Vector3(0, stepSize, 0);
+                }
+                // 没穿透就保持当前位置，继续细化
+            }
+            
+            Physics.SyncTransforms();
+            Debug.Log($"对象 '{obj.name}' 已通过碰撞检测放置到表面");
+            return true;
+        }
+        
+        /// 检查自身碰撞体是否与场景碰撞体发生穿透
+        private static bool CheckPenetration(Collider[] selfColliders, List<Collider> sceneColliders)
+        {
+            foreach (Collider self in selfColliders)
+            {
+                if (!self.enabled || !self.gameObject.activeInHierarchy)
+                    continue;
+                    
+                foreach (Collider other in sceneColliders)
+                {
+                    if (Physics.ComputePenetration(
+                        self, self.transform.position, self.transform.rotation,
+                        other, other.transform.position, other.transform.rotation,
+                        out Vector3 dir, out float dist))
+                    {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        
+        /// 无碰撞体时的射线落地方案（回退方案）
+        private static bool PlaceWithRaycast(GameObject obj)
+        {
+            Bounds bounds = GetObjectBounds(obj);
+            if (bounds.size == Vector3.zero)
+            {
+                Debug.LogWarning($"对象 '{obj.name}' 没有Renderer或Collider，无法计算包围盒");
+                return false;
+            }
+            
+            // 计算网格顶点最低点
+            float lowestY = float.MaxValue;
+            bool hasVertex = false;
+            
+            MeshFilter[] meshFilters = obj.GetComponentsInChildren<MeshFilter>();
+            foreach (MeshFilter mf in meshFilters)
+            {
+                if (mf.sharedMesh == null) continue;
+                Vector3[] vertices = mf.sharedMesh.vertices;
+                Transform meshTransform = mf.transform;
+                foreach (Vector3 v in vertices)
+                {
+                    float worldY = meshTransform.TransformPoint(v).y;
+                    if (worldY < lowestY) { lowestY = worldY; hasVertex = true; }
+                }
+            }
+            
+            SkinnedMeshRenderer[] skinRenderers = obj.GetComponentsInChildren<SkinnedMeshRenderer>();
+            foreach (SkinnedMeshRenderer smr in skinRenderers)
+            {
+                Mesh bakedMesh = new Mesh();
+                smr.BakeMesh(bakedMesh);
+                Vector3[] vertices = bakedMesh.vertices;
+                Transform meshTransform = smr.transform;
+                foreach (Vector3 v in vertices)
+                {
+                    float worldY = meshTransform.TransformPoint(v).y;
+                    if (worldY < lowestY) { lowestY = worldY; hasVertex = true; }
+                }
+                Object.DestroyImmediate(bakedMesh);
+            }
+            
+            if (!hasVertex) lowestY = bounds.min.y;
+            
+            Vector3 bottomCenter = new Vector3(bounds.center.x, lowestY, bounds.center.z);
+            Ray ray = new Ray(bottomCenter, Vector3.down);
+            RaycastHit[] hits = Physics.RaycastAll(ray, 1000f);
+            
+            float closestDistance = Mathf.Infinity;
+            RaycastHit closestHit = new RaycastHit();
+            bool foundSurface = false;
+            
+            foreach (RaycastHit h in hits)
+            {
+                if (h.collider.gameObject == obj || h.collider.transform.IsChildOf(obj.transform))
+                    continue;
+                if (h.distance < closestDistance)
+                {
+                    closestDistance = h.distance;
+                    closestHit = h;
+                    foundSurface = true;
+                }
+            }
+            
+            if (foundSurface)
+            {
+                float bottomOffset = obj.transform.position.y - lowestY;
+                Vector3 newPosition = obj.transform.position;
+                newPosition.y = closestHit.point.y + bottomOffset;
+                obj.transform.position = newPosition;
+                Debug.Log($"对象 '{obj.name}' 已通过射线放置到表面：{closestHit.collider.gameObject.name}");
+                return true;
+            }
+            
+            Debug.LogWarning($"对象 '{obj.name}' 下方没有检测到表面");
+            return false;
+        }
+        
+        /// 获取GameObject的包围盒（包括所有子对象的Renderer和Collider）
+        private static Bounds GetObjectBounds(GameObject obj)
+        {
+            Bounds bounds = new Bounds(obj.transform.position, Vector3.zero);
+            bool hasBounds = false;
+            
+            // 获取所有Renderer
+            Renderer[] renderers = obj.GetComponentsInChildren<Renderer>();
+            foreach (Renderer renderer in renderers)
+            {
+                if (hasBounds)
+                {
+                    bounds.Encapsulate(renderer.bounds);
+                }
+                else
+                {
+                    bounds = renderer.bounds;
+                    hasBounds = true;
+                }
+            }
+            
+            // 如果没有Renderer，尝试获取Collider
+            if (!hasBounds)
+            {
+                Collider[] colliders = obj.GetComponentsInChildren<Collider>();
+                foreach (Collider collider in colliders)
+                {
+                    if (hasBounds)
+                    {
+                        bounds.Encapsulate(collider.bounds);
+                    }
+                    else
+                    {
+                        bounds = collider.bounds;
+                        hasBounds = true;
+                    }
+                }
+            }
+            
+            return bounds;
+        }
     }
 }

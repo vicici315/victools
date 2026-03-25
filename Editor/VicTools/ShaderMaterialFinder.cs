@@ -1,4 +1,4 @@
-// 材质查找v
+// 材质查找v1.4 支持按住Ctrl键加选查找到的模型与材质球
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -24,7 +24,7 @@ namespace VicTools
     private readonly List<Shader> _foundShaders = new List<Shader>();
     private readonly Dictionary<Shader, int> _shaderUsageCount = new Dictionary<Shader, int>(); // 缓存Shader使用数量
     private bool _showShaderList = false; // 是否显示Shader列表
-        public ShaderMaterialFinder(string name, EditorWindow parent) : base("[材质查找 v1.3]", parent)
+        public ShaderMaterialFinder(string name, EditorWindow parent) : base("[材质查找 v1.4]", parent)
         {
             // 初始化搜索历史记录管理器
                 
@@ -581,11 +581,36 @@ namespace VicTools
                 // 需要实际选择物体时，执行完整的查找
                 var objectsUsingMaterial = FindObjectsUsingMaterial(material);
                 if (objectsUsingMaterial.Count <= 0) return;
-                Selection.objects = objectsUsingMaterial.ToArray();
-                _selectCount = objectsUsingMaterial.Count;
-                        
-                // 更新ScenesTools的selectedObjectsCount
-                UpdateScenesToolsSelectedCount(objectsUsingMaterial.Count);
+                
+                // 检查是否按住Ctrl键（Windows）或Command键（Mac）
+                bool isAdditive = Event.current != null && (Event.current.control || Event.current.command);
+                
+                if (isAdditive)
+                {
+                    // 加选模式：将新找到的对象添加到当前选择中
+                    var currentSelection = new List<Object>(Selection.objects);
+                    foreach (var obj in objectsUsingMaterial)
+                    {
+                        if (!currentSelection.Contains(obj))
+                        {
+                            currentSelection.Add(obj);
+                        }
+                    }
+                    Selection.objects = currentSelection.ToArray();
+                    _selectCount = currentSelection.Count;
+                    
+                    // 更新ScenesTools的selectedObjectsCount
+                    UpdateScenesToolsSelectedCount(currentSelection.Count);
+                }
+                else
+                {
+                    // 普通模式：替换当前选择
+                    Selection.objects = objectsUsingMaterial.ToArray();
+                    _selectCount = objectsUsingMaterial.Count;
+                    
+                    // 更新ScenesTools的selectedObjectsCount
+                    UpdateScenesToolsSelectedCount(objectsUsingMaterial.Count);
+                }
 
                 return;
             }
@@ -594,11 +619,36 @@ namespace VicTools
             var objectsUsingMaterialFull = FindObjectsUsingMaterial(material);
 
             if (objectsUsingMaterialFull.Count <= 0 || !selObj) return;
-            Selection.objects = objectsUsingMaterialFull.ToArray();
-            _selectCount = objectsUsingMaterialFull.Count;
+            
+            // 检查是否按住Ctrl键（Windows）或Command键（Mac）
+            bool isAdditiveFull = Event.current != null && (Event.current.control || Event.current.command);
+            
+            if (isAdditiveFull)
+            {
+                // 加选模式：将新找到的对象添加到当前选择中
+                var currentSelection = new List<Object>(Selection.objects);
+                foreach (var obj in objectsUsingMaterialFull)
+                {
+                    if (!currentSelection.Contains(obj))
+                    {
+                        currentSelection.Add(obj);
+                    }
+                }
+                Selection.objects = currentSelection.ToArray();
+                _selectCount = currentSelection.Count;
                 
-            // 更新ScenesTools的selectedObjectsCount
-            UpdateScenesToolsSelectedCount(objectsUsingMaterialFull.Count);
+                // 更新ScenesTools的selectedObjectsCount
+                UpdateScenesToolsSelectedCount(currentSelection.Count);
+            }
+            else
+            {
+                // 普通模式：替换当前选择
+                Selection.objects = objectsUsingMaterialFull.ToArray();
+                _selectCount = objectsUsingMaterialFull.Count;
+                
+                // 更新ScenesTools的selectedObjectsCount
+                UpdateScenesToolsSelectedCount(objectsUsingMaterialFull.Count);
+            }
         }
 
         /// 查找场景中使用指定材质的所有物体

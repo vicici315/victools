@@ -2,6 +2,7 @@
 //FurShell 1.2 添加AlphaOffset优化毛发透明结构算法，优化毛发剔除效果BaseMapA颜色图A通道影响毛发长度
 //FurShell 1.3 添加UseVerShadow选项，可以使用像素阴影，优化Fresnel暗部过暗问题
 //FurShell 1.4 修改边缘光范围加大；修改变量_BaseColor；修改默认值
+//FurShell 1.5 支持多点触摸
 Shader "Custom/FurShell_Mobile_SingleC"
 {
     Properties
@@ -44,8 +45,11 @@ Shader "Custom/FurShell_Mobile_SingleC"
         [Space(20)]
         // 背面剔除阈值
         _FaceViewProdThresh("Direction Threshold", Range(0.0001, 1.0)) = 0.001
-        // 触摸挤压参数
-        _TouchPosition("Touch Position", Vector) = (0, 0, 0, 1)  // xyz: 世界空间位置, w: 强度
+        // 触摸挤压参数（支持最多4个触摸点）
+        _TouchPosition("Touch Position 1", Vector) = (0, -1000, 0, 1)  // xyz: 世界空间位置, w: 强度
+        _TouchPosition2("Touch Position 2", Vector) = (0, -1000, 0, 1)
+        _TouchPosition3("Touch Position 3", Vector) = (0, -1000, 0, 1)
+        _TouchPosition4("Touch Position 4", Vector) = (0, -1000, 0, 1)
         _TouchRadius("Touch Radius", Float) = 1.0
         _MaxDepression("Max Depression", Range(0.0, 2.0)) = 1.3  // 最大凹陷度
         
@@ -134,8 +138,11 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // float4 _NormalMap_ST;
             // float _NormalScale;
             
-            // 触摸挤压参数
-            float4 _TouchPosition;  // xyz: 世界空间位置, w: 强度
+            // 触摸挤压参数（支持最多4个触摸点）
+            float4 _TouchPosition;   // xyz: 世界空间位置, w: 强度
+            float4 _TouchPosition2;
+            float4 _TouchPosition3;
+            float4 _TouchPosition4;
             float _TouchRadius;
             float _MaxDepression;   // 最大凹陷度
             
@@ -232,73 +239,90 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // 包含UnlitInput.hlsl获取_BaseColor、_BaseMap等定义
             #include "Packages/com.unity.render-pipelines.universal/Shaders/UnlitInput.hlsl"
 
-            // 触摸挤压计算函数（改进版）- 使用预采样的BaseMap alpha值
+            // 触摸挤压计算函数（改进版）- 支持多个触摸点
+            // 返回触摸压扁因子 (0.0 = 完全压扁, 1.0 = 无影响)
+            inline float CalculateTouchFlatten(float3 positionWS, float3 normalWS)
+            {
+                float minFlatten = 1.0; // 1.0表示无影响
+                
+                // 处理4个触摸点
+                float4 touchPositions[4] = { _TouchPosition, _TouchPosition2, _TouchPosition3, _TouchPosition4 };
+                
+                for (int i = 0; i < 4; i++)
+                {
+                    float3 touchPos = touchPositions[i].xyz;
+                    float touchStrength = touchPositions[i].w;
+                    
+                    // 如果触摸点在地下1000单位，表示无效，跳过
+                    if (touchPos.y < -999.0)
+                        continue;
+                    
+                    float distanceToTouch = length(positionWS - touchPos);
+                    
+                    // 如果距离大于半径，没有影响
+                    if (distanceToTouch > _TouchRadius)
+                        continue;
+                    
+                    // 计算衰减因子：使用平滑的衰减曲线
+                    float falloff = 1.0 - saturate(distanceToTouch / _TouchRadius);
+                    // 使用平方衰减使效果更自然，中心强边缘弱
+                    falloff = falloff * falloff;
+                    
+                    // 计算压扁因子：falloff越大，压扁越多
+                    // touchStrength控制压扁强度，_MaxDepression控制最大压扁程度
+                    float flattenAmount = falloff * saturate(touchStrength * 0.5) * _MaxDepression;
+                    
+                    // 取最小值（最大压扁效果）
+                    float flatten = 1.0 - saturate(flattenAmount);
+                    minFlatten = min(minFlatten, flatten);
+                }
+                
+                return minFlatten;
+            }
+
+            // 触摸变形函数：将顶点沿触摸方向压入，模拟按压凹陷
+            // 参数：positionWS - 世界空间位置，normalWS - 世界空间法线，uv - 纹理坐标
+            // 返回：变形后的世界空间位置
             inline float3 ApplyTouchDeformation(float3 positionWS, float3 normalWS, float2 uv)
             {
-                // 计算顶点到触摸点的距离
-                float3 touchPos = _TouchPosition.xyz;
-                float touchStrength = _TouchPosition.w;
-                float distanceToTouch = length(positionWS - touchPos);
+                float3 totalDeformation = float3(0, 0, 0);
                 
-                // 如果距离大于半径，没有影响
-                if (distanceToTouch > _TouchRadius)
-                    return positionWS;
+                // 遍历4个触摸点，累加变形
+                float4 touchPositions[4] = { _TouchPosition, _TouchPosition2, _TouchPosition3, _TouchPosition4 };
                 
-                // 计算衰减因子：使用平滑的衰减曲线
-                float falloff = 1.0 - saturate(distanceToTouch / _TouchRadius);
-                // 使用三次衰减使效果更自然，中心强边缘弱
-                falloff = falloff * falloff;
-                
-                // 使用预采样的BaseMap alpha通道来控制变形区域
-                // 注意：baseAlpha参数已经是SAMPLE_TEXTURE2D_LOD(_BaseMap, sampler_BaseMap, uv, 0).a的结果
-                
-                // 使用alpha通道作为变形强度乘数：alpha值低（无毛发）的部位变形弱
-                // 首先检查是否超过阈值：只有alpha大于阈值的区域才允许变形
-                // 使用smoothstep实现平滑过渡，避免硬边界
-                // 确保smoothstep参数在[0,1]范围内
-                // float thresholdMin = max(0.0, _AlphaThreshold - 0.1);
-                // float thresholdMax = min(1.0, _AlphaThreshold + 0.1);
-
-                float baseAlpha = SAMPLE_TEXTURE2D_LOD(_BaseMap, sampler_BaseMap, uv, 1).a;
-                float alphaMask = smoothstep(0.7, 0.9, baseAlpha)*0.2;
-                // 如果alphaMask接近0，完全不允许变形
-                if (alphaMask < 0.01)
-                    return positionWS;
-                // 对于允许变形的区域，使用alpha值作为强度乘数
-                // 同时考虑alphaMask（阈值控制）和alpha值（强度控制）
-                
-                // 计算凹陷方向：使用法线方向（永远向内凹陷）
-                float3 depressionDir = -normalize(normalWS);
-                
-                // 计算基础位移（基于触摸强度和alpha通道）
-                float3 baseDisplacement = depressionDir * touchStrength * falloff * 0.1 * alphaMask;
-                
-                // 计算最大允许位移（基于最大凹陷度和alpha通道）
-                float maxDisplacementLength = _MaxDepression * 0.1 * alphaMask; // 缩放因子与baseDisplacement保持一致
-                
-                // 限制位移长度，确保不超过最大凹陷度
-                float displacementLength = length(baseDisplacement);
-                if (displacementLength > maxDisplacementLength)
+                for (int i = 0; i < 4; i++)
                 {
-                    baseDisplacement = normalize(baseDisplacement) * maxDisplacementLength;
+                    float3 touchPos = touchPositions[i].xyz;
+                    float touchStr = touchPositions[i].w;
+                    
+                    // 无效触摸点跳过
+                    if (touchPos.y < -999.0)
+                        continue;
+                    
+                    float3 toVertex = positionWS - touchPos;
+                    float distanceToTouch = length(toVertex);
+                    
+                    // 超出半径无影响
+                    if (distanceToTouch > _TouchRadius)
+                        continue;
+                    
+                    // 平滑衰减：中心强边缘弱
+                    float falloff = 1.0 - saturate(distanceToTouch / _TouchRadius);
+                    falloff = falloff * falloff;
+                    
+                    // 压入方向：沿法线反方向（向模型内部压）
+                    float3 pushDir = -normalWS;
+                    
+                    // 变形量：用 _TouchRadius * _MaxDepression 作为最大偏移距离
+                    // touchStr 控制强度，falloff 控制空间衰减
+                    // 最终 clamp 到毛发总厚度，确保最深只压到基础网格表面
+                    float maxDeform = _FurLength * _ShellAmount;
+                    float deformAmount = min(falloff * touchStr * _MaxDepression * _TouchRadius, maxDeform);
+                    
+                    totalDeformation += pushDir * deformAmount;
                 }
                 
-                // 添加保护机制：确保位移方向是向内凹陷（与法线方向夹角小于90度）
-                float dotProduct = dot(normalize(baseDisplacement), depressionDir);
-                if (dotProduct < 0.5) // 如果方向偏差太大，强制使用法线方向
-                {
-                    baseDisplacement = depressionDir * min(displacementLength, maxDisplacementLength);
-                }
-                
-                // 额外保护：当触摸点在模型内部时，减少凹陷效果
-                // 计算从触摸点到顶点的方向
-                float3 toVertexDir = normalize(positionWS - touchPos);
-                float touchInsideFactor = saturate(dot(toVertexDir, depressionDir));
-                
-                // 如果触摸点在模型表面内部（dot接近1），减少效果
-                baseDisplacement *= (1.0 - touchInsideFactor * 0.5);
-                
-                return positionWS + baseDisplacement;
+                return positionWS + totalDeformation;
             }
 
             struct Attributes
@@ -442,7 +466,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 return influence;
             }
             
-            void AppendShellVertex(inout TriangleStream<Varyings> stream, Attributes input, int index, float3 deformedBasePosWS, float3 normalWS, float2 uv)
+            void AppendShellVertex(inout TriangleStream<Varyings> stream, Attributes input, int index, float3 deformedBasePosWS, float3 originalPosWS, float3 normalWS, float2 uv)
             {
                 Varyings output = (Varyings)0;
 
@@ -520,24 +544,33 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 // 只有在启用触摸时才计算触摸衰减
                 if (_UseTouch > 0.5)
                 {
-                    // 计算变形后的基础位置到触摸点的距离（世界空间）
-                    // 注意：这里使用deformedBasePosWS而不是posWS，因为posWS在此时可能还未被赋值
-                    float3 touchPos = _TouchPosition.xyz;
-                    float distanceToTouch = length(deformedBasePosWS - touchPos);
+                    // 计算变形后的基础位置到所有触摸点的最小距离（世界空间）
+                    // 使用原始位置计算距离，避免变形后位置偏移导致距离不准
+                    float4 touchPositions[4] = { _TouchPosition, _TouchPosition2, _TouchPosition3, _TouchPosition4 };
+                    float minDistanceToTouch = 999999.0;
                     
-                    // 计算衰减因子：使用smoothstep实现平滑过渡
-                    // 当distanceToTouch为0时（触摸中心），falloff为1（完全禁用移动）
-                    // 当distanceToTouch为_TouchRadius时（触摸边缘），falloff为0（完全恢复移动）
-                    // 使用smoothstep实现平滑过渡，避免硬边界
-                    float falloff = 1.0 - smoothstep(_TouchRadius*0.5, _TouchRadius, distanceToTouch);
+                    for (int i = 0; i < 4; i++)
+                    {
+                        float3 touchPos = touchPositions[i].xyz;
+                        
+                        // 如果触摸点在地下1000单位，表示无效，跳过
+                        if (touchPos.y < -999.0)
+                            continue;
+                        
+                        float distanceToTouch = length(originalPosWS - touchPos);
+                        minDistanceToTouch = min(minDistanceToTouch, distanceToTouch);
+                    }
                     
-                    // 根据衰减因子减弱所有移动
-                    // falloff为1时（触摸中心），移动完全消失
-                    // falloff为0时（触摸边缘），移动完全恢复
-                    // 使用lerp实现平滑过渡：移动值从原始值lerp到0
-                    windMove = lerp(float3(0, -0.9, 0), windMove, 1.0 - falloff);
-                    _WindMove.w = lerp(0, winmoveW, 1.0 - falloff);
-                    // move = lerp(float3(0, 0, 0), move, 1.0 - falloff);
+                    // 如果找到了有效的触摸点
+                    if (minDistanceToTouch < 999999.0)
+                    {
+                        // 计算衰减因子：使用smoothstep实现平滑过渡
+                        float falloff = 1.0 - smoothstep(_TouchRadius * 0.5, _TouchRadius, minDistanceToTouch);
+                        
+                        // 根据衰减因子减弱所有移动
+                        windMove = lerp(float3(0, -0.9, 0), windMove, 1.0 - falloff);
+                        _WindMove.w = lerp(0, winmoveW, 1.0 - falloff);
+                    }
                 }
                 
                 // 5. 最终毛发方向计算
@@ -663,6 +696,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
 
                 // 预先计算每个顶点的变形位置和法线
                 float3 deformedBasePosWS[3];    //声明一个包含3个元素的数组，用于存储每个顶点变形后的世界空间位置
+                float3 originalBasePosWS[3];    //存储原始世界空间位置（用于触摸区域风力衰减距离计算）
                 float3 normalWS[3];     //用于存储每个顶点的世界空间法线
                 
                 if (_UseTouch>0.5){
@@ -672,6 +706,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                     VertexNormalInputs normalInput = GetVertexNormalInputs(input[k].normalOS, input[k].tangentOS);
                     // 计算变形后的基础位置（触摸挤压效果）
                     float3 basePosWS = vertexInput.positionWS;
+                    originalBasePosWS[k] = basePosWS;
                     // 获取UV坐标用于纹理采样
                     float2 uv = TRANSFORM_TEX(input[k].uv, _BaseMap);
                     deformedBasePosWS[k] = ApplyTouchDeformation(basePosWS, normalInput.normalWS, uv);
@@ -685,6 +720,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                     VertexNormalInputs normalInput = GetVertexNormalInputs(input[k].normalOS, input[k].tangentOS);
                     // 没有触摸变形，直接使用原始位置
                     deformedBasePosWS[k] = vertexInput.positionWS;
+                    originalBasePosWS[k] = vertexInput.positionWS;
                     normalWS[k] = normalize(normalInput.normalWS);
                 }
                 }
@@ -694,7 +730,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
                     [unroll] for (int j = 0; j < 3; j++)
                     {
                         float2 uv = TRANSFORM_TEX(input[j].uv, _BaseMap);
-                        AppendShellVertex(stream, input[j], i, deformedBasePosWS[j], normalWS[j], uv);
+                        AppendShellVertex(stream, input[j], i, deformedBasePosWS[j], originalBasePosWS[j], normalWS[j], uv);
                     }
                     stream.RestartStrip();
                 }

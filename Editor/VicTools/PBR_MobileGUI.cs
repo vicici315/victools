@@ -228,7 +228,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawMetallicRoughnessAO()
     {
-        GUILayout.Label("2 ▌PBR参数 (Metallic Roughness AO)", EditorStyles.boldLabel);
+        GUILayout.Label("2 ▌PBR参数 (Metallic、Roughness、AO)", EditorStyles.boldLabel);
         
         m_MaterialEditor.RangeProperty(metallic, "金属度");
         m_MaterialEditor.RangeProperty(roughness, "粗糙度");
@@ -245,13 +245,14 @@ public class PBR_MobileGUI : ShaderGUI
         
         if (useMsaMap != null)
         {
-            m_MaterialEditor.ShaderProperty(useMsaMap, "  使用金属度粗糙度贴图");
+            m_MaterialEditor.ShaderProperty(useMsaMap, "  使用金属度粗糙度(MRA贴图)");
         }
         
         if (useMsaMap.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
-            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("金属度(R) 粗糙度(G) AO(B)"),metallicGlossMap);
+            EditorGUILayout.HelpBox("金属度(R) 粗糙度(G) AO(B) 基础色蒙版(A)", MessageType.Info);
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("MRA贴图"),metallicGlossMap);
             EditorGUI.indentLevel--;
             
             m_MaterialEditor.ShaderProperty(useAOMap, "  使用 AO(B) 通道");
@@ -790,10 +791,8 @@ public class PBR_MobileGUI : ShaderGUI
         }
     }
     
-    /// <summary>
     /// 统一场景中所有PBR_Mobile材质的自身阴影衰减参数
     /// 根据当前选中对象的Static状态，只统一相同类型（静态或非静态）的对象
-    /// </summary>
     private void UnifyShadowScale()
     {
         Material currentMaterial = m_MaterialEditor.target as Material;

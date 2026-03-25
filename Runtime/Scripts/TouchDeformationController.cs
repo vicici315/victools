@@ -9,10 +9,10 @@ using UnityEngine;
 public class TouchDeformationController : MonoBehaviour
 {
     [Header("触摸参数")]
-    [Tooltip("触摸点物体对象（优先使用）")]
-    public GameObject touchObject;
+    [Tooltip("触摸点物体对象列表（优先使用）")]
+    public GameObject[] touchObjects = new GameObject[0];
     
-    [Tooltip("触摸点世界空间位置（当touchObject为空时使用）")]
+    [Tooltip("触摸点世界空间位置（当touchObjects为空时使用）")]
     public Vector3 touchPosition = Vector3.zero;
     
     [Tooltip("触摸影响半径")]
@@ -33,7 +33,11 @@ public class TouchDeformationController : MonoBehaviour
     private bool isBeingDestroyed = false;
     
     // 着色器属性ID（缓存以提高性能）
-    private static readonly int TouchPositionID = Shader.PropertyToID("_TouchPosition");
+    // 支持最多4个触摸点
+    private static readonly int TouchPosition1ID = Shader.PropertyToID("_TouchPosition");
+    private static readonly int TouchPosition2ID = Shader.PropertyToID("_TouchPosition2");
+    private static readonly int TouchPosition3ID = Shader.PropertyToID("_TouchPosition3");
+    private static readonly int TouchPosition4ID = Shader.PropertyToID("_TouchPosition4");
     private static readonly int TouchRadiusID = Shader.PropertyToID("_TouchRadius");
     private static readonly int MaxDepressionID = Shader.PropertyToID("_MaxDepression");
     
@@ -115,7 +119,7 @@ public class TouchDeformationController : MonoBehaviour
             // 清理引用，帮助垃圾回收
             targetRenderer = null;
             propertyBlock = null;
-            touchObject = null;
+            touchObjects = null;
             return;
         }
         #endif
@@ -133,7 +137,7 @@ public class TouchDeformationController : MonoBehaviour
         // 清理引用，帮助垃圾回收
         targetRenderer = null;
         propertyBlock = null;
-        touchObject = null;
+        touchObjects = null;
     }
     
     void OnDisable()
@@ -153,12 +157,19 @@ public class TouchDeformationController : MonoBehaviour
         // 如果组件正在被销毁，直接返回
         if (IsBeingDestroyedOrNull()) return;
         
-        // 如果设置了touchObject，使用它的位置
+        // 如果设置了touchObjects，使用它们的位置
         // 使用安全的属性访问方法来避免MissingReferenceException
-        Vector3 newPosition;
-        if (TryGetTouchObjectPosition(out newPosition))
+        if (touchObjects != null && touchObjects.Length > 0)
         {
-            touchPosition = newPosition;
+            // 只使用第一个有效的touchObject作为主触摸点
+            for (int i = 0; i < touchObjects.Length; i++)
+            {
+                if (TryGetTouchObjectPosition(touchObjects[i], out Vector3 newPosition))
+                {
+                    touchPosition = newPosition;
+                    break;
+                }
+            }
         }
         
         // 更新触摸参数到着色器
@@ -197,10 +208,39 @@ public class TouchDeformationController : MonoBehaviour
             // 获取当前的MaterialPropertyBlock
             targetRenderer.GetPropertyBlock(propertyBlock);
             
-            // 设置触摸参数
-            // _TouchPosition: xyz为世界空间位置, w为强度
-            Vector4 touchPosWithStrength = new Vector4(touchPosition.x, touchPosition.y, touchPosition.z, touchStrength);
-            propertyBlock.SetVector(TouchPositionID, touchPosWithStrength);
+            // 设置多个触摸点参数（最多4个）
+            Vector4[] touchPositions = new Vector4[4];
+            
+            // 初始化所有触摸点为无效位置（地下1000单位）
+            for (int i = 0; i < 4; i++)
+            {
+                touchPositions[i] = new Vector4(0, -1000, 0, 0);
+            }
+            
+            // 如果有touchObjects，使用它们的位置
+            if (touchObjects != null && touchObjects.Length > 0)
+            {
+                int validCount = 0;
+                for (int i = 0; i < touchObjects.Length && validCount < 4; i++)
+                {
+                    if (TryGetTouchObjectPosition(touchObjects[i], out Vector3 pos))
+                    {
+                        touchPositions[validCount] = new Vector4(pos.x, pos.y, pos.z, touchStrength);
+                        validCount++;
+                    }
+                }
+            }
+            else
+            {
+                // 使用单个touchPosition
+                touchPositions[0] = new Vector4(touchPosition.x, touchPosition.y, touchPosition.z, touchStrength);
+            }
+            
+            // 设置触摸参数到着色器
+            propertyBlock.SetVector(TouchPosition1ID, touchPositions[0]);
+            propertyBlock.SetVector(TouchPosition2ID, touchPositions[1]);
+            propertyBlock.SetVector(TouchPosition3ID, touchPositions[2]);
+            propertyBlock.SetVector(TouchPosition4ID, touchPositions[3]);
             propertyBlock.SetFloat(TouchRadiusID, touchRadius);
             propertyBlock.SetFloat(MaxDepressionID, maxDepression);
             
@@ -256,16 +296,16 @@ public class TouchDeformationController : MonoBehaviour
     /// 安全的属性访问辅助方法
     /// 避免访问已被销毁的Unity对象的属性
     /// </summary>
-    private bool TryGetTouchObjectPosition(out Vector3 position)
+    private bool TryGetTouchObjectPosition(GameObject touchObj, out Vector3 position)
     {
         position = Vector3.zero;
         
-        if (IsUnityObjectNull(touchObject))
+        if (IsUnityObjectNull(touchObj))
             return false;
             
         try
         {
-            position = touchObject.transform.position;
+            position = touchObj.transform.position;
             return true;
         }
         catch (System.Exception)
@@ -366,13 +406,38 @@ public class TouchDeformationController : MonoBehaviour
         if (IsBeingDestroyedOrNull())
             return;
         
-        // 在Scene视图中绘制触摸影响区域
-        Gizmos.color = new Color(1f, 0.5f, 0f, 0.5f);
-        Gizmos.DrawWireSphere(touchPosition, touchRadius);
-        
-        // 绘制强度指示器
-        Gizmos.color = new Color(1f, 0f, 0f, 0.8f);
-        Gizmos.DrawLine(touchPosition, touchPosition + Vector3.up * touchStrength * 0.2f);
+        // 绘制所有touchObjects的影响区域
+        if (touchObjects != null && touchObjects.Length > 0)
+        {
+            for (int i = 0; i < touchObjects.Length && i < 4; i++)
+            {
+                if (TryGetTouchObjectPosition(touchObjects[i], out Vector3 pos))
+                {
+                    // 在Scene视图中绘制触摸影响区域
+                    Gizmos.color = new Color(1f, 0.5f, 0f, 0.5f);
+                    Gizmos.DrawWireSphere(pos, touchRadius);
+                    
+                    // 绘制强度指示器
+                    Gizmos.color = new Color(1f, 0f, 0f, 0.8f);
+                    Gizmos.DrawLine(pos, pos + Vector3.up * (touchStrength * 0.2f));
+                    
+                    // 绘制编号标签
+                    #if UNITY_EDITOR
+                    UnityEditor.Handles.Label(pos + Vector3.up * 0.3f, $"Touch {i + 1}");
+                    #endif
+                }
+            }
+        }
+        else
+        {
+            // 绘制单个touchPosition的影响区域
+            Gizmos.color = new Color(1f, 0.5f, 0f, 0.5f);
+            Gizmos.DrawWireSphere(touchPosition, touchRadius);
+            
+            // 绘制强度指示器
+            Gizmos.color = new Color(1f, 0f, 0f, 0.8f);
+            Gizmos.DrawLine(touchPosition, touchPosition + Vector3.up * (touchStrength * 0.2f));
+        }
     }
     
     /// <summary>

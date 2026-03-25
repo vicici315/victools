@@ -13,21 +13,24 @@ public class Glass_carWindowGUI : ShaderGUI
     private MaterialProperty transparency;
     private MaterialProperty smoothness;
     private MaterialProperty specularStrength;
+    private MaterialProperty sceneBlurStrength; // Glass_MobileNew独有
     private MaterialProperty useNormalMap;
     private MaterialProperty bumpMap;
     private MaterialProperty bumpScale;
+    private MaterialProperty useRefraction; // Glass_MobileNew独有
+    private MaterialProperty refractionStrength; // Glass_MobileNew独有
     private MaterialProperty useReflection;
     private MaterialProperty sphericalReflectionMap;
     private MaterialProperty reflectionScale;
-    private MaterialProperty reflectionOffset;
+    private MaterialProperty reflectionOffset; // Glass_carWindow独有
     private MaterialProperty reflectionBlur;
     private MaterialProperty fresnelPower;
     private MaterialProperty fresnelBias;
     private MaterialProperty fresnelScale;
-    private MaterialProperty useFresnelRamp;
-    private MaterialProperty fresnelRampTexture;
-    private MaterialProperty fresnelRampRow;
-    private MaterialProperty fresnelRampIntensity;
+    private MaterialProperty useFresnelRamp; // Glass_carWindow独有
+    private MaterialProperty fresnelRampTexture; // Glass_carWindow独有
+    private MaterialProperty fresnelRampRow; // Glass_carWindow独有
+    private MaterialProperty fresnelRampIntensity; // Glass_carWindow独有
     private MaterialProperty cullMode;
 
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
@@ -43,9 +46,10 @@ public class Glass_carWindowGUI : ShaderGUI
         DrawGlassProperties();
         DrawSpecular();
         DrawDistortion();
+        DrawRefraction(); // Glass_MobileNew独有
         DrawReflection();
         DrawFresnel();
-        DrawFresnelRamp();
+        DrawFresnelRamp(); // Glass_carWindow独有
         DrawRenderSettings();
     }
 
@@ -55,21 +59,24 @@ public class Glass_carWindowGUI : ShaderGUI
         transparency = FindProperty("_Transparency", m_Properties);
         smoothness = FindProperty("_Smoothness", m_Properties);
         specularStrength = FindProperty("_SpecularStrength", m_Properties);
+        sceneBlurStrength = FindProperty("_SceneBlurStrength", m_Properties, false); // Glass_MobileNew独有
         useNormalMap = FindProperty("_UseNormalMap", m_Properties, false);
         bumpMap = FindProperty("_BumpMap", m_Properties);
         bumpScale = FindProperty("_BumpScale", m_Properties);
+        useRefraction = FindProperty("_UseRefraction", m_Properties, false); // Glass_MobileNew独有
+        refractionStrength = FindProperty("_RefractionStrength", m_Properties, false); // Glass_MobileNew独有
         useReflection = FindProperty("_UseReflection", m_Properties, false);
         sphericalReflectionMap = FindProperty("_SphericalReflectionMap", m_Properties);
         reflectionScale = FindProperty("_ReflectionScale", m_Properties);
-        reflectionOffset = FindProperty("_ReflectionOffset", m_Properties);
+        reflectionOffset = FindProperty("_ReflectionOffset", m_Properties, false); // Glass_carWindow独有
         reflectionBlur = FindProperty("_ReflectionBlur", m_Properties);
         fresnelPower = FindProperty("_FresnelPower", m_Properties);
         fresnelBias = FindProperty("_FresnelBias", m_Properties);
         fresnelScale = FindProperty("_FresnelScale", m_Properties);
-        useFresnelRamp = FindProperty("_UseFresnelRamp", m_Properties, false);
-        fresnelRampTexture = FindProperty("_FresnelRampTexture", m_Properties);
-        fresnelRampRow = FindProperty("_FresnelRampRow", m_Properties);
-        fresnelRampIntensity = FindProperty("_FresnelRampIntensity", m_Properties);
+        useFresnelRamp = FindProperty("_UseFresnelRamp", m_Properties, false); // Glass_carWindow独有
+        fresnelRampTexture = FindProperty("_FresnelRampTexture", m_Properties, false); // Glass_carWindow独有
+        fresnelRampRow = FindProperty("_FresnelRampRow", m_Properties, false); // Glass_carWindow独有
+        fresnelRampIntensity = FindProperty("_FresnelRampIntensity", m_Properties, false); // Glass_carWindow独有
         cullMode = FindProperty("_Cull", m_Properties);
     }
 
@@ -114,6 +121,12 @@ public class Glass_carWindowGUI : ShaderGUI
         GUILayout.Label("2 ▌高光 (Specular)", EditorStyles.boldLabel);
         m_MaterialEditor.RangeProperty(smoothness, "光滑度");
         m_MaterialEditor.RangeProperty(specularStrength, "高光强度");
+        
+        // Glass_MobileNew独有参数
+        if (sceneBlurStrength != null)
+        {
+            m_MaterialEditor.RangeProperty(sceneBlurStrength, "场景模糊强度");
+        }
     }
 
     private void DrawDistortion()
@@ -124,21 +137,83 @@ public class Glass_carWindowGUI : ShaderGUI
         {
             EditorGUI.indentLevel++;
             m_MaterialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), bumpMap);
+            
+            // 显示法线贴图的Tiling和Offset参数
+            if (bumpMap.textureValue != null)
+            {
+                EditorGUI.indentLevel++;
+                
+                // 获取材质
+                Material material = m_MaterialEditor.target as Material;
+                if (material != null)
+                {
+                    // 获取当前的Tiling和Offset
+                    Vector2 tiling = material.GetTextureScale("_BumpMap");
+                    Vector2 offset = material.GetTextureOffset("_BumpMap");
+                    
+                    EditorGUI.BeginChangeCheck();
+                    
+                    // 显示Tiling
+                    tiling = EditorGUILayout.Vector2Field("Tiling", tiling);
+                    
+                    // 显示Offset
+                    offset = EditorGUILayout.Vector2Field("Offset", offset);
+                    
+                    if (EditorGUI.EndChangeCheck())
+                    {
+                        // 记录Undo
+                        Undo.RecordObject(material, "Change Normal Map Tiling/Offset");
+                        
+                        // 应用修改
+                        material.SetTextureScale("_BumpMap", tiling);
+                        material.SetTextureOffset("_BumpMap", offset);
+                        
+                        EditorUtility.SetDirty(material);
+                    }
+                }
+                
+                EditorGUI.indentLevel--;
+            }
+            
             m_MaterialEditor.RangeProperty(bumpScale, "法线强度");
             EditorGUI.indentLevel--;
         }
     }
 
+    private void DrawRefraction()
+    {
+        // Glass_MobileNew独有的折射功能
+        if (useRefraction != null && refractionStrength != null)
+        {
+            m_MaterialEditor.ShaderProperty(useRefraction, "4 ▌使用折射");
+            
+            if (useRefraction.floatValue > 0.5f)
+            {
+                EditorGUI.indentLevel++;
+                m_MaterialEditor.RangeProperty(refractionStrength, "折射强度");
+                EditorGUI.indentLevel--;
+            }
+        }
+    }
+
     private void DrawReflection()
     {
-        m_MaterialEditor.ShaderProperty(useReflection, "4 ▌使用反射贴图");
+        // 根据是否有折射功能来决定标题编号
+        string sectionNumber = (useRefraction != null) ? "5" : "4";
+        m_MaterialEditor.ShaderProperty(useReflection, $"{sectionNumber} ▌使用反射贴图");
         
         if (useReflection.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
             m_MaterialEditor.TexturePropertySingleLine(new GUIContent("球形反射贴图"), sphericalReflectionMap);
             m_MaterialEditor.RangeProperty(reflectionScale, "反射强度");
-            m_MaterialEditor.RangeProperty(reflectionOffset, "反射偏移");
+            
+            // Glass_carWindow独有参数
+            if (reflectionOffset != null)
+            {
+                m_MaterialEditor.RangeProperty(reflectionOffset, "反射偏移");
+            }
+            
             m_MaterialEditor.RangeProperty(reflectionBlur, "最大反射模糊");
             EditorGUI.indentLevel--;
         }
@@ -146,32 +221,44 @@ public class Glass_carWindowGUI : ShaderGUI
 
     private void DrawFresnel()
     {
-        GUILayout.Label("5 ▌菲涅尔 (Fresnel)", EditorStyles.boldLabel);
-        m_MaterialEditor.RangeProperty(fresnelPower, "菲涅尔强度");
-        m_MaterialEditor.RangeProperty(fresnelBias, "菲涅尔偏移");
-        m_MaterialEditor.RangeProperty(fresnelScale, "菲涅尔缩放");
+        // 根据是否有折射功能来决定标题编号
+        string sectionNumber = (useRefraction != null) ? "6" : "5";
+        GUILayout.Label($"{sectionNumber} ▌菲涅尔 (Fresnel)", EditorStyles.boldLabel);
+        m_MaterialEditor.RangeProperty(fresnelPower, "全局强度");
+        m_MaterialEditor.RangeProperty(fresnelBias, "中心偏移");
+        m_MaterialEditor.RangeProperty(fresnelScale, "边缘缩放");
     }
 
     private void DrawFresnelRamp()
     {
-        m_MaterialEditor.ShaderProperty(useFresnelRamp, "6 ▌使用菲涅尔渐变贴图");
-        
-        if (useFresnelRamp.floatValue > 0.5f)
+        // Glass_carWindow独有的菲涅尔渐变贴图功能
+        if (useFresnelRamp != null && fresnelRampTexture != null && 
+            fresnelRampRow != null && fresnelRampIntensity != null)
         {
-            EditorGUI.indentLevel++;
+            // 根据是否有折射功能来决定标题编号
+            string sectionNumber = (useRefraction != null) ? "7" : "6";
+            m_MaterialEditor.ShaderProperty(useFresnelRamp, $"{sectionNumber} ▌使用菲涅尔渐变贴图");
             
-            // 添加说明文字
-            EditorGUILayout.HelpBox("• 横向(X轴)：从左到右对应菲涅尔从内到外（使用固定Fresnel计算）\n• 纵向(Y轴)：不同行代表不同的渐变效果\n• 渐变行选择值：0.01=底部，0.99=顶部\n• 固定Fresnel：不受菲涅尔参数影响，确保0-1完整范围", MessageType.Info);
-            
-            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("菲涅尔渐变贴图"), fresnelRampTexture);
-            m_MaterialEditor.RangeProperty(fresnelRampRow, "渐变行选择");
-            m_MaterialEditor.RangeProperty(fresnelRampIntensity, "渐变强度");
-            EditorGUI.indentLevel--;
+            if (useFresnelRamp.floatValue > 0.5f)
+            {
+                EditorGUI.indentLevel++;
+                
+                // 添加说明文字
+                EditorGUILayout.HelpBox("• 横向(X轴)：从左到右对应菲涅尔从内到外（使用固定Fresnel计算）\n• 纵向(Y轴)：不同行代表不同的渐变效果\n• 渐变行选择值：0.01=底部，0.99=顶部\n• 固定Fresnel：不受菲涅尔参数影响，确保0-1完整范围", MessageType.Info);
+                
+                m_MaterialEditor.TexturePropertySingleLine(new GUIContent("菲涅尔渐变贴图"), fresnelRampTexture);
+                m_MaterialEditor.RangeProperty(fresnelRampRow, "渐变行选择");
+                m_MaterialEditor.RangeProperty(fresnelRampIntensity, "渐变强度");
+                EditorGUI.indentLevel--;
+            }
         }
     }
 
     private void DrawRenderSettings()
     {
+        // 根据是否有折射功能来决定标题编号
+        // string sectionNumber = (useRefraction != null) ? "8" : "7";
+        // GUILayout.Label($"{sectionNumber} ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
         GUILayout.Label("7 ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
         m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
     }

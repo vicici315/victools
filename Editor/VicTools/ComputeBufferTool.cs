@@ -47,7 +47,7 @@ public class ComputeBufferTool : EditorWindow
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度
-        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.4");
+        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.5");
         window.minSize = new Vector2(400, 600);  // 最小宽度，最小高度
         window.maxSize = new Vector2(1000, 1200); // 最大宽度1200，最大高度1000
         
@@ -930,23 +930,40 @@ public class ComputeBufferTool : EditorWindow
             objectsUsingMaterial.AddRange(from renderer in renderers where renderer.sharedMaterials.Any(material => material == targetMaterial) select renderer.gameObject);
         }
 
-        // 更新选择的对象数量
-        _selectedObjectsCount = objectsUsingMaterial.Count;
-
-        if (objectsUsingMaterial.Count > 0)
+        // 检查是否按住Ctrl键（Windows）或Command键（Mac）
+        bool isAdditive = Event.current != null && (Event.current.control || Event.current.command);
+        
+        if (isAdditive && objectsUsingMaterial.Count > 0)
         {
-            // 选择所有使用该材质的对象
+            // 加选模式：将新找到的对象添加到当前选择中
+            var currentSelection = new List<Object>(Selection.objects);
+            foreach (var obj in objectsUsingMaterial)
+            {
+                if (!currentSelection.Contains(obj))
+                {
+                    currentSelection.Add(obj);
+                }
+            }
+            Selection.objects = currentSelection.ToArray();
+            _selectedObjectsCount = currentSelection.Count;
+            Debug.Log($"已加选 {objectsUsingMaterial.Count} 个使用材质 '{targetMaterial.name}' 的模型，当前共选中 {_selectedObjectsCount} 个对象");
+        }
+        else if (objectsUsingMaterial.Count > 0)
+        {
+            // 普通模式：替换当前选择
             Selection.objects = objectsUsingMaterial.ToArray();
-            Debug.Log($"已选择 {objectsUsingMaterial.Count} 个使用材质 '{targetMaterial.name}' 的模型");
+            _selectedObjectsCount = objectsUsingMaterial.Count;
+            Debug.Log($"已选择 {_selectedObjectsCount} 个使用材质 '{targetMaterial.name}' 的模型");
 
             // 如果只有一个对象，聚焦到该对象
-            if (objectsUsingMaterial.Count == 1)
+            if (_selectedObjectsCount == 1)
             {
                 EditorGUIUtility.PingObject(objectsUsingMaterial[0]);
             }
         }
         else
         {
+            _selectedObjectsCount = 0;
             Debug.LogWarning($"场景中没有找到使用材质 '{targetMaterial.name}' 的模型");
         }
     }

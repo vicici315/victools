@@ -28,7 +28,7 @@
 // PBR_Mobile5.8 优化高光亮度，移除specularColor削减；烘焙高光受实时阴影影响(暂时还原高光衰减)
 // PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比
 // PBR_Mobile6.0 完善所有效果，继承原始表现效果
-
+// PBR_Mobile6.1 添加变色通道控制，MRA贴图的a通道作为基础颜色蒙版
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -378,7 +378,7 @@ Shader "Custom/PBR_Mobile"
                 half4 mraSample;        
                 half metallic;          
                 half roughness;         
-                half aoValue;           
+                half aoValue;
                 half3 normalTS;         
                 half3 normalWS;         
                 half3 emissionMap;      
@@ -398,8 +398,8 @@ Shader "Custom/PBR_Mobile"
                 mat.uv = uv;
                 
                 mat.baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
-                mat.albedo = mat.baseColor.rgb * _BaseColor.rgb;
                 mat.mraSample = SAMPLE_TEXTURE2D(_MetallicGlossMap, sampler_MetallicGlossMap, uv);
+                mat.albedo = lerp(mat.baseColor.rgb, mat.baseColor.rgb * _BaseColor.rgb, mat.mraSample.a);
                 
                 mat.metallic = _Metallic;
                 mat.roughness = _Roughness;
@@ -413,7 +413,7 @@ Shader "Custom/PBR_Mobile"
                 #if defined(_USEMSAMAP) && defined(_USEAOMAP)
                     mat.aoValue = mat.mraSample.b;
                 #endif
-                
+
                 mat.normalWS = worldNormal;
                 mat.normalTS = half3(0, 0, 1);
                 
@@ -749,7 +749,7 @@ Shader "Custom/PBR_Mobile"
                         // Shadowmask模式：使用烘焙的阴影遮罩
                         half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
                         mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
-                    #elif defined(LIGHTMAP_SHADOW_MIXING)
+                    // #elif defined(LIGHTMAP_SHADOW_MIXING)
                         // Subtractive模式：从lightmap中减去主光源的贡献，然后添加实时光照
                         // 这样可以让动态物体正确接收实时阴影
                         // 注意：在Subtractive模式下，静态物体的阴影已经烘焙到lightmap中
@@ -825,8 +825,8 @@ Shader "Custom/PBR_Mobile"
                     // shadowAttenuation: 1.0 = 无阴影, 0.0 = 完全阴影
                     half shadowStrength = 1.0 - shadowAttenuation;
                     half3 shadowTint = lerp(half3(1, 1, 1), unity_ShadowColor.rgb, shadowStrength);
-                    
-                    ambient = lerp(ambient, ambient * 0.21, mat.metallic);
+                    // 烘焙时金属部分的渲染
+                    ambient = lerp(ambient, ambient*ambient*0.2 , mat.metallic);
                     // 将实时阴影应用到烘焙光照上（保持烘焙的所有细节）
                     ambient *= shadowTint;
                 #endif

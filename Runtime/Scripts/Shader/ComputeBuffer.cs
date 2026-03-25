@@ -171,8 +171,10 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Header("Performance Settings")]
     [Tooltip("最大支持的点光源数量")]
     [Range(1, 32)] public int maxLights = 8;
-    [Tooltip("更新频率 (Hz)")]
+    [Tooltip("点光源更新频率 (Hz)")]
     [Range(1, 60)] public int updateFrequency = 16;
+    [Tooltip("聚光灯更新频率 (Hz) - 独立控制聚光灯刷新率")]
+    [Range(1, 60)] public int spotLightUpdateFrequency = 30;
     
     
     // ● Compute Buffer相关变量
@@ -181,7 +183,9 @@ public class ComputeBufferLightManager : MonoBehaviour
     private CustomPointLight[] _lightsData;
     private CustomSpotLight[] _spotLightsData;
     private float _updateInterval;
+    private float _spotLightUpdateInterval;
     private float _lastUpdateTime;
+    private float _lastSpotLightUpdateTime;
     private int _currentLightCount = 0;
     private int _currentSpotLightCount = 0;
     
@@ -285,6 +289,7 @@ public class ComputeBufferLightManager : MonoBehaviour
     void InitializeComputeBuffer()
     {
         _updateInterval = 1f / updateFrequency;
+        _spotLightUpdateInterval = 1f / spotLightUpdateFrequency;
         _editorUpdateInterval = _updateInterval; // 编辑器模式下使用相同的更新间隔
         
         // ● 计算结构体大小，确保内存对齐
@@ -336,13 +341,20 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         // ● 计算自适应更新间隔
         float adaptiveUpdateInterval = CalculateAdaptiveUpdateInterval();
+        float adaptiveSpotLightInterval = CalculateAdaptiveSpotLightUpdateInterval();
         
-        // ● 频率限制更新Compute Buffer
+        // ● 频率限制更新点光源Compute Buffer
         if (Time.time - _lastUpdateTime >= adaptiveUpdateInterval)
         {
             UpdateLightsBuffer();
-            UpdateSpotLightsBuffer();
             _lastUpdateTime = Time.time;
+        }
+        
+        // ● 频率限制更新聚光灯Compute Buffer（独立刷新率）
+        if (Time.time - _lastSpotLightUpdateTime >= adaptiveSpotLightInterval)
+        {
+            UpdateSpotLightsBuffer();
+            _lastSpotLightUpdateTime = Time.time;
         }
         
         // ● 只在需要时检查参数变化（每5帧检查一次，减少性能开销）
@@ -988,6 +1000,69 @@ public class ComputeBufferLightManager : MonoBehaviour
         //     Debug.Log($"自适应更新间隔: {adaptiveUpdateInterval:F4}s (基础: {baseUpdateInterval:F4}s, 因子: {adaptiveFactor:F2})");
         // }
         // #endif
+        
+        return adaptiveUpdateInterval;
+    }
+    
+    // ● 计算聚光灯自适应更新间隔 - 独立于点光源的刷新率控制
+    // 聚光灯通常需要更高的刷新率以保证视觉效果的流畅性
+    private float CalculateAdaptiveSpotLightUpdateInterval()
+    {
+        Camera mainCamera = Camera.main;
+        
+        // ● 基础更新间隔（使用独立的聚光灯刷新率）
+        float baseUpdateInterval = _spotLightUpdateInterval;
+        
+        // ● 如果没有主相机，返回基础间隔
+        if (mainCamera == null)
+        {
+            return baseUpdateInterval;
+        }
+        
+        // ● 计算相机移动速度
+        Vector3 currentCameraPosition = mainCamera.transform.position;
+        Vector3 currentCameraVelocity = (currentCameraPosition - _lastCameraPosition) / Time.deltaTime;
+        float cameraSpeed = currentCameraVelocity.magnitude;
+        
+        // ● 计算相机加速度（速度变化率）
+        Vector3 cameraAcceleration = (currentCameraVelocity - _lastCameraVelocity) / Time.deltaTime;
+        float accelerationMagnitude = cameraAcceleration.magnitude;
+        
+        // ● 计算自适应因子
+        float adaptiveFactor = 1.0f;
+        
+        // ● 基于相机速度的调整（聚光灯对速度更敏感）
+        if (cameraSpeed > _cameraSpeedThreshold)
+        {
+            // 相机快速移动，提高更新频率（缩短间隔）
+            float speedRatio = cameraSpeed / _cameraSpeedThreshold;
+            adaptiveFactor *= Mathf.Clamp(1.0f / speedRatio, 0.2f, 1.0f); // 最小0.2，比点光源更激进
+        }
+        else if (cameraSpeed < _cameraSpeedThreshold * 0.1f)
+        {
+            // 相机几乎静止，可以稍微降低更新频率
+            adaptiveFactor *= 1.5f; // 比点光源降低得少
+        }
+        
+        // ● 基于相机加速度的调整
+        if (accelerationMagnitude > 5.0f)
+        {
+            // 相机正在加速或减速，提高更新频率
+            adaptiveFactor *= 0.6f; // 比点光源更激进
+        }
+        
+        // ● 基于活跃聚光灯数量的调整
+        if (_currentSpotLightCount > 1)
+        {
+            // 多个聚光灯时，稍微降低更新频率以节省性能
+            adaptiveFactor *= 1.1f;
+        }
+        
+        // ● 确保自适应因子在合理范围内
+        adaptiveFactor = Mathf.Clamp(adaptiveFactor, 0.2f, 2.0f);
+        
+        // ● 计算最终的自适应更新间隔
+        float adaptiveUpdateInterval = baseUpdateInterval * adaptiveFactor;
         
         return adaptiveUpdateInterval;
     }

@@ -1,5 +1,6 @@
 // 场景工具 v2.14 添加lighting材质(用于烘焙打灯时查看实时灯光效果)快速切换功能按钮
 // 场景工具 v2.16 添加【选择材质】按钮，用于选择场景中选中对象的材质球
+// 场景工具 v2.17 添加【↓】快速统一赋予最后选中对象的材质按钮；添加模型一键落地按钮
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -95,7 +96,7 @@ public class ResourceBoxFileItem
         private Vector2 _resourceBoxScrollPosition; // 资源箱滚动位置
         private string _searchText = ""; // 搜索文本
         private Material _selectedMaterial; // 用于存储用户手动选择的材质
-        // private Texture2D _lightDirIcon; // lightDir.png图标
+        private Texture2D _lightDirIcon; // lightDir.png图标
         private Texture2D _switchPBRMIcon; // lightDir.png图标
         private bool _setStatic = false;
         private bool _selPrefab = false;
@@ -120,7 +121,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.16]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.17]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -164,7 +165,7 @@ public class ResourceBoxFileItem
             UpdateSelectedObjectsInResourceBox();
             // 加载lightDir图标 - 使用Unity包路径（兼容开发环境和打包发布）
             // 方法1：直接使用包路径（推荐，因为package.json中的name是固定的）
-            // string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
+            string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
             string switchPBRMicon = "Packages/com.youdoo.victools/Editor/VicTools/switchPBRM.png";
             
             // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
@@ -178,7 +179,7 @@ public class ResourceBoxFileItem
             // #endif
             
             // 加载lightDir图标
-            // _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
+            _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
             _switchPBRMIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(switchPBRMicon);
             
             // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
@@ -568,6 +569,11 @@ public class ResourceBoxFileItem
             {
                 SelectObjectsMaterial();
             }
+            GUI.backgroundColor = Color.green;
+            if (GUILayout.Button(new GUIContent("↓", "选择多个模型，统一使用最后选择对象的材质球"), style.normalButton, GUILayout.Width(25)))
+            {
+                GetLastMat();
+            }
 
             EditorGUILayout.EndHorizontal();
 
@@ -576,6 +582,7 @@ public class ResourceBoxFileItem
 
             EditorGUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
             // 创建拖拽区域
+            GUI.backgroundColor = Color.black;
             var dropArea = GUILayoutUtility.GetRect(210, 50, GUILayout.ExpandWidth(true));
             // ★创建居中文本的GUIStyle
             var centeredHelpBox = new GUIStyle(EditorStyles.helpBox);
@@ -1145,6 +1152,14 @@ public class ResourceBoxFileItem
                 SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissScript, _selAct, _selMeshObj, _selParticleObj, _selParent);
             }
             GUI.backgroundColor = Color.white;
+            if (_lightDirIcon != null)
+            {
+                if (GUILayout.Button(new GUIContent(_lightDirIcon, "以碰撞体落地操作（Ctrl+点击：以模型底部落地）"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    bool useRaycast = Event.current.control;
+                    SceneTools.PlaceObjectOnGround(useRaycast);
+                }
+            }
             EditorGUILayout.EndHorizontal();
         }
 
@@ -1273,56 +1288,47 @@ public class ResourceBoxFileItem
         /// 自动获取当前场景中选择的物体的材质，并选择所有使用相同材质的物体
         private void SelectObjectsUsingSelectedObjectMaterial()
         {
-            // 检查场景中是否选择了物体
-            if (Selection.activeGameObject == null)
+            // 获取当前选中的GameObject
+            var selectedGameObjects = Selection.gameObjects;
+            
+            if (selectedGameObjects == null || selectedGameObjects.Length == 0)
             {
-                Debug.LogWarning("无法选择物体：场景中没有选择任何物体");
-                EditorUtility.DisplayDialog("选择错误", "请先在场景中选择一个物体，然后点击此按钮。", "确定");
+                Debug.LogWarning("请先在场景中选择一个对象");
+                EditorUtility.DisplayDialog("提示", "请先在场景中选择一个对象", "确定");
                 return;
             }
 
-            // 获取选择物体的Renderer组件
-            var selectedRenderer = Selection.activeGameObject.GetComponent<Renderer>();
-            if (!selectedRenderer)
+            // 获取第一个选中对象的第一个材质
+            var firstObject = selectedGameObjects[0];
+            var renderer = firstObject.GetComponent<Renderer>();
+            
+            if (renderer == null || renderer.sharedMaterials == null || renderer.sharedMaterials.Length == 0)
             {
-                Debug.LogWarning($"无法获取材质：选择的物体 '{Selection.activeGameObject.name}' 没有Renderer组件");
-                EditorUtility.DisplayDialog("选择错误", $"选择的物体 '{Selection.activeGameObject.name}' 没有Renderer组件，无法获取材质。", "确定");
+                Debug.LogWarning($"选中的对象 '{firstObject.name}' 没有Renderer组件或材质");
+                EditorUtility.DisplayDialog("提示", $"选中的对象 '{firstObject.name}' 没有Renderer组件或材质", "确定");
                 return;
             }
 
-            // 获取选择物体的材质
-            var selectedMaterials = selectedRenderer.sharedMaterials;
-            if (selectedMaterials == null || selectedMaterials.Length == 0)
+            var targetMaterial = renderer.sharedMaterials[0];
+            if (targetMaterial == null)
             {
-                Debug.LogWarning($"无法获取材质：选择的物体 '{Selection.activeGameObject.name}' 没有材质");
-                EditorUtility.DisplayDialog("选择错误", $"选择的物体 '{Selection.activeGameObject.name}' 没有材质。", "确定");
-                return;
-            }
-
-            // 使用第一个材质作为目标材质
-            var targetMaterial = selectedMaterials[0];
-            if (!targetMaterial)
-            {
-                Debug.LogWarning($"无法获取材质：选择的物体 '{Selection.activeGameObject.name}' 的材质为空");
-                EditorUtility.DisplayDialog("选择错误", $"选择的物体 '{Selection.activeGameObject.name}' 的材质为空。", "确定");
+                Debug.LogWarning($"选中的对象 '{firstObject.name}' 的第一个材质为空");
+                EditorUtility.DisplayDialog("提示", $"选中的对象 '{firstObject.name}' 的第一个材质为空", "确定");
                 return;
             }
 
             // 调用现有的材质选择方法
             SelectObjectsUsingMaterial(targetMaterial);
+            
             _selectedMaterial = targetMaterial;
-            // if (extractMaterial)
-            // {
-            //     selectedMaterial = targetMaterial; // 更新选中的材质
-            // }
         }
-        /// 查找并选择场景中使用指定材质的所有模型
-        /// <param name="targetMaterial">要查找的材质</param>
+
+        /// 自动获取当前场景中选择的物体的材质，并选择所有使用相同材质的物体
         private void SelectObjectsUsingMaterial(Material targetMaterial)
         {
             // 在方法开头声明变量，避免作用域冲突
             var standaloneWindow = Parent as WinScenesTools;
-            
+
             if (!targetMaterial)
             {
                 Debug.LogWarning("无法选择模型：材质为空");
@@ -1361,12 +1367,51 @@ public class ResourceBoxFileItem
                     }
                 }
             }
-            
+
+            // 检查是否按住Ctrl键（Windows）或Command键（Mac）
+            bool isAdditive = Event.current != null && (Event.current.control || Event.current.command);
+
+            int finalCount;
+
+            if (isAdditive && objectsUsingMaterial.Count > 0)
+            {
+                // 加选模式：将新找到的对象添加到当前选择中
+                var currentSelection = new List<Object>(Selection.objects);
+                foreach (var obj in objectsUsingMaterial)
+                {
+                    if (!currentSelection.Contains(obj))
+                    {
+                        currentSelection.Add(obj);
+                    }
+                }
+                Selection.objects = currentSelection.ToArray();
+                finalCount = currentSelection.Count;
+                Debug.Log($"已加选 {objectsUsingMaterial.Count} 个使用材质 '{targetMaterial.name}' 的模型，当前共选中 {finalCount} 个对象");
+            }
+            else if (objectsUsingMaterial.Count > 0)
+            {
+                // 普通模式：替换当前选择
+                Selection.objects = objectsUsingMaterial.ToArray();
+                finalCount = objectsUsingMaterial.Count;
+                Debug.Log($"已选择 {finalCount} 个使用材质 '{targetMaterial.name}' 的模型");
+
+                // 如果只有一个对象，聚焦到该对象
+                if (finalCount == 1)
+                {
+                    EditorGUIUtility.PingObject(objectsUsingMaterial[0]);
+                }
+            }
+            else
+            {
+                finalCount = 0;
+                Debug.LogWarning($"场景中没有找到使用材质 '{targetMaterial.name}' 的模型");
+            }
+
             // 更新选中数量 - 支持独立窗口和主窗口
             if (standaloneWindow)
             {
                 // 更新独立窗口的选中数量
-                standaloneWindow.StandaloneSelectedCount = objectsUsingMaterial.Count;
+                standaloneWindow.StandaloneSelectedCount = finalCount;
                 standaloneWindow.Repaint();
             }
             else
@@ -1375,26 +1420,9 @@ public class ResourceBoxFileItem
                 VicToolsWindow mainWindow = Parent as VicToolsWindow;
                 if (mainWindow)
                 {
-                    mainWindow.globalSelectedObjectsCount = objectsUsingMaterial.Count;
+                    mainWindow.globalSelectedObjectsCount = finalCount;
                     mainWindow.Repaint();
                 }
-            }
-
-            if (objectsUsingMaterial.Count > 0)
-            {
-                // 选择所有使用该材质的对象
-                Selection.objects = objectsUsingMaterial.ToArray();
-                Debug.Log($"已选择 {objectsUsingMaterial.Count} 个使用材质 '{targetMaterial.name}' 的模型");
-
-                // 如果只有一个对象，聚焦到该对象
-                if (objectsUsingMaterial.Count == 1)
-                {
-                    EditorGUIUtility.PingObject(objectsUsingMaterial[0]);
-                }
-            }
-            else
-            {
-                Debug.LogWarning($"场景中没有找到使用材质 '{targetMaterial.name}' 的模型");
             }
         }
 
@@ -1452,6 +1480,82 @@ public class ResourceBoxFileItem
             }
 
             Debug.Log($"已选择 {materials.Count} 个材质球");
+        }
+
+        /// 选择多个模型，统一使用最后选择对象的材质球
+        private void GetLastMat()
+        {
+            // 获取当前选中的所有GameObject
+            var selectedGameObjects = Selection.gameObjects;
+            
+            if (selectedGameObjects == null || selectedGameObjects.Length < 2)
+            {
+                Debug.LogWarning("请至少选择两个对象（最后选择的对象作为材质来源）");
+                EditorUtility.DisplayDialog("提示", "请至少选择两个对象\n最后选择的对象将作为材质来源", "确定");
+                return;
+            }
+
+            // 获取最后选择的对象（Selection.gameObjects中最后一个）
+            var lastSelectedObject = selectedGameObjects[selectedGameObjects.Length - 1];
+            
+            // 获取最后选择对象的Renderer组件
+            var lastRenderer = lastSelectedObject.GetComponent<Renderer>();
+            if (lastRenderer == null)
+            {
+                Debug.LogWarning($"最后选择的对象 '{lastSelectedObject.name}' 没有Renderer组件");
+                EditorUtility.DisplayDialog("提示", $"最后选择的对象 '{lastSelectedObject.name}' 没有Renderer组件", "确定");
+                return;
+            }
+
+            // 获取最后选择对象的材质
+            var sourceMaterials = lastRenderer.sharedMaterials;
+            if (sourceMaterials == null || sourceMaterials.Length == 0)
+            {
+                Debug.LogWarning($"最后选择的对象 '{lastSelectedObject.name}' 没有材质");
+                EditorUtility.DisplayDialog("提示", $"最后选择的对象 '{lastSelectedObject.name}' 没有材质", "确定");
+                return;
+            }
+
+            // 记录操作用于Undo
+            int appliedCount = 0;
+            
+            // 将材质应用到其他所有选中的对象
+            for (int i = 0; i < selectedGameObjects.Length - 1; i++)
+            {
+                var targetObject = selectedGameObjects[i];
+                var targetRenderer = targetObject.GetComponent<Renderer>();
+                
+                if (targetRenderer != null)
+                {
+                    // 记录Undo操作
+                    Undo.RecordObject(targetRenderer, "应用材质");
+                    
+                    // 应用材质
+                    targetRenderer.sharedMaterials = sourceMaterials;
+                    
+                    // 标记对象为已修改
+                    EditorUtility.SetDirty(targetRenderer);
+                    
+                    appliedCount++;
+                    Debug.Log($"已将材质应用到对象: {targetObject.name}");
+                }
+                else
+                {
+                    Debug.LogWarning($"对象 '{targetObject.name}' 没有Renderer组件，跳过");
+                }
+            }
+
+            if (appliedCount > 0)
+            {
+                string materialNames = string.Join(", ", sourceMaterials.Where(m => m != null).Select(m => m.name));
+                Debug.Log($"成功将 {appliedCount} 个对象的材质统一为: {materialNames}");
+                // EditorUtility.DisplayDialog("完成", $"已将 {appliedCount} 个对象的材质统一为:\n{materialNames}", "确定");
+            }
+            else
+            {
+                Debug.LogWarning("没有对象被应用材质");
+                EditorUtility.DisplayDialog("提示", "没有对象被应用材质\n请确保选中的对象有Renderer组件", "确定");
+            }
         }
 
         /// 将selectedMaterial材质放入资源箱
