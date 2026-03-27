@@ -1,5 +1,6 @@
 // ============================================================================
-// FPS5.0 — 与 Unity Stats 面板对齐的 FPS 统计 + CPU/GPU 帧耗时
+// FPS5.0 与 Unity Stats 面板对齐的 FPS 统计 + CPU/GPU 帧耗时
+// FPS5.1 文本显示使用TextMeshProUGUI
 // ----------------------------------------------------------------------------
 // FPS 算法：指数移动平均（EMA）对 1/unscaledDeltaTime 做平滑
 //   Unity Stats 面板内部使用 1/Time.smoothDeltaTime，
@@ -13,8 +14,9 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Unity.Profiling;
+using TMPro;
 
-[RequireComponent(typeof(Text))]
+[RequireComponent(typeof(TextMeshProUGUI))]
 public class FPS : MonoBehaviour
 {
     [Header("显示设置")]
@@ -41,7 +43,7 @@ public class FPS : MonoBehaviour
     public int  targetFrameRate = 60;
 
     // ---- 私有变量 ----
-    private Text  fpsText;
+    private TextMeshProUGUI fpsText;
     private float fpsEma;       // EMA 平滑后的 FPS 值
     private float displayFps;   // 上次刷新时锁定的显示值
     private float elapsed;      // 距上次刷新经过的时间
@@ -53,8 +55,8 @@ public class FPS : MonoBehaviour
 
     void Start()
     {
-        fpsText    = GetComponent<Text>();
-        fpsText.fontSize = 26;
+        fpsText    = GetComponent<TextMeshProUGUI>();
+        fpsText.fontSize = 30;
         fpsEma     = 0f;
         displayFps = 0f;
         elapsed    = 0f;

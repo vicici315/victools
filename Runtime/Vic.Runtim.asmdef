@@ -1,4 +1,7 @@
 {
 	"name": "Vic.Runtim",
-	"references":[ "UnityEngine.UI" ]
+	"references": [
+		"UnityEngine.UI",
+		"Unity.TextMeshPro"
+	]
 }
