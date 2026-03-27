@@ -176,7 +176,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Tooltip("聚光灯更新频率 (Hz) - 独立控制聚光灯刷新率")]
     [Range(1, 60)] public int spotLightUpdateFrequency = 30;
     
-    
     // ● Compute Buffer相关变量
     private GraphicsBuffer _lightsBuffer;
     private GraphicsBuffer _spotLightsBuffer;
@@ -241,7 +240,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     private Dictionary<Light, float> _lightDistanceCache = new Dictionary<Light, float>();
     private List<int> _activeLightIndices = new List<int>(); // 活跃光源索引缓存
     
-    
     // ● 单例模式，便于全局访问
     private static ComputeBufferLightManager _instance;
     public static ComputeBufferLightManager Instance => _instance;
@@ -280,7 +278,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
     }
 
-
     //● 初始化Compute Buffer系统
     //创建GraphicsBuffer并设置为全局Shader属性
     //所有使用Custom/PBR_Mobile Shader的材质都能访问这些光源数据
@@ -315,7 +312,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         Debug.Log($"Compute Buffer初始化完成: {maxLights}个点光源容量，{_spotLightAmount}个聚光灯容量");
         Debug.Log($"点光源结构体大小: {pointLightStride}字节，聚光灯结构体大小: {spotLightStride}字节");
     }
-
 
     //● 初始化材质控制器
     //自动查找或使用手动指定的材质列表
@@ -557,7 +553,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         _lastBounceTargetIntensity = _bounceTargetIntensity;
         _lastBounceAnimationSpeed = _bounceAnimationSpeed;
     }
-
 
     //● 更新点光源数据到Compute Buffer
     //收集场景中所有有效点光源数据，批量上传到GPU
@@ -1142,7 +1137,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         Debug.Log($"找到 {_controlledMaterials.Count} 个使用PBR_Mobile Shader的材质，已添加到Target Materials列表");
     }
 
-
     //● 批量更新所有受控材质的点光源参数
     //设置Shader关键字和浮点参数
     [ContextMenu("更新所有材质参数")]
@@ -1239,7 +1233,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         // 这个日志现在只在手动调用或参数实际变化时打印一次
     }
 
-
     //● 为单个材质设置参数
     //用于精确控制特定材质
 
@@ -1310,7 +1303,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         material.SetFloat(ShaderPropertyIDs.SpotTextureIntensity, _spotTextureIntensity);
     }
 
-
     //● 动态添加材质到控制列表
     //适用于运行时创建的材质
 
@@ -1323,7 +1315,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
     }
 
-
     //● 从控制列表移除材质
 
     public void RemoveMaterial(Material material)
@@ -1333,7 +1324,6 @@ public class ComputeBufferLightManager : MonoBehaviour
             _controlledMaterials.Remove(material);
         }
     }
-
 
     //● 获取当前控制的材质数量
 
@@ -1346,7 +1336,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     // ==========================================
     // ● 材质参数控制方法（带参数变更检测）
     // ==========================================
-
 
     //● 设置点光照开关状态
     public void SetPointLightEnabled(bool enabled)
@@ -1414,8 +1403,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         return _useSpotLight;
     }
 
-
-
     //● 设置点光照强度
     public void SetPointLightIntensity(float intensity)
     {
@@ -1432,7 +1419,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         return _pointLightIntensity;
     }
-
 
     //● 设置点光照范围倍增
     public void SetPointLightRangeMultiplier(float multiplier)
@@ -1451,7 +1437,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         return _lightRangeMultiplier;
     }
 
-
     //● 设置点光照衰减幂次
     public void SetPointLightFalloff(float falloff)
     {
@@ -1468,7 +1453,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         return _lightFalloff;
     }
-
 
     //● 批量设置所有材质参数
     public void SetAllMaterialParameters(bool usePointLight, float intensity, float rangeMultiplier, float falloff)
@@ -1646,7 +1630,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         return _spotTextureIntensity;
     }
 
-
     //● 重置所有材质到默认值
     [ContextMenu("重置材质到默认值")]
     public void ResetMaterialToDefaults()
@@ -1689,7 +1672,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     // ● 动态效果方法
     // ==========================================
 
-
     //● 渐变强度变化效果
     //使用协程实现平滑过渡
 
@@ -1729,7 +1711,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
     }
 
-
     //● 闪烁效果
     //使用Perlin噪声产生自然的闪烁
 
@@ -1737,7 +1718,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         StartCoroutine(FlickerCoroutine(minIntensity, maxIntensity, speed));
     }
-
 
     //● 停止闪烁效果
 
@@ -1767,7 +1747,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
     }
 
-
     // ==========================================
     // ● 回弹动画控制方法
     // ==========================================
@@ -1781,7 +1760,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         StartCoroutine(BounceAnimationCoroutine());
     }
 
-
     //● 停止回弹动画效果
     //停止当前正在运行的回弹动画协程
     //用法：当需要停止动画时调用此方法
@@ -1790,7 +1768,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         StopCoroutine("BounceAnimationCoroutine");
     }
-
 
     //● 设置回弹动画启用状态
     //通过代码控制回弹动画的启用/禁用状态
@@ -1899,7 +1876,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     // ● 原有的点光源管理方法
     // ==========================================
 
-
     //● 动态添加点光源 (运行时)
 
     public void AddPointLight(Light pointLight)
@@ -1914,7 +1890,6 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
     }
 
-
     //● 动态移除点光源 (运行时)
 
     public void RemovePointLight(Light pointLight)
@@ -1925,7 +1900,6 @@ public class ComputeBufferLightManager : MonoBehaviour
             UpdateLightsBuffer(); // 立即更新
         }
     }
-
 
     //● 获取当前有效光源数量
 
@@ -1940,7 +1914,6 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         return _currentSpotLightCount;
     }
-
 
     //● 自动收集场景中的所有点光源
 

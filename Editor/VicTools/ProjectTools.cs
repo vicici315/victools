@@ -1,4 +1,5 @@
 // 资源工具 v1.5 修改设置尺寸判断为大于等于设定值
+// 资源工具 v1.6 设置贴图尺寸时检查Override For Android选项并关闭
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic; // 用于List、HashSet等集合类型
@@ -96,7 +97,7 @@ namespace VicTools
         private readonly List<string> _processedMeshes = new List<string>();
         private Vector2 _processedMeshesScrollPosition;
 
-        public ProjectTools(string name, EditorWindow parent) : base("[资源工具 v1.5]", parent)
+        public ProjectTools(string name, EditorWindow parent) : base("[资源工具 v1.6]", parent)
         {
             // 初始化路径历史管理器，使用唯一的键名避免与场景工具冲突
             _searchHistoryManager = new SearchHistoryManager("ProjectTools_PathHistory", 10);
@@ -782,7 +783,17 @@ namespace VicTools
                     }
 
                     // 保存原始设置以便撤销
-                    _ = importer.GetPlatformTextureSettings("Android").overridden;
+                    var androidSettings = importer.GetPlatformTextureSettings("Android");
+                    var wasAndroidOverridden = androidSettings.overridden;
+                    
+                    // 优先检查并关闭 Android Override，确保后续参数设置作用于 Default 平台
+                    if (wasAndroidOverridden)
+                    {
+                        androidSettings.overridden = false;
+                        importer.SetPlatformTextureSettings(androidSettings);
+                        Debug.Log($"贴图 {assetPath}: 检测到 Override For Android 已开启，已关闭");
+                    }
+                    
                     var originalAlphaSource = importer.alphaSource;
                     var originalSrgb = importer.sRGBTexture;
                     var originalMipMap = importer.mipmapEnabled;
@@ -815,11 +826,6 @@ namespace VicTools
                         }
 
                     }
-                    // 关闭Override For Android设置
-                    TextureImporterPlatformSettings androidSettings = importer.GetPlatformTextureSettings("Android");
-                    androidSettings.overridden = false;
-                    importer.SetPlatformTextureSettings(androidSettings);
-
                     // 应用更改
                     EditorUtility.SetDirty(importer);
                     importer.SaveAndReimport();

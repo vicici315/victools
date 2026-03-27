@@ -4,11 +4,9 @@ using UnityEngine;
 using UnityEditor;
 #endif
 
-/// <summary>
 /// 圆锥形风力控制器
 /// 用于控制吹风机对毛发的影响效果
 /// 可以附加到吹风机模型上，自动设置圆锥形风力参数
-/// </summary>
 [DisallowMultipleComponent]
 [ExecuteAlways]
 public class WindConeController : MonoBehaviour
@@ -170,9 +168,7 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 初始化控制器
-    /// </summary>
     private void Initialize()
     {
         // 创建MaterialPropertyBlock用于高效设置材质属性
@@ -185,9 +181,7 @@ public float resumeAnimationSpeed = 1.0f;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 查找目标渲染器（使用缓存优化）
-    /// </summary>
     private void FindTargetRenderers()
     {
         if (affectAllFurRenderers)
@@ -216,9 +210,7 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 获取缓存的毛发渲染器（减少FindObjectsOfType调用）
-    /// </summary>
     private Renderer[] GetCachedFurRenderers()
     {
         // 检查是否需要刷新缓存
@@ -253,9 +245,7 @@ public float resumeAnimationSpeed = 1.0f;
         return cachedAllFurRenderers;
     }
     
-    /// <summary>
     /// 获取缓存的动画器（减少FindObjectsOfType调用）
-    /// </summary>
     private Animator[] GetCachedAnimators()
     {
         // 检查是否需要刷新缓存
@@ -277,25 +267,19 @@ public float resumeAnimationSpeed = 1.0f;
         return cachedAllAnimators;
     }
     
-    /// <summary>
     /// 标记需要刷新毛发渲染器缓存
-    /// </summary>
     public void MarkFurCacheDirty()
     {
         needRefreshFurCache = true;
     }
     
-    /// <summary>
     /// 标记需要刷新动画器缓存
-    /// </summary>
     public void MarkAnimatorCacheDirty()
     {
         needRefreshAnimatorCache = true;
     }
     
-    /// <summary>
     /// 更新圆锥形风力参数
-    /// </summary>
     private void UpdateWindConeParameters()
     {
         if (targetRenderers == null || targetRenderers.Length == 0)
@@ -391,9 +375,7 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 更新动画控制
-    /// </summary>
     private void UpdateAnimationControl()
     {
         detectionTimer -= Time.deltaTime;
@@ -405,9 +387,7 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 检测圆锥范围内的动画器（使用缓存优化）
-    /// </summary>
     private void DetectAnimatorsInCone()
     {
         // 计算当前圆锥位置和方向
@@ -495,9 +475,7 @@ public float resumeAnimationSpeed = 1.0f;
         #endif
     }
     
-    /// <summary>
     /// 获取最近动画器的距离（用于调试）
-    /// </summary>
     private float GetNearestAnimatorDistance(Animator[] animators, Vector3 conePosition)
     {
         if (animators == null || animators.Length == 0)
@@ -522,9 +500,7 @@ public float resumeAnimationSpeed = 1.0f;
         return foundValidAnimator ? minDistance : float.MaxValue;
     }
     
-    /// <summary>
     /// 检查点是否在圆锥范围内
-    /// </summary>
     private bool IsPointInCone(Vector3 point, Vector3 conePosition, Vector3 coneDirection, float coneAngle, float coneRange)
     {
         // 计算点到圆锥顶点的向量
@@ -543,9 +519,7 @@ public float resumeAnimationSpeed = 1.0f;
     }
     
     // ReSharper disable Unity.PerformanceAnalysis
-    /// <summary>
     /// 暂停动画器
-    /// </summary>
     private void PauseAnimator(Animator animator)
     {
         if (!animator)
@@ -568,9 +542,7 @@ public float resumeAnimationSpeed = 1.0f;
         #endif
     }
     
-    /// <summary>
     /// 恢复动画器
-    /// </summary>
     private void ResumeAnimator(Animator animator)
     {
         if (!animator)
@@ -595,27 +567,21 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 设置圆锥形风力启用状态
-    /// </summary>
     public void SetWindConeEnabled(bool enabled)
     {
         enableWindCone = enabled;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置圆锥位置偏移
-    /// </summary>
     public void SetPositionOffset(Vector3 offset)
     {
         positionOffset = offset;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置圆锥方向
-    /// </summary>
     public void SetConeDirection(Vector3 direction)
     {
         customDirection = direction.normalized;
@@ -623,54 +589,42 @@ public float resumeAnimationSpeed = 1.0f;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 使用物体前向方向作为圆锥方向
-    /// </summary>
     public void UseForwardDirection()
     {
         useForwardDirection = true;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置圆锥角度
-    /// </summary>
     public void SetConeAngle(float angle)
     {
         coneAngle = Mathf.Clamp(angle, 0.0f, 90.0f);
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置圆锥范围
-    /// </summary>
     public void SetConeRange(float range)
     {
         coneRange = Mathf.Max(0.1f, range);
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置圆锥强度
-    /// </summary>
     public void SetConeIntensity(float intensity)
     {
         coneIntensity = Mathf.Max(0.0f, intensity);
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置频率增强值
-    /// </summary>
     public void SetFrequencyBoost(float boost)
     {
         frequencyBoost = Mathf.Clamp(boost, 0.0f, 10.0f);
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 设置目标渲染器
-    /// </summary>
     public void SetTargetRenderer(Renderer renderer)
     {
         targetFurRenderer = renderer;
@@ -679,9 +633,7 @@ public float resumeAnimationSpeed = 1.0f;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 影响所有使用FurShell材质的渲染器
-    /// </summary>
     public void AffectAllFurRenderers()
     {
         affectAllFurRenderers = true;
@@ -690,18 +642,14 @@ public float resumeAnimationSpeed = 1.0f;
         UpdateWindConeParameters();
     }
     
-    /// <summary>
     /// 启用动画控制
-    /// </summary>
     public void EnableAnimationControl()
     {
         enableAnimationControl = true;
         detectionTimer = 0.0f; // 立即开始检测
     }
     
-    /// <summary>
     /// 禁用动画控制
-    /// </summary>
     public void DisableAnimationControl()
     {
         enableAnimationControl = false;
@@ -716,25 +664,19 @@ public float resumeAnimationSpeed = 1.0f;
         originalAnimationSpeeds.Clear();
     }
     
-    /// <summary>
     /// 设置检测半径
-    /// </summary>
     public void SetDetectionRadius(float radius)
     {
         detectionRadius = Mathf.Max(0.1f, radius);
     }
     
-    /// <summary>
     /// 设置检测间隔
-    /// </summary>
     public void SetDetectionInterval(float interval)
     {
         detectionInterval = Mathf.Clamp(interval, 0.1f, 2.0f);
     }
     
-    /// <summary>
     /// 设置动画暂停速度
-    /// </summary>
     public void SetPauseAnimationSpeed(float speed)
     {
         pauseAnimationSpeed = Mathf.Clamp(speed, 0.0f, 1.0f);
@@ -749,17 +691,13 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 设置恢复动画速度
-    /// </summary>
     public void SetResumeAnimationSpeed(float speed)
     {
         resumeAnimationSpeed = Mathf.Clamp(speed, 0.0f, 2.0f);
     }
     
-    /// <summary>
     /// 在Scene视图中绘制圆锥范围和检测范围
-    /// </summary>
     void OnDrawGizmosSelected()
     {
         // 计算圆锥位置和方向
@@ -814,9 +752,7 @@ public float resumeAnimationSpeed = 1.0f;
         Gizmos.color = originalColor;
     }
     
-    /// <summary>
     /// 绘制圆锥Gizmo
-    /// </summary>
     private void DrawConeGizmo(Vector3 position, Vector3 direction, float angle, float range)
     {
         float angleRad = Mathf.Deg2Rad * angle;
@@ -868,9 +804,7 @@ public float resumeAnimationSpeed = 1.0f;
         Gizmos.DrawWireSphere(position, coneRange);
     }
     
-    /// <summary>
     /// 在Scene视图中始终绘制检测范围（当选中物体时）
-    /// </summary>
     void OnDrawGizmos()
     {
         // 只在选中物体时绘制检测范围
@@ -899,9 +833,7 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// <summary>
     /// 验证参数
-    /// </summary>
     void OnValidate()
     {
         // 确保参数在合理范围内

@@ -171,7 +171,6 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // 包含 CommonMaterial.hlsl 以提供 LerpWhiteTo 函数定义，使用Shadows.hlsl中的会报错
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/CommonMaterial.hlsl"
 
-
             inline float3 GetViewDirectionOS(float3 posOS)
             {
                 float3 cameraOS = TransformWorldToObject(GetCameraPositionWS());
@@ -203,7 +202,6 @@ Shader "Custom/FurShell_Mobile_SingleC"
             #endif
                 return positionCS;
             }
-
 
             inline float rand(float2 seed)
             {
@@ -950,4 +948,3 @@ Shader "Custom/FurShell_Mobile_SingleC"
     }
     CustomEditor "FurShell_MobileGUI"
 }
-

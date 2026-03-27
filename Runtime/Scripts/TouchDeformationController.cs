@@ -1,9 +1,7 @@
 using UnityEngine;
 
-/// <summary>
 /// 触摸挤压效果控制器
 /// 将触摸参数（位置、半径、强度）传递给毛发着色器
-/// </summary>
 [DisallowMultipleComponent]
 [ExecuteAlways]
 public class TouchDeformationController : MonoBehaviour
@@ -25,7 +23,6 @@ public class TouchDeformationController : MonoBehaviour
     [Range(0.0f, 2.0f)]
     public float maxDepression = 0.8f;
 
-    
     private Renderer targetRenderer;
     private MaterialPropertyBlock propertyBlock;
     
@@ -78,10 +75,8 @@ public class TouchDeformationController : MonoBehaviour
     }
     
     #if UNITY_EDITOR
-    /// <summary>
     /// 编辑器初始化方法
     /// 避免在OnValidate中直接初始化导致的编辑器GUI问题
-    /// </summary>
     private void EditorInit()
     {
         // 安全检查：如果组件已被销毁，直接返回
@@ -176,9 +171,7 @@ public class TouchDeformationController : MonoBehaviour
         UpdateShaderProperties();
     }
     
-    /// <summary>
     /// 更新着色器属性
-    /// </summary>
     private void UpdateShaderProperties()
     {
         // 安全检查：如果组件本身已被销毁或正在被销毁，直接返回
@@ -261,9 +254,7 @@ public class TouchDeformationController : MonoBehaviour
         }
     }
     
-    /// <summary>
     /// 设置触摸位置（世界空间）
-    /// </summary>
     public void SetTouchPosition(Vector3 position)
     {
         // 安全检查：如果组件已被销毁或正在被销毁，直接返回
@@ -273,10 +264,8 @@ public class TouchDeformationController : MonoBehaviour
         UpdateShaderProperties();
     }
     
-    /// <summary>
     /// 安全的null检查辅助方法
     /// 正确处理UnityEngine.Object的销毁状态
-    /// </summary>
     private bool IsUnityObjectNull(UnityEngine.Object obj)
     {
         // 在Unity中，销毁的对象不是真正的null，但应该被视为null
@@ -284,18 +273,14 @@ public class TouchDeformationController : MonoBehaviour
         return obj == null || !obj;
     }
     
-    /// <summary>
     /// 检查组件是否正在被销毁或已销毁
-    /// </summary>
     private bool IsBeingDestroyedOrNull()
     {
         return isBeingDestroyed || IsUnityObjectNull(this);
     }
     
-    /// <summary>
     /// 安全的属性访问辅助方法
     /// 避免访问已被销毁的Unity对象的属性
-    /// </summary>
     private bool TryGetTouchObjectPosition(GameObject touchObj, out Vector3 position)
     {
         position = Vector3.zero;
@@ -315,9 +300,7 @@ public class TouchDeformationController : MonoBehaviour
         }
     }
     
-    /// <summary>
     /// 设置触摸半径
-    /// </summary>
     private void SetTouchRadius(float radius)
     {
         // 安全检查：如果组件已被销毁或正在被销毁，直接返回
@@ -327,9 +310,7 @@ public class TouchDeformationController : MonoBehaviour
         UpdateShaderProperties();
     }
     
-    /// <summary>
     /// 设置触摸强度
-    /// </summary>
     private void SetTouchStrength(float strength)
     {
         // 安全检查：如果组件已被销毁或正在被销毁，直接返回
@@ -339,9 +320,7 @@ public class TouchDeformationController : MonoBehaviour
         UpdateShaderProperties();
     }
     
-    /// <summary>
     /// 设置最大凹陷度
-    /// </summary>
     public void SetMaxDepression(float depression)
     {
         // 安全检查：如果组件已被销毁或正在被销毁，直接返回
@@ -349,9 +328,7 @@ public class TouchDeformationController : MonoBehaviour
         UpdateShaderProperties();
     }
     
-    /// <summary> 
     /// 处理触摸输入
-    /// </summary>
     public void HandleTouchInput()
     {
         if (IsBeingDestroyedOrNull()) return;
@@ -399,7 +376,6 @@ public class TouchDeformationController : MonoBehaviour
         }
     }
     
-    
     void OnDrawGizmosSelected()
     {
         // 安全检查：避免在对象被销毁时绘制Gizmos
@@ -440,10 +416,8 @@ public class TouchDeformationController : MonoBehaviour
         }
     }
     
-    /// <summary>
     /// 编辑器验证方法
     /// 在Inspector中修改值时调用
-    /// </summary>
     void OnValidate()
     {
         // 在编辑模式下，完全禁用OnValidate功能以避免MissingReferenceException

@@ -74,7 +74,6 @@ Shader "Custom/Glass_MobileNew"
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fog
             
-            
             // 基础功能开关（按性能影响排序）
             #pragma shader_feature_local _USENORMALMAP
             #pragma shader_feature_local _USEREFRACTION
@@ -252,7 +251,6 @@ Shader "Custom/Glass_MobileNew"
                 return OUT;
             }
 
-            
             half4 frag(Varyings IN) : SV_Target
             {
                 float3 normalWS = normalize(IN.normalWS);
@@ -341,7 +339,6 @@ Shader "Custom/Glass_MobileNew"
                 half specularLuminance = dot(specular, half3(0.299, 0.587, 0.114));
                 half3 enhancedSpecular = specular * _SpecularStrength;
                 
-
                 half3 finalColor = glassBaseColor;
                 // 优化：合并场景颜色和高光增强，减少一次加法运算
                 finalColor += enhancedSpecular;

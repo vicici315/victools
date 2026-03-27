@@ -29,6 +29,7 @@
 // PBR_Mobile5.9 优化高光算法，高光随模型边缘形状挤压还原真实高光效果；增加金属反射对比
 // PBR_Mobile6.0 完善所有效果，继承原始表现效果
 // PBR_Mobile6.1 添加变色通道控制，MRA贴图的a通道作为基础颜色蒙版
+// PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -273,20 +274,15 @@ Shader "Custom/PBR_Mobile"
             {
                 float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
-                float3 positionWS : TEXCOORD1;
-                float3 normalWS : TEXCOORD2;
-                float3 viewDirWS : TEXCOORD3;
-                half fogFactor : TEXCOORD4;
-                #ifdef _USEVERSHADOW
-                half shadowAttenuation : TEXCOORD5; 
-                half NdotL : TEXCOORD7; 
-                #endif
+                float4 positionWS_shadow : TEXCOORD1; // xyz = positionWS, w = shadowAttenuation (or 1.0)
+                float4 normalWS_ndotl : TEXCOORD2;    // xyz = normalWS, w = NdotL (or 0.0)
+                float4 viewDirWS_fog : TEXCOORD3;     // xyz = viewDirWS, w = fogFactor
                 
                 #if defined(_NORMALMAP)
-                float4 tangentWS : TEXCOORD6; 
+                float4 tangentWS : TEXCOORD4; 
                 #endif
                 
-                DECLARE_LIGHTMAP_OR_SH(lightmapUV, vertexSH, 8);
+                DECLARE_LIGHTMAP_OR_SH(lightmapUV, vertexSH, 5);
             };
 
             #if USE_FAST_MATH
@@ -664,54 +660,44 @@ Shader "Custom/PBR_Mobile"
                 VertexNormalInputs normalInput = GetVertexNormalInputs(input.normalOS, input.tangentOS);
                 
                 output.positionCS = vertexInput.positionCS;
-                output.positionWS = vertexInput.positionWS;
+                output.positionWS_shadow = float4(vertexInput.positionWS, 1.0);
                 output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
-                output.normalWS = normalInput.normalWS;
-                output.viewDirWS = GetCameraPositionWS() - vertexInput.positionWS;
-                output.fogFactor = ComputeFogFactor(vertexInput.positionCS.z);
+                output.normalWS_ndotl = float4(normalInput.normalWS, 0.0);
+                output.viewDirWS_fog = float4(GetCameraPositionWS() - vertexInput.positionWS, ComputeFogFactor(vertexInput.positionCS.z));
                 #ifdef _USEVERSHADOW
                     half NdotL = 0;
                     half shadowAttenuation = 1.0;
                     
-                    // 当 _ShadowScale >= 0.9 时，跳过阴影计算以优化性能
                     if (_ShadowScale < 0.88)
                     {
-                        float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS);
+                        float4 shadowCoord = TransformWorldToShadowCoord(output.positionWS_shadow.xyz);
                         shadowCoord.w = max(shadowCoord.w, 0.001);
                         Light mainLight = GetMainLight(shadowCoord);
                         
-                        // 处理ShadowMask（用于Shadowmask模式）
-                        #if defined(SHADOWS_SHADOWMASK) && defined(LIGHTMAP_ON)
-                            half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
-                            mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
-                        #endif
+                        // Shadowmask 不在 vert 中采样（vs_4_0 顶点纹理采样指令受限）
+                        // 改为在 frag 中融合 Shadowmask 结果
                         
-                        NdotL = dot(output.normalWS, mainLight.direction);
+                        NdotL = dot(output.normalWS_ndotl.xyz, mainLight.direction);
                         half baseShadow = mainLight.shadowAttenuation;
                         
-                        // 使用Lambert光照作为遮罩来平滑阴影锯齿（预计算）
                         half lambertMask = saturate(NdotL * 0.5 + 0.5);
-                        // 检测阴影边界并应用Lambert遮罩平滑
                         half shadowEdge = saturate((baseShadow - 0.3) / 0.4);
                         half smoothedShadow = lerp(baseShadow, lambertMask, shadowEdge * (1.0 - shadowEdge) * shadowEdge);
                         
-                        // 应用阴影强度控制
                         shadowAttenuation = lerp(smoothedShadow, 1.0, _ShadowScale);
                         
-                        // 背面剔除优化 - 使用与Half Lambert协调的范围
                         half backfaceRange = lerp(0.0, 1.0, lambertMask);
                         half backfaceFactor = smoothstep(-backfaceRange, backfaceRange, NdotL);
                         shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                     }
                     else
                     {
-                        // 获取主光源方向用于后续计算，但不计算阴影
                         Light mainLight = GetMainLight();
-                        NdotL = dot(output.normalWS, mainLight.direction);
+                        NdotL = dot(output.normalWS_ndotl.xyz, mainLight.direction);
                     }
                     
-                    output.NdotL = NdotL;
-                    output.shadowAttenuation = shadowAttenuation;
+                    output.positionWS_shadow.w = shadowAttenuation;
+                    output.normalWS_ndotl.w = NdotL;
                 #endif
                 
                 #if defined(_NORMALMAP)
@@ -719,7 +705,7 @@ Shader "Custom/PBR_Mobile"
                 #endif
                 
                 OUTPUT_LIGHTMAP_UV(input.lightmapUV, unity_LightmapST, output.lightmapUV);
-                OUTPUT_SH(output.normalWS.xyz, output.vertexSH);
+                OUTPUT_SH(output.normalWS_ndotl.xyz, output.vertexSH);
                 
                 return output;
             }
@@ -727,11 +713,11 @@ Shader "Custom/PBR_Mobile"
             half4 frag(Varyings input) : SV_Target
             {
                 
-                MaterialProperties mat = InitMaterialProperties(input.uv, normalize(input.normalWS));
+                MaterialProperties mat = InitMaterialProperties(input.uv, normalize(input.normalWS_ndotl.xyz));
                 
                 ApplyNormalMap(mat, input);
                 
-                half3 viewDirWS = normalize(input.viewDirWS);
+                half3 viewDirWS = normalize(input.viewDirWS_fog.xyz);
 
                 half3 diffuse = 0;
                 half3 specular = 0;
@@ -739,7 +725,7 @@ Shader "Custom/PBR_Mobile"
                 half3 lightColor = 0;
                 half3 lightDir = 0;
                 
-                float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);
+                float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS_shadow.xyz);
                 Light mainLight = GetMainLight(shadowCoord);
                 lightDir = mainLight.direction;
                 
@@ -758,12 +744,18 @@ Shader "Custom/PBR_Mobile"
                 #endif 
                 
                 #ifdef _USEVERSHADOW
-                    // 顶点阴影模式 - 直接使用顶点着色器预计算的阴影值（已包含完整算法）
+                    // 顶点阴影模式 - 使用顶点着色器预计算的阴影值
+                    // 同时融合 frag 中的 Shadowmask 结果（mainLight.shadowAttenuation 已被上面的 Shadowmask 修改）
                     if (_ShadowScale < 0.88)
                     {
-                        shadowAttenuation = input.shadowAttenuation;
+                        half vertShadow = input.positionWS_shadow.w;
+                        #if defined(SHADOWS_SHADOWMASK) && defined(LIGHTMAP_ON)
+                            // Shadowmask 模式：取顶点阴影和 Shadowmask 的较暗值
+                            shadowAttenuation = min(vertShadow, mainLight.shadowAttenuation);
+                        #else
+                            shadowAttenuation = vertShadow;
+                        #endif
                     }
-                    // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #else
                     // 像素阴影模式
                     if (_ShadowScale < 0.88)
@@ -868,13 +860,13 @@ Shader "Custom/PBR_Mobile"
                 
                 half3 pointLightContrib = 0;
                 #ifdef _USEPOINTLIGHT
-                    pointLightContrib = CalculateCustomPointLights(input.positionWS, mat, viewDirWS);
+                    pointLightContrib = CalculateCustomPointLights(input.positionWS_shadow.xyz, mat, viewDirWS);
                 #endif
                 finalColor += pointLightContrib;
                 
                 half3 spotLightContrib = 0;
                 #ifdef _USESPOTLIGHT
-                    spotLightContrib = CalculateCustomSpotLights(input.positionWS, mat, viewDirWS);
+                    spotLightContrib = CalculateCustomSpotLights(input.positionWS_shadow.xyz, mat, viewDirWS);
                 #endif
                 finalColor += spotLightContrib;
                 
@@ -892,7 +884,7 @@ Shader "Custom/PBR_Mobile"
                 
                 finalColor += emissionContrib;
                 
-                finalColor = MixFog(finalColor, input.fogFactor);
+                finalColor = MixFog(finalColor, input.viewDirWS_fog.w);
                 
                 #ifdef _DEBUGNORMAL
                     #if defined(_NORMALMAP)

@@ -348,7 +348,6 @@ Shader "Custom/PBR_Mobile_Trans"
                 return reflectionColor * _ReflectionStrength * reflectionIntensity;
             }
 
-
             half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 lightColor, half shadowAttenuation)
             {
                 // 计算光线的反射向量

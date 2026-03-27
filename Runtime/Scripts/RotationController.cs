@@ -2,10 +2,8 @@ using UnityEngine;
 
 namespace Game.Utils
 {
-    /// <summary>
     /// 旋转控制器组件
     /// 用于让挂载的对象沿着指定轴以指定速度旋转
-    /// </summary>
     public class RotationController : MonoBehaviour
     {
         [Header("旋转设置")]
@@ -45,36 +43,28 @@ namespace Game.Utils
         private float currentRotationSpeed;
         private Quaternion targetRotation;
         
-        /// <summary>
         /// 获取或设置旋转速度
-        /// </summary>
         public float RotationSpeed
         {
             get => rotationSpeed;
             set => rotationSpeed = value;
         }
         
-        /// <summary>
         /// 获取或设置旋转轴
-        /// </summary>
         public Vector3 RotationAxis
         {
             get => rotationAxis;
             set => rotationAxis = value.normalized;
         }
         
-        /// <summary>
         /// 获取或设置是否启用旋转
-        /// </summary>
         public bool IsRotationEnabled
         {
             get => isRotationEnabled;
             set => isRotationEnabled = value;
         }
         
-        /// <summary>
         /// 获取当前是否正在旋转
-        /// </summary>
         public bool IsRotating => isRotating;
 
         private void Awake()
@@ -108,9 +98,7 @@ namespace Game.Utils
             }
         }
 
-        /// <summary>
         /// 执行直接旋转
-        /// </summary>
         private void PerformDirectRotation()
         {
             float rotationAmount = currentRotationSpeed * Time.deltaTime;
@@ -125,9 +113,7 @@ namespace Game.Utils
             }
         }
 
-        /// <summary>
         /// 执行平滑旋转
-        /// </summary>
         private void PerformSmoothRotation()
         {
             float rotationAmount = currentRotationSpeed * Time.deltaTime;
@@ -145,34 +131,26 @@ namespace Game.Utils
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, smoothRotationSpeed * Time.deltaTime);
         }
 
-        /// <summary>
         /// 开始旋转
-        /// </summary>
         public void StartRotation()
         {
             isRotating = true;
             isRotationEnabled = true;
         }
 
-        /// <summary>
         /// 停止旋转
-        /// </summary>
         public void StopRotation()
         {
             isRotating = false;
         }
 
-        /// <summary>
         /// 暂停旋转（保持启用状态但停止旋转）
-        /// </summary>
         public void PauseRotation()
         {
             isRotating = false;
         }
 
-        /// <summary>
         /// 恢复旋转
-        /// </summary>
         public void ResumeRotation()
         {
             if (isRotationEnabled)
@@ -181,9 +159,7 @@ namespace Game.Utils
             }
         }
 
-        /// <summary>
         /// 切换旋转状态
-        /// </summary>
         public void ToggleRotation()
         {
             if (isRotating)
@@ -196,18 +172,14 @@ namespace Game.Utils
             }
         }
 
-        /// <summary>
         /// 设置旋转轴
-        /// </summary>
         /// <param name="axis">旋转轴向量</param>
         public void SetRotationAxis(Vector3 axis)
         {
             rotationAxis = axis.normalized;
         }
 
-        /// <summary>
         /// 设置旋转轴（通过枚举）
-        /// </summary>
         /// <param name="axis">预设的轴方向</param>
         public void SetRotationAxis(Axis axis)
         {
@@ -234,26 +206,20 @@ namespace Game.Utils
             }
         }
 
-        /// <summary>
         /// 重置旋转到初始状态
-        /// </summary>
         public void ResetRotation()
         {
             transform.rotation = Quaternion.identity;
         }
 
-        /// <summary>
         /// 设置旋转到指定角度
-        /// </summary>
         /// <param name="eulerAngles">欧拉角度</param>
         public void SetRotation(Vector3 eulerAngles)
         {
             transform.rotation = Quaternion.Euler(eulerAngles);
         }
 
-        /// <summary>
         /// 设置旋转到指定四元数
-        /// </summary>
         /// <param name="rotation">四元数旋转</param>
         public void SetRotation(Quaternion rotation)
         {
@@ -261,9 +227,7 @@ namespace Game.Utils
         }
     }
 
-    /// <summary>
     /// 轴方向枚举
-    /// </summary>
     public enum Axis
     {
         X,

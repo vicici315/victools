@@ -44,7 +44,6 @@ Shader "Custom/Outline"
             ZTest LEqual
             Offset -1, -1 // Offset 0, -1将深度值向前推，确保描边在深度测试中优先于Decal
 
-            
             HLSLPROGRAM
             
             #pragma vertex vert

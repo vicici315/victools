@@ -183,7 +183,6 @@ Shader "Custom/Glass_carWindow"
             }
             #endif
 
-
             // 玻璃高光 - 使用Phong反射模型（基于反射向量）
             // specular = lightColor * pow(saturate(dot(reflectDir, viewDir)), gloss)
             // 添加能量守恒：smoothness越高，高光越聚焦，能量越集中

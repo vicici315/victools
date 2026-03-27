@@ -3,9 +3,7 @@ using UnityEngine;
 
 namespace Vic.Runtime
 {
-    /// <summary>
     /// 自发光闪烁组件 - 运行时自动控制材质的自发光强度闪烁
-    /// </summary>
     [ExecuteAlways]
     public class EmissionFlicker : MonoBehaviour
     {
@@ -137,9 +135,7 @@ namespace Vic.Runtime
             }
         }
         
-        /// <summary>
         /// 重置基础强度为当前材质的值
-        /// </summary>
         public void ResetBaseIntensity()
         {
             if (targetMaterial != null && hasEmissionScale)
