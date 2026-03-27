@@ -15,8 +15,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错。
 
-- Tree_Trans 1.0 植被透明材质，虚拟光照，ShadowMap  只带投影。
-
+- Tree_Trans1.0 植被透明材质，虚拟光照，ShadowMap  只带投影。
 
 
 
