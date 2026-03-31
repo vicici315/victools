@@ -1,4 +1,5 @@
 // Glass_MobileNew.v2.0 完善折射效果，玻璃固有色受Fresnel控制，优化高光效果
+// Glass_MobileNew.v2.1 优化折射上下偏移问题，在顶点阶段计算物体中心的屏幕坐标，保证透视除法与 screenPos 一致
 Shader "Custom/Glass_MobileNew"
 {
     Properties
@@ -175,6 +176,7 @@ Shader "Custom/Glass_MobileNew"
                 float3 bitangentWS : TEXCOORD5;
                 float fogFactor : TEXCOORD6;
                 float3 positionWS : TEXCOORD7;
+                float4 objectCenterScreenPos : TEXCOORD8; // 物体中心裁剪空间坐标，用于径向扭曲
             };
 
             CBUFFER_START(UnityPerMaterial)
@@ -242,6 +244,11 @@ Shader "Custom/Glass_MobileNew"
                 OUT.screenPos = ComputeScreenPos(OUT.positionCS);
                 OUT.uv = TRANSFORM_TEX(IN.uv, _BumpMap);
                 
+                // 在顶点阶段计算物体中心的屏幕坐标，保证透视除法与 screenPos 一致
+                float3 objectCenterWS = TransformObjectToWorld(float3(0, 0, 0));
+                float4 objectCenterCS = TransformWorldToHClip(objectCenterWS);
+                OUT.objectCenterScreenPos = ComputeScreenPos(objectCenterCS);
+                
                 OUT.normalWS = normalInput.normalWS;
                 OUT.tangentWS = normalInput.tangentWS;
                 OUT.bitangentWS = normalInput.bitangentWS;
@@ -278,10 +285,8 @@ Shader "Custom/Glass_MobileNew"
                 float2 finalScreenUV = screenUV;
                 
                 #ifdef _USEREFRACTION
-                    // 计算物体中心（对象空间原点）在屏幕空间的位置
-                    float3 objectCenterWS = TransformObjectToWorld(float3(0, 0, 0));
-                    float4 objectCenterCS = TransformWorldToHClip(objectCenterWS);
-                    float2 objectCenterScreenUV = objectCenterCS.xy / objectCenterCS.w * 0.5 + 0.5; // 正确转换到屏幕UV坐标
+                    // 使用顶点阶段传入的物体中心屏幕坐标，透视除法与 screenUV 完全一致
+                    float2 objectCenterScreenUV = IN.objectCenterScreenPos.xy / IN.objectCenterScreenPos.w;
                     
                     // 计算从中心到当前像素的方向向量
                     float2 directionFromCenter = screenUV - objectCenterScreenUV;
@@ -294,8 +299,8 @@ Shader "Custom/Glass_MobileNew"
                     
                     // 以中心为轴心进行径向扭曲缩放
                     // _RefractionStrength > 0: 向外扩张（放大效果）
-                    // _RefractionStrength < 0: 向内收缩（缩小效果）
-                    float refractionScale = 1.0 + _RefractionStrength * (fresnel + 0.3) * (1.0 + normalDistortion);
+                    // 优化折射效果
+                    float refractionScale = 1.0 + _RefractionStrength * (fresnel*1.2-0.8) * (1.0 + normalDistortion);
                     float2 scaledDirection = directionFromCenter * refractionScale;
                     finalScreenUV = objectCenterScreenUV + scaledDirection;
                     

@@ -11,7 +11,7 @@ Shader "Custom/Tree_Trans"
         _Cutoff ("Alpha Cutoff", Range(0.0, 1.0)) = 0.541
 
         [Header(Lighting)]
-        _HalfLambert ("Half Lambert", Range(0, 1)) = 0.41
+        _HalfLambert ("Half Lambert", Range(0, 1)) = 0.0
 
         [Header(Virtual Shadow)]
         _ShadowColor ("Shadow Color", Color) = (0.15, 0.25, 0.05, 1)
@@ -20,13 +20,14 @@ Shader "Custom/Tree_Trans"
         _VirtualShadowBias ("Shadow Bias", Range(-1, 1)) = -0.63
         _ShadowBrightness ("Shadow Brightness", Range(0, 1)) = 1.0
         [Normal] _ShadowNormalMap ("Shadow Normal Map", 2D) = "bump" {}
-        _ShadowNormalScale ("Shadow Normal Scale", Range(0, 5)) = 2.29
+        _ShadowNormalScale ("Shadow Normal Scale", Range(0, 5)) = 2.5
 
         [Header(Ramp Gradient)]
         [NoScaleOffset] _RampMap ("Ramp Map (Left=Bottom, Right=Top)", 2D) = "white" {}
         _RampStrength ("Ramp Strength", Range(0, 1)) = 0.784
-        _RampRow ("Ramp Row Select", Range(0.01, 0.99)) = 0.706
-        _RampHeight ("Ramp Height Range", Range(0.1, 20)) = 5.4
+        _RampRow ("Ramp Row Select", Range(0.01, 0.99)) = 0.1
+        _RampOffset ("Ramp Bottom Offset", Range(-10, 10)) = 0.0
+        _RampHeight ("Ramp Height Range", Range(0.1, 20)) = 0.5
 
         [Header(Wind)]
         [Toggle(_WIND)] _UseWind ("Enable Wind", Float) = 1
@@ -100,6 +101,7 @@ Shader "Custom/Tree_Trans"
                 half   _RampStrength;
                 half   _RampRow;
                 half   _RampHeight;
+                half   _RampOffset;
             CBUFFER_END
 
             struct Attributes
@@ -168,7 +170,8 @@ Shader "Custom/Tree_Trans"
                 output.tangentWS = half4(TransformObjectToWorldDir(input.tangentOS.xyz), sign);
                 output.uv        = TRANSFORM_TEX(input.uv, _BaseMap);
                 output.fogFactor = ComputeFogFactor(vertexInput.positionCS.z);
-                output.heightGradient = saturate(posOS.y / _RampHeight);
+                // _RampOffset 偏移渐变底部起始高度：正值让渐变从更高处开始，负值从更低处开�?
+                output.heightGradient = saturate((posOS.y - _RampOffset) / _RampHeight);
                 return output;
             }
 
@@ -264,6 +267,7 @@ Shader "Custom/Tree_Trans"
                 half   _RampStrength;
                 half   _RampRow;
                 half   _RampHeight;
+                half   _RampOffset;
             CBUFFER_END
 
             struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
@@ -352,6 +356,7 @@ Shader "Custom/Tree_Trans"
                 half   _RampStrength;
                 half   _RampRow;
                 half   _RampHeight;
+                half   _RampOffset;
             CBUFFER_END
 
             struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
