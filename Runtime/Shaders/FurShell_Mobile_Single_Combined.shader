@@ -3,6 +3,7 @@
 //FurShell 1.3 添加UseVerShadow选项，可以使用像素阴影，优化Fresnel暗部过暗问题
 //FurShell 1.4 修改边缘光范围加大；修改变量_BaseColor；修改默认值
 //FurShell 1.5 支持多点触摸
+//FurShell 1.6 添加法线纹理控制毛发簇效果
 Shader "Custom/FurShell_Mobile_SingleC"
 {
     Properties
@@ -15,6 +16,8 @@ Shader "Custom/FurShell_Mobile_SingleC"
         [ToggleUI] _UseAlpha ("Use Alpha", Float) = 1.0
         _BaseMap("Base Map", 2D) = "white" {}
         _FurMap("Fur Map", 2D) = "white" {}
+        _NoiseMap("Noise Map (Curl Bend)", 2D) = "gray" {}
+        _NoiseBendStrength("Noise Bend Strength", Range(0.0, 5.0)) = 0.3
 //        _NormalMap("Fur Map", 2D) = "white" {}
         [IntRange] _ShellAmount("Shell Amount", Range(1, 20)) = 8
         _FurLength("Fur Length", Range(0.0, 0.02)) = 0.004
@@ -112,6 +115,8 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // 纹理和采样器（不在 CBUFFER 中）
             TEXTURE2D(_FurMap); 
             SAMPLER(sampler_FurMap);
+            TEXTURE2D(_NoiseMap);
+            SAMPLER(sampler_NoiseMap);
             // ============================================
             // 包含 Param.hlsl（SRP Batcher 兼容）
             // ============================================
@@ -135,8 +140,8 @@ Shader "Custom/FurShell_Mobile_SingleC"
             // float _RimLightIntensity;
 
             float4 _FurMap_ST;
-            // float4 _NormalMap_ST;
-            // float _NormalScale;
+            float4 _NoiseMap_ST;
+            float _NoiseBendStrength;
             
             // 触摸挤压参数（支持最多4个触摸点）
             float4 _TouchPosition;   // xyz: 世界空间位置, w: 强度
@@ -578,6 +583,20 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 // - windMove: 风移动向量
                 // 归一化得到最终的毛发生长方向
                 float3 shellDir = normalize(normalWS + move + windMove);
+                
+                // 6. Noise弯曲偏移：采样noise纹理，对各层毛发施加横向偏移，模拟毛发弯曲
+                // noise.rg 映射到 [-1,1]，乘以层因子使外层弯曲更明显
+                // _NoiseMap_ST.zw 作为纹理游走速度，值为0时跳过游走计算
+                float2 noiseScrollSpeed = _NoiseMap_ST.zw;
+                float2 noiseUV = uv * _NoiseMap_ST.xy; // 只应用Tiling，Offset用于游走速度
+                if (abs(noiseScrollSpeed.x) > 0.0001 || abs(noiseScrollSpeed.y) > 0.0001)
+                    noiseUV += noiseScrollSpeed * _Time.y;
+                float2 noiseSample = SAMPLE_TEXTURE2D_LOD(_NoiseMap, sampler_NoiseMap, noiseUV, 1).rg;
+                float2 bendOffset = (noiseSample * 2.0 - 1.0) * _NoiseBendStrength * moveFactor;
+                // 将偏移量投影到切线平面（沿法线的垂直平面），避免穿入模型
+                float3 tangentWS = normalize(cross(normalWS, float3(0, 1, 0.0001)));
+                float3 bitangentWS = normalize(cross(normalWS, tangentWS));
+                shellDir = normalize(shellDir + tangentWS * bendOffset.x + bitangentWS * bendOffset.y);
                 float BaseMapA = SAMPLE_TEXTURE2D_LOD(_BaseMap, sampler_BaseMap, uv, 1).a;
                 if (index > 0)
                 {

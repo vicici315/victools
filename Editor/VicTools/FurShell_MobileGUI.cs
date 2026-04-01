@@ -17,6 +17,8 @@ public class FurShell_MobileGUI : ShaderGUI
     private MaterialProperty useAlpha;
     private MaterialProperty baseMap;
     private MaterialProperty furMap;
+    private MaterialProperty noiseMap;
+    private MaterialProperty noiseBendStrength;
     private MaterialProperty shellAmount;
     private MaterialProperty furLength;
     private MaterialProperty alphaOffset;
@@ -80,6 +82,8 @@ public class FurShell_MobileGUI : ShaderGUI
         useAlpha = FindProperty("_UseAlpha", m_Properties, false);
         baseMap = FindProperty("_BaseMap", m_Properties, false);
         furMap = FindProperty("_FurMap", m_Properties, false);
+        noiseMap = FindProperty("_NoiseMap", m_Properties, false);
+        noiseBendStrength = FindProperty("_NoiseBendStrength", m_Properties, false);
         shellAmount = FindProperty("_ShellAmount", m_Properties, false);
         furLength = FindProperty("_FurLength", m_Properties, false);
         alphaOffset = FindProperty("_AlphaOffset", m_Properties, false);
@@ -159,6 +163,13 @@ public class FurShell_MobileGUI : ShaderGUI
         }
         if (furMap != null)
             m_MaterialEditor.TexturePropertySingleLine(new GUIContent("毛发贴图"), furMap);
+        if (noiseMap != null)
+        {
+            m_MaterialEditor.TextureProperty(noiseMap, "弯曲Noise贴图");
+            EditorGUILayout.HelpBox("RG通道控制毛发横向弯曲偏移，推荐使用低频noise纹理", MessageType.Info);
+        }
+        if (noiseBendStrength != null)
+            m_MaterialEditor.ShaderProperty(noiseBendStrength, "弯曲强度");
     }
 
     private void DrawFurProperties()
@@ -181,6 +192,9 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawWindSettings()
     {
+        
+        EditorGUILayout.HelpBox("xyz: 基础移动方向, w: 移动因子指数", MessageType.Info);
+        m_MaterialEditor.ShaderProperty(baseMove, "基础移动");
         EditorGUILayout.LabelField("风力设置", EditorStyles.boldLabel);
         
         if (useWind != null)
@@ -189,11 +203,6 @@ public class FurShell_MobileGUI : ShaderGUI
         if (useWind != null && useWind.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
-            if (baseMove != null)
-            {
-                EditorGUILayout.HelpBox("xyz: 基础移动方向, w: 移动因子指数", MessageType.Info);
-                m_MaterialEditor.ShaderProperty(baseMove, "基础移动");
-            }
             if (windFreq != null)
             {
                 EditorGUILayout.HelpBox("xyz: 风频率向量, 值越大变化越快", MessageType.Info);
@@ -497,9 +506,8 @@ public class FurShell_MobileGUI : ShaderGUI
         AppendVector(sb, "_WindConeDirection", windConeDirection, material);
         AppendFloat(sb, "_WindConeAngle", windConeAngle, material);
         AppendFloat(sb, "_WindConeRange", windConeRange, material);
-        AppendFloat(sb, "_WindConeFrequencyBoost", windConeFrequencyBoost, material, false);
-        
-        // 保存贴图的Tiling和Offset
+        AppendFloat(sb, "_WindConeFrequencyBoost", windConeFrequencyBoost, material);
+        AppendFloat(sb, "_NoiseBendStrength", noiseBendStrength, material, false);
         if (material.HasProperty("_BaseMap"))
         {
             Vector2 scale = material.GetTextureScale("_BaseMap");
@@ -508,6 +516,16 @@ public class FurShell_MobileGUI : ShaderGUI
             sb.Append($"  \"_BaseMap_Scale\": [{scale.x}, {scale.y}],");
             sb.AppendLine();
             sb.Append($"  \"_BaseMap_Offset\": [{offset.x}, {offset.y}]");
+        }
+        
+        if (material.HasProperty("_NoiseMap"))
+        {
+            Vector2 scale = material.GetTextureScale("_NoiseMap");
+            Vector2 offset = material.GetTextureOffset("_NoiseMap");
+            sb.AppendLine(",");
+            sb.Append($"  \"_NoiseMap_Scale\": [{scale.x}, {scale.y}],");
+            sb.AppendLine();
+            sb.Append($"  \"_NoiseMap_Offset\": [{offset.x}, {offset.y}]");
         }
         
         sb.AppendLine();
@@ -591,6 +609,22 @@ public class FurShell_MobileGUI : ShaderGUI
                             float.Parse(values[1].Trim())
                         );
                         material.SetTextureOffset("_BaseMap", offset);
+                    }
+                    else if (key == "_NoiseMap_Scale" && values.Length >= 2)
+                    {
+                        Vector2 scale = new Vector2(
+                            float.Parse(values[0].Trim()),
+                            float.Parse(values[1].Trim())
+                        );
+                        material.SetTextureScale("_NoiseMap", scale);
+                    }
+                    else if (key == "_NoiseMap_Offset" && values.Length >= 2)
+                    {
+                        Vector2 offset = new Vector2(
+                            float.Parse(values[0].Trim()),
+                            float.Parse(values[1].Trim())
+                        );
+                        material.SetTextureOffset("_NoiseMap", offset);
                     }
                     else if (values.Length == 4)
                     {
@@ -723,12 +757,18 @@ public class FurShell_MobileGUI : ShaderGUI
         SetFloat(windConeAngle, material, 30.0f);
         SetFloat(windConeRange, material, 5.0f);
         SetFloat(windConeFrequencyBoost, material, 2.0f);
+        SetFloat(noiseBendStrength, material, 0.3f);
         
         // 重置贴图的Tiling和Offset
         if (material.HasProperty("_BaseMap"))
         {
             material.SetTextureScale("_BaseMap", Vector2.one);
             material.SetTextureOffset("_BaseMap", Vector2.zero);
+        }
+        if (material.HasProperty("_NoiseMap"))
+        {
+            material.SetTextureScale("_NoiseMap", Vector2.one);
+            material.SetTextureOffset("_NoiseMap", Vector2.zero);
         }
         
         // 更新需要的keywords
