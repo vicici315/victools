@@ -8,7 +8,7 @@ namespace VicTools
     {
         private ShaderMaterialFinder _analyzer;
         /// 显示性能分析器窗口的菜单项
-        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[材质查找器]", false, 3003)]
+        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[材质查找器]", false, 1803)]
         public static void ShowWindow()
         {
             var window = GetWindow<WinShaderMaterialFinder>("材质查找");

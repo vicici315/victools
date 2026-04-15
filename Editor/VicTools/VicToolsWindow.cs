@@ -10,7 +10,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.8.2";
+        public const string Ver = "2.8.3";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
@@ -629,7 +629,7 @@ namespace VicTools
         private const int MaxWindowRestoreAttempts = 3; // 最大恢复尝试次数
 
         // 多种菜单项入口，提供更灵活的使用方式
-        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ]", false, 3000)]
+        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ]", false, 1800)]
         public static void ShowWindow()
         {
             var window = (VicToolsWindow)GetWindow(typeof(VicToolsWindow));
@@ -1424,6 +1424,10 @@ namespace VicTools
             {
                 ShowMenuDropdown();
             }
+            if (GUILayout.Button(new GUIContent("Tools", "其它工具菜单"), GUILayout.Width(44), GUILayout.Height(14)))
+            {
+                ShowToolsDropdown();
+            }
             GUILayout.FlexibleSpace(); // 将按钮推到右侧
             
             // 帮助按钮
@@ -1618,6 +1622,17 @@ namespace VicTools
         private void ShowHelpDialog()
         {
             VicToolsHelpWindow.ShowWindow();
+        }
+
+        /// 显示 Tools 下拉菜单
+        private void ShowToolsDropdown()
+        {
+            GenericMenu menu = new GenericMenu();
+            menu.AddItem(new GUIContent("OutlineTool: SmoothedNormal"), false, () =>
+            {
+                EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal");
+            });
+            menu.ShowAsContext();
         }
 
         /// 显示Menu下拉菜单

@@ -9,9 +9,43 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.8.3
+
+- OutlineOffset_URP v1.1 添加轮廓外描边材质。
+
+- SmoothMeshNormal v1.2 轮廓描边辅助工具用于圆滑mesh法线，添加<覆盖>选项，支持生成平滑网格直接覆盖原有Mesh。
+
+  ![image-20260409120239525](./README.assets/image-20260409120239525.png)![image-20260409155344198](./README.assets/image-20260409155344198.png)
+
+  ![image-20260409142034847](./README.assets/image-20260409142034847.png)
+
+- FurShell v1.6 添加法线纹理控制毛发簇效果。
+
+  ![image-20260409115809043](./README.assets/image-20260409115809043.png)
+
+- Glass_MobileNew.v2.2 添加法线控制顶点位移、uv游走实现水柱流动效果。
+
+  ![shuizhuA1](./README.assets/shuizhuA2.gif)
+
+- Glass_MobileNew.v2.3 添加顶点颜色R通道作为顶点位移蒙版，约束水流起始位置的偏移。
+
+  ![shuizhuA2.3](./README.assets/shuizhuA2.3.gif)
+
+- BlendShapeAnimator v1.3 - 支持 SkinnedMeshRenderer 和普通 MeshFilter 模型的顶点追踪
+
+  
+
+- PBR_Mobile v6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色。
+
+  ![image-20260409115948288](./README.assets/image-20260409115948288.png)
+
+- PBR_Mobile_Trans.shader 继承PBR_Mobile6.3 添加“禁用主光颜色”选项。
+
+
+
 ### 版本 2.8.2
 
-- 【资源工具 v1.6】 设置贴图尺寸时检查Override For Android选项并关闭。
+- 【资源工具 v1.6】 设置贴图尺寸时检查 Override For Android 选项并关闭。
 
 - PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错。
 

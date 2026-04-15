@@ -30,11 +30,13 @@
 // PBR_Mobile6.0 完善所有效果，继承原始表现效果
 // PBR_Mobile6.1 添加变色通道控制，MRA贴图的a通道作为基础颜色蒙版
 // PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错
+// PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
 Shader "Custom/PBR_Mobile"
 {
     Properties
     {
         [Toggle(_DISABLEENVIRONMENT)] _DisableEnvironment ("Disable Environment", Float) = 0
+        [Toggle(_DISABLELIGHTCOLOR)] _DisableLightColor ("Disable LightColor", Float) = 0
         [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 0
         [Header(1  (Base Properties))]
         [Space(5)]
@@ -160,6 +162,7 @@ Shader "Custom/PBR_Mobile"
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _PREVIEWAO
             #pragma shader_feature_local _DISABLEENVIRONMENT
+            #pragma shader_feature_local _DISABLELIGHTCOLOR
             
             #pragma shader_feature_local _DEBUGNORMAL
             
@@ -791,10 +794,17 @@ Shader "Custom/PBR_Mobile"
                 #endif
                 
                 #ifndef _DISABLEENVIRONMENT
-                // 计算实时光照（两个分支都需要，提取到外面避免重复）
+                // _DISABLELIGHTCOLOR：漫反射去色只保留强度，高光保留原始颜色影响金属度
+                #ifdef _DISABLELIGHTCOLOR
+                half lightIntensity1 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                lightColor = half3(lightIntensity1, lightIntensity1, lightIntensity1) * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = lightColor;
+                #endif
                 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
-                specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
+                specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, specularLightColor1, shadowAttenuation);
                 
                 // 计算环境光（烘焙光照或球谐光照）
                 half3 bakedGI = 0;
@@ -834,7 +844,12 @@ Shader "Custom/PBR_Mobile"
                 #endif
                 #else
                 // 禁用环境光时，只使用实时光照
+                #ifdef _DISABLELIGHTCOLOR
+                half lightIntensity2 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                lightColor = half3(lightIntensity2, lightIntensity2, lightIntensity2) * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                #endif
                 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
                 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
                 

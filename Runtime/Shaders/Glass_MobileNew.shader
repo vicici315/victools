@@ -1,5 +1,8 @@
 // Glass_MobileNew.v2.0 完善折射效果，玻璃固有色受Fresnel控制，优化高光效果
 // Glass_MobileNew.v2.1 优化折射上下偏移问题，在顶点阶段计算物体中心的屏幕坐标，保证透视除法与 screenPos 一致
+// Glass_MobileNew.v2.2 添加法线控制顶点位移、uv游走实现水柱流动效果
+// Glass_MobileNew.v2.3 添加顶点颜色R通道作为顶点位移蒙版，约束水流起始位置的偏移
+// Glass_MobileNew.v2.4 修复法线控制顶点位移跳动问题
 Shader "Custom/Glass_MobileNew"
 {
     Properties
@@ -20,6 +23,10 @@ Shader "Custom/Glass_MobileNew"
         [Toggle(_USENORMALMAP)] _UseNormalMap ("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0, 2)) = 0.6
+        // 顶点变形：用法线贴图的 RG 通道驱动顶点沿法线方向偏移
+        // Normal Map 的 Offset XY 同时作为 UV 游走速度（值为0时不做动画）
+        [Toggle(_USEVERTEXDEFORM)] _UseVertexDeform ("Vertex Deform", Float) = 0
+        _VertexDeformStrength ("Deform Strength", Range(0, 1.5)) = 0.2
         
         [Header(Refraction)]
         [Space(5)]
@@ -50,7 +57,7 @@ Shader "Custom/Glass_MobileNew"
         {
             "RenderPipeline"="UniversalPipeline"
             "RenderType"="Transparent"
-            "Queue"="Transparent+100"  // 使用更高的队列值确保正确排序
+            "Queue"="Transparent+10"  // 使用更高的队列值确保正确排序
             "IgnoreProjector"="True"   // 忽略投影器，避免阴影投射
             "DisableBatching"="False"
         }
@@ -79,6 +86,7 @@ Shader "Custom/Glass_MobileNew"
             #pragma shader_feature_local _USENORMALMAP
             #pragma shader_feature_local _USEREFRACTION
             #pragma shader_feature_local _USEREFLECTION
+            #pragma shader_feature_local _USEVERTEXDEFORM
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -163,6 +171,7 @@ Shader "Custom/Glass_MobileNew"
                 float3 normalOS : NORMAL;
                 float4 tangentOS : TANGENT;
                 float2 uv : TEXCOORD0;
+                float4 vertexColor : COLOR;  // 顶点色，R 通道作为顶点偏移蒙版
             };
 
             struct Varyings
@@ -194,6 +203,7 @@ Shader "Custom/Glass_MobileNew"
                 half _FresnelScale;
                 half _ShadowStrength;
                 float4 _BumpMap_ST;
+                half _VertexDeformStrength;
             CBUFFER_END
 
             // ● FastSpecular函数 - 来自Glass_carWindow.shader的优化高光计算
@@ -236,6 +246,30 @@ Shader "Custom/Glass_MobileNew"
             {
                 Varyings OUT;
                 
+                // ── 顶点变形：采样法线贴图 RG 通道，沿法线方向偏移顶点 ──
+                #ifdef _USEVERTEXDEFORM
+                    // 计算游走速度（Offset.xy）
+                    float2 deformScrollSpeed = _BumpMap_ST.zw;
+
+                    // 用世界空间 XZ 坐标替代 UV 采样，解决 UV 接缝处顶点断裂问题
+                    // 相同世界位置的顶点无论 UV 如何都采样到相同值
+                    float3 worldPosForDeform = TransformObjectToWorld(IN.positionOS.xyz);
+                    float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
+                    // Offset.xy 作为流动速度，同时控制 UV 滚动和顶点抖动频率
+                    // 速度越大，UV 滚动越快，顶点抖动频率也越高
+                    float scrollSpeed = length(deformScrollSpeed);
+                    if (scrollSpeed > 0.0001)
+                        deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+
+                    float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
+                    float3 normalTS = UnpackNormal(normalTex);
+                    // 用 normalTS.z（切线空间法线 Z 分量）作为高度值
+                    // normalTS.z 范围 [0,1]，平坦区域接近 1，凹凸区域偏离 1
+                    // (1 - normalTS.z) 将平坦区域映射为 0，凹凸越强值越大，天然连续无跳变
+                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * IN.vertexColor.r;
+                    IN.positionOS.xyz += normalize(IN.normalOS) * deformAmount;
+                #endif
+
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(IN.positionOS.xyz);
                 VertexNormalInputs normalInput = GetVertexNormalInputs(IN.normalOS, IN.tangentOS);
                 
@@ -267,7 +301,12 @@ Shader "Custom/Glass_MobileNew"
                 // 法线贴图采样（可选）
                 half3 normalTS = half3(0, 0, 1); // 默认法线
                 #ifdef _USENORMALMAP
-                    normalTS = UnpackNormal(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv));
+                    // Offset.xy 作为游走速度，值为0时静止
+                    float2 scrollSpeed = _BumpMap_ST.zw;
+                    float2 bumpUV = IN.uv;
+                    if (abs(scrollSpeed.x) > 0.0001 || abs(scrollSpeed.y) > 0.0001)
+                        bumpUV += scrollSpeed * _Time.y;
+                    normalTS = UnpackNormal(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, bumpUV));
                     normalTS.xy *= _BumpScale;
                     normalTS.z = sqrt(1 - saturate(dot(normalTS.xy, normalTS.xy)));
                     
@@ -374,48 +413,74 @@ Shader "Custom/Glass_MobileNew"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            
+
+            #pragma shader_feature_local _USEVERTEXDEFORM
+
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            
+
             float3 _LightDirection;
-            float4 _ShadowBias; 
-            
-            struct Attributes 
-            { 
+            float4 _ShadowBias;
+
+            TEXTURE2D(_BumpMap);
+            SAMPLER(sampler_BumpMap);
+
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BumpMap_ST;
+                half _VertexDeformStrength;
+            CBUFFER_END
+
+            struct Attributes
+            {
                 float4 positionOS : POSITION;
-                float3 normalOS : NORMAL;
+                float3 normalOS   : NORMAL;
+                float2 uv         : TEXCOORD0;
+                float4 vertexColor : COLOR;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
-            
-            struct Varyings 
-            { 
+
+            struct Varyings
+            {
                 float4 positionCS : SV_POSITION;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
-            
+
             Varyings vert(Attributes input)
             {
                 Varyings output;
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
-                
+
+                // ── 与 ForwardLit Pass 相同的顶点位移 ──
+                #ifdef _USEVERTEXDEFORM
+                    float2 deformScrollSpeed = _BumpMap_ST.zw;
+                    float3 worldPosForDeform = TransformObjectToWorld(input.positionOS.xyz);
+                    float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
+                    float scrollSpeed = length(deformScrollSpeed);
+                    if (scrollSpeed > 0.0001)
+                        deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+                    float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
+                    float3 normalTS = UnpackNormal(normalTex);
+                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * input.vertexColor.r;
+                    input.positionOS.xyz += normalize(input.normalOS) * deformAmount;
+                #endif
+
                 float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);
-                float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
-                
+                float3 normalWS   = TransformObjectToWorldNormal(input.normalOS);
+
                 positionWS = positionWS + _LightDirection * _ShadowBias.x;
-                
+
                 output.positionCS = TransformWorldToHClip(positionWS);
-                
+
                 #if UNITY_REVERSED_Z
                     output.positionCS.z = min(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
                 #else
                     output.positionCS.z = max(output.positionCS.z, output.positionCS.w * UNITY_NEAR_CLIP_VALUE);
                 #endif
-                
+
                 return output;
             }
-            
-            half4 frag(Varyings input) : SV_Target 
+
+            half4 frag(Varyings input) : SV_Target
             {
                 UNITY_SETUP_INSTANCE_ID(input);
                 return 0;

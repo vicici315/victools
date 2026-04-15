@@ -1,4 +1,5 @@
-Shader "Custom/Outline"
+// Outline 1.0 带描边粗细差异效果
+Shader "Custom/Outline/Outline"
 {
     Properties
     {

@@ -43,7 +43,7 @@ public class ComputeBufferTool : EditorWindow
 
     // `false` 表示这是一个普通的菜单项，点击后会执行对应的方法，如果设为 `true`，则表示这是一个验证函数，用于检查菜单项是否可用（启用/禁用状态）
     // 优先级 100，默认优先级是1000，设为100会让菜单项显示在较靠前的位置
-    [MenuItem("Tools/VicTools(YD)/Compute Buffer Tool", false, 2000)]
+    [MenuItem("Tools/VicTools(YD)/CustomLightTool: ComputeBufferTool", false, 2000)]
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度

@@ -582,7 +582,7 @@ public class ResourceBoxFileItem
 
             EditorGUILayout.BeginHorizontal(GUILayout.ExpandWidth(true));
             // 创建拖拽区域
-            GUI.backgroundColor = Color.black;
+            GUI.backgroundColor = Color.magenta;
             var dropArea = GUILayoutUtility.GetRect(210, 50, GUILayout.ExpandWidth(true));
             // ★创建居中文本的GUIStyle
             var centeredHelpBox = new GUIStyle(EditorStyles.helpBox);
@@ -638,7 +638,6 @@ public class ResourceBoxFileItem
                 default:
                     throw new ArgumentOutOfRangeException();
             }
-            GUI.backgroundColor = Color.magenta;
             var cusButtonStyle = new GUIStyle(style.normalButton)
             {
                 fixedHeight = 46

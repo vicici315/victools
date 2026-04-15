@@ -12,7 +12,7 @@ namespace VicTools
         public int StandaloneSelectedCount { get; set; }
         
         /// 显示场景工具独立窗口的菜单项
-        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[场景工具]", false, 3002)]
+        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[场景工具]", false, 1802)]
         public static void ShowWindow()
         {
             var window = GetWindow<WinScenesTools>("场景工具");

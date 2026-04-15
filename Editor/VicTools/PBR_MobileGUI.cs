@@ -1,6 +1,8 @@
 // 5.8 添加存档读档功能按钮
 // 6.0 支持多个材质球读档
 // 6.1 添加【统一阴影】按钮，用于统一设置“自身阴影衰减”值，使场景中阴影保持一致的明暗度（包括PBR_Mobile_Trans）
+// 6.3 优化读档，按属性值精确同步 shader 关键字（两个 shader 共用，仅同步各自实际声明的关键字）
+
 using UnityEngine;
 using UnityEditor;
 
@@ -12,6 +14,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     // 缓存属性
     private MaterialProperty disableEnvironment;
+    private MaterialProperty disableLightColor;
     private MaterialProperty useVerShadow;
     private MaterialProperty baseColor;
     private MaterialProperty baseMap;
@@ -114,6 +117,7 @@ public class PBR_MobileGUI : ShaderGUI
     private void FindProperties()
     {
         disableEnvironment = FindProperty("_DisableEnvironment", m_Properties, false);
+        disableLightColor = FindProperty("_DisableLightColor", m_Properties, false);
         useVerShadow = FindProperty("_UseVerShadow", m_Properties, false);
         baseColor = FindProperty("_BaseColor", m_Properties);
         baseMap = FindProperty("_BaseMap", m_Properties);
@@ -207,6 +211,11 @@ public class PBR_MobileGUI : ShaderGUI
         if (disableEnvironment != null)
         {
             m_MaterialEditor.ShaderProperty(disableEnvironment, "禁用环境光");
+        }
+        
+        if (disableLightColor != null)
+        {
+            m_MaterialEditor.ShaderProperty(disableLightColor, "禁用主光颜色（使用白色）");
         }
         
         if (useVerShadow != null)
@@ -513,7 +522,7 @@ public class PBR_MobileGUI : ShaderGUI
                     
                 case ShaderUtil.ShaderPropertyType.Float:
                 case ShaderUtil.ShaderPropertyType.Range:
-                    sb.Append(material.GetFloat(propertyName).ToString());
+                    sb.Append(material.GetFloat(propertyName).ToString("G9"));
                     break;
             }
         }
@@ -665,10 +674,37 @@ public class PBR_MobileGUI : ShaderGUI
         // 刷新材质
         EditorUtility.SetDirty(material);
         
-        // 强制更新shader关键字
-        material.shader = material.shader;
+        // 按属性值精确同步关键字，避免重赋 shader 导致关键字被重置
+        SyncMaterialKeywords(material);
     }
     
+    /// 按属性值精确同步 shader 关键字（两个 shader 共用，仅同步各自实际声明的关键字）
+    private void SyncMaterialKeywords(Material mat)
+    {
+        void SyncToggle(string prop, string keyword)
+        {
+            if (!mat.HasProperty(prop)) return;
+            if (mat.GetFloat(prop) > 0.5f) mat.EnableKeyword(keyword);
+            else mat.DisableKeyword(keyword);
+        }
+
+        SyncToggle("_DisableEnvironment", "_DISABLEENVIRONMENT");
+        SyncToggle("_DisableLightColor",  "_DISABLELIGHTCOLOR");
+        SyncToggle("_UseVerShadow",       "_USEVERSHADOW");
+        SyncToggle("_UseMsaMap",          "_USEMSAMAP");
+        SyncToggle("_UseAOMap",           "_USEAOMAP");
+        SyncToggle("_PreviewAOMap",       "_PREVIEWAO");
+        SyncToggle("_UseNormalMap",       "_NORMALMAP");
+        SyncToggle("_FilpG",              "_FILPG");
+        SyncToggle("_DebugNormal",        "_DEBUGNORMAL");
+        SyncToggle("_UseEmissionMap",     "_USEEMISSIONMAP");
+        SyncToggle("_InvertEmisMap",      "_INVERTEMISMAP");
+        SyncToggle("_UseReflection",      "_USEREFLECTION");
+        SyncToggle("_UsePointlight",      "_USEPOINTLIGHT");
+        SyncToggle("_UseSpotlight",       "_USESPOTLIGHT");
+        SyncToggle("_UseSpotTexture",     "_USESPOTTEXTURE");
+    }
+
     /// 从文件加载材质参数（单个材质）
     private void LoadMaterialParametersFromFile(string filePath)
     {
@@ -715,75 +751,71 @@ public class PBR_MobileGUI : ShaderGUI
                 "Default存档不存在，将使用Shader默认值创建Default存档。\n\n注意：纹理不会被保存。", 
                 "确定", "取消"))
             {
-                // 创建临时材质以获取shader默认值
+                // 创建临时材质以获取shader默认值，用 try/finally 保证一定被销毁
                 Material tempMaterial = new Material(material.shader);
-                
-                Shader shader = material.shader;
-                int propertyCount = ShaderUtil.GetPropertyCount(shader);
-                
-                // 创建参数字典
-                System.Collections.Generic.Dictionary<string, object> parameters = new System.Collections.Generic.Dictionary<string, object>();
-                
-                for (int i = 0; i < propertyCount; i++)
+                try
                 {
-                    string propertyName = ShaderUtil.GetPropertyName(shader, i);
-                    ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
+                    Shader shader = material.shader;
+                    int propertyCount = ShaderUtil.GetPropertyCount(shader);
                     
-                    if (!tempMaterial.HasProperty(propertyName)) continue;
+                    var parameters = new System.Collections.Generic.Dictionary<string, object>();
                     
-                    // 排除纹理和基础颜色
-                    if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
-                    if (propertyName == "_BaseColor") continue;
-                    
-                    switch (propertyType)
+                    for (int i = 0; i < propertyCount; i++)
                     {
-                        case ShaderUtil.ShaderPropertyType.Color:
-                            Color color = tempMaterial.GetColor(propertyName);
-                            parameters[propertyName] = new float[] { color.r, color.g, color.b, color.a };
-                            break;
-                            
-                        case ShaderUtil.ShaderPropertyType.Vector:
-                            Vector4 vector = tempMaterial.GetVector(propertyName);
-                            parameters[propertyName] = new float[] { vector.x, vector.y, vector.z, vector.w };
-                            break;
-                            
-                        case ShaderUtil.ShaderPropertyType.Float:
-                        case ShaderUtil.ShaderPropertyType.Range:
-                            parameters[propertyName] = tempMaterial.GetFloat(propertyName);
-                            break;
+                        string propertyName = ShaderUtil.GetPropertyName(shader, i);
+                        ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
+                        
+                        if (!tempMaterial.HasProperty(propertyName)) continue;
+                        if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                        if (propertyName == "_BaseColor") continue;
+                        
+                        switch (propertyType)
+                        {
+                            case ShaderUtil.ShaderPropertyType.Color:
+                                Color color = tempMaterial.GetColor(propertyName);
+                                parameters[propertyName] = new float[] { color.r, color.g, color.b, color.a };
+                                break;
+                                
+                            case ShaderUtil.ShaderPropertyType.Vector:
+                                Vector4 vector = tempMaterial.GetVector(propertyName);
+                                parameters[propertyName] = new float[] { vector.x, vector.y, vector.z, vector.w };
+                                break;
+                                
+                            case ShaderUtil.ShaderPropertyType.Float:
+                            case ShaderUtil.ShaderPropertyType.Range:
+                                parameters[propertyName] = tempMaterial.GetFloat(propertyName);
+                                break;
+                        }
                     }
+                    
+                    // 序列化为JSON，float 使用 G9 格式保留完整精度
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine("{");
+                    bool first = true;
+                    foreach (var kvp in parameters)
+                    {
+                        if (!first) sb.AppendLine(",");
+                        first = false;
+                        
+                        sb.Append("  \"" + kvp.Key + "\": ");
+                        
+                        if (kvp.Value is float[] arr)
+                            sb.Append($"[{arr[0].ToString("G9")}, {arr[1].ToString("G9")}, {arr[2].ToString("G9")}, {arr[3].ToString("G9")}]");
+                        else if (kvp.Value is float f)
+                            sb.Append(f.ToString("G9"));
+                        else
+                            sb.Append(kvp.Value.ToString());
+                    }
+                    sb.AppendLine();
+                    sb.AppendLine("}");
+                    
+                    System.IO.File.WriteAllText(defaultPresetPath, sb.ToString());
+                    Debug.Log($"Default存档已创建: {defaultPresetPath}");
                 }
-                
-                // 序列化为JSON（手动构建简单JSON）
-                System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                sb.AppendLine("{");
-                bool first = true;
-                foreach (var kvp in parameters)
+                finally
                 {
-                    if (!first) sb.AppendLine(",");
-                    first = false;
-                    
-                    sb.Append("  \"" + kvp.Key + "\": ");
-                    
-                    if (kvp.Value is float[])
-                    {
-                        float[] arr = (float[])kvp.Value;
-                        sb.Append($"[{arr[0]}, {arr[1]}, {arr[2]}, {arr[3]}]");
-                    }
-                    else
-                    {
-                        sb.Append(kvp.Value.ToString());
-                    }
+                    Object.DestroyImmediate(tempMaterial);
                 }
-                sb.AppendLine();
-                sb.AppendLine("}");
-                
-                // 保存Default存档
-                System.IO.File.WriteAllText(defaultPresetPath, sb.ToString());
-                
-                Object.DestroyImmediate(tempMaterial);
-                
-                Debug.Log($"Default存档已创建: {defaultPresetPath}");
                 
                 // 加载Default存档
                 LoadMaterialParametersFromFile(defaultPresetPath);

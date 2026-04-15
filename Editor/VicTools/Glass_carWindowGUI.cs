@@ -1,5 +1,6 @@
 // Glass_carWindow.shader GUI控制脚本
 // 基于PBR_MobileGUI的控制逻辑实现
+// Glass_carWindowGUIv1.1 修复Glass_MobileNew.shader的读档排序错误问题
 using UnityEngine;
 using UnityEditor;
 
@@ -17,6 +18,8 @@ public class Glass_carWindowGUI : ShaderGUI
     private MaterialProperty useNormalMap;
     private MaterialProperty bumpMap;
     private MaterialProperty bumpScale;
+    private MaterialProperty useVertexDeform;       // Glass_MobileNew 顶点变形
+    private MaterialProperty vertexDeformStrength;  // Glass_MobileNew 顶点变形强度
     private MaterialProperty useRefraction; // Glass_MobileNew独有
     private MaterialProperty refractionStrength; // Glass_MobileNew独有
     private MaterialProperty useReflection;
@@ -63,6 +66,8 @@ public class Glass_carWindowGUI : ShaderGUI
         useNormalMap = FindProperty("_UseNormalMap", m_Properties, false);
         bumpMap = FindProperty("_BumpMap", m_Properties);
         bumpScale = FindProperty("_BumpScale", m_Properties);
+        useVertexDeform = FindProperty("_UseVertexDeform", m_Properties, false);
+        vertexDeformStrength = FindProperty("_VertexDeformStrength", m_Properties, false);
         useRefraction = FindProperty("_UseRefraction", m_Properties, false); // Glass_MobileNew独有
         refractionStrength = FindProperty("_RefractionStrength", m_Properties, false); // Glass_MobileNew独有
         useReflection = FindProperty("_UseReflection", m_Properties, false);
@@ -176,6 +181,21 @@ public class Glass_carWindowGUI : ShaderGUI
             }
             
             m_MaterialEditor.RangeProperty(bumpScale, "法线强度");
+            
+            // 顶点变形（Glass_MobileNew 独有）
+            if (useVertexDeform != null && vertexDeformStrength != null)
+            {
+                EditorGUILayout.Space(4);
+                m_MaterialEditor.ShaderProperty(useVertexDeform, "顶点变形");
+                if (useVertexDeform.floatValue > 0.5f)
+                {
+                    EditorGUI.indentLevel++;
+                    m_MaterialEditor.RangeProperty(vertexDeformStrength, "变形强度");
+                    EditorGUILayout.HelpBox("法线贴图的 Offset XY 同时作为 UV 游走速度\nOffset = (0,0) 时静止，不为零时按该速度滚动", MessageType.Info);
+                    EditorGUI.indentLevel--;
+                }
+            }
+            
             EditorGUI.indentLevel--;
         }
     }
@@ -467,6 +487,10 @@ public class Glass_carWindowGUI : ShaderGUI
             }
         }
         
+        // 同步 shader_feature toggle 对应的 keyword，确保渲染分支（含透明排序）正确切换
+        // 注意：不能用 material.shader = material.shader，那会重置所有 keyword
+        SyncShaderKeywords(material);
+        
         // 刷新材质
         EditorUtility.SetDirty(material);
         
@@ -479,12 +503,36 @@ public class Glass_carWindowGUI : ShaderGUI
         // 刷新场景视图
         SceneView.RepaintAll();
         
-        // 强制更新shader关键字
-        material.shader = material.shader;
-        
         Debug.Log($"玻璃材质参数已从存档加载: {filePath}");
     }
     
+    /// 同步所有 shader_feature toggle 对应的 keyword
+    /// 读档后必须调用，否则 shader 分支（折射/反射/法线/顶点变形/FresnelRamp）不会切换，
+    /// 透明排序等依赖 keyword 的渲染状态也会残留旧值
+    private void SyncShaderKeywords(Material material)
+    {
+        // 每个 toggle 属性名 -> 对应的 shader keyword
+        var toggleKeywords = new System.Collections.Generic.Dictionary<string, string>
+        {
+            { "_UseNormalMap",    "_USENORMALMAP"    },
+            { "_UseRefraction",   "_USEREFRACTION"   },  // Glass_MobileNew
+            { "_UseReflection",   "_USEREFLECTION"   },
+            { "_UseVertexDeform", "_USEVERTEXDEFORM" },  // Glass_MobileNew
+            { "_UseFresnelRamp",  "_USEFRESNELRAMP"  },  // Glass_carWindow
+        };
+
+        foreach (var pair in toggleKeywords)
+        {
+            if (!material.HasProperty(pair.Key)) continue;
+
+            bool enabled = material.GetFloat(pair.Key) > 0.5f;
+            if (enabled)
+                material.EnableKeyword(pair.Value);
+            else
+                material.DisableKeyword(pair.Value);
+        }
+    }
+
     /// 重置材质参数为默认值（使用Default存档或shader默认值）
     private void ResetMaterialParameters()
     {

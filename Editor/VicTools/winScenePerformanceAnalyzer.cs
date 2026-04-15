@@ -13,7 +13,7 @@ namespace VicTools
         
 		//[MenuItem("Tools/VicTools(YD)/[ ScenesTools ]", false, 2003)]
         /// 显示性能分析器窗口的菜单项
-        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[性能分析]", false, 3001)]
+        [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[性能分析]", false, 1801)]
         public static void ShowWindow()
         {
             var window = GetWindow<TestScenePerformanceAnalyzer>(VicToolsConfig.PerformanceAnalyzerWindowName);
