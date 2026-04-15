@@ -1,5 +1,6 @@
 // CustomParticle 1.0 水质感粒子材质，粒子系统控制透明
 // CustomParticle 1.1 添加反射、法线、Fresnel
+// CustomParticle 1.2 去除（SoftParticle）参数，默认值设置
 
 Shader "Custom/Fx/CustomParticle"
 {
@@ -20,25 +21,21 @@ Shader "Custom/Fx/CustomParticle"
         [Header(Wet Reflection)]
         [Toggle(_USEREFLECTION)] _UseReflection ("Use Reflection Map", Float) = 0
         [NoScaleOffset] _ReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
-        _ReflectionStrength ("Reflection Strength", Range(0, 2)) = 0.8
+        _ReflectionStrength ("Reflection Strength", Range(0, 2)) = 1.8
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
 
         [Header(Wet Normal)]
         [Toggle(_USENORMALMAP)] _UseNormalMap ("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
-        _BumpScale ("Normal Scale", Range(0, 2)) = 0.5
+        _BumpScale ("Normal Scale", Range(0, 2)) = 0.85
 
         [Header(Fresnel)]
-        _FresnelPower ("Fresnel Power", Range(0.1, 10)) = 3.0
-        _FresnelBias  ("Fresnel Bias",  Range(0, 1))    = 0.05
-        _FresnelScale ("Fresnel Scale", Range(0, 2))    = 1.0
+        _FresnelPower ("Fresnel Power", Range(0.1, 10)) = 4.2
+        _FresnelBias  ("Fresnel Bias",  Range(0, 1))    = 0.25
+        _FresnelScale ("Fresnel Scale", Range(0, 2))    = 1.25
 
         [Header(Blend Mode Non Wet)]
         [KeywordEnum(Additive, AlphaBlend)] _BlendMode ("Blend Mode", Float) = 1
-
-        [Header(Soft Particle)]
-        [Toggle(_SOFTPARTICLE_ON)] _UseSoftParticle ("Soft Particle", Float) = 0
-        _SoftParticleRange ("Soft Particle Range", Range(0.01, 5.0)) = 1.0
 
         [Header(Rendering)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 0
@@ -72,7 +69,6 @@ Shader "Custom/Fx/CustomParticle"
             #pragma shader_feature_local _WETDECAL_ON
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _USENORMALMAP
-            #pragma shader_feature_local _SOFTPARTICLE_ON
             #pragma shader_feature_local _BLENDMODE_ADDITIVE _BLENDMODE_ALPHABLEND
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -81,10 +77,6 @@ Shader "Custom/Fx/CustomParticle"
             TEXTURE2D(_MainTex);      SAMPLER(sampler_MainTex);
             TEXTURE2D(_ReflectionMap); SAMPLER(sampler_ReflectionMap);
             TEXTURE2D(_BumpMap);       SAMPLER(sampler_BumpMap);
-
-            #if defined(_SOFTPARTICLE_ON)
-            TEXTURE2D_X_FLOAT(_CameraDepthTexture); SAMPLER(sampler_CameraDepthTexture);
-            #endif
 
             CBUFFER_START(UnityPerMaterial)
                 half4 _MainTex_ST;
@@ -99,7 +91,6 @@ Shader "Custom/Fx/CustomParticle"
                 half  _FresnelPower;
                 half  _FresnelBias;
                 half  _FresnelScale;
-                half  _SoftParticleRange;
             CBUFFER_END
 
             struct Attributes
@@ -122,9 +113,6 @@ Shader "Custom/Fx/CustomParticle"
                 float3 tangentWS  : TEXCOORD3;
                 float3 bitangentWS: TEXCOORD4;
                 float3 viewDirWS  : TEXCOORD5;
-                #if defined(_SOFTPARTICLE_ON)
-                float4 screenPos  : TEXCOORD6;
-                #endif
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
@@ -167,11 +155,6 @@ Shader "Custom/Fx/CustomParticle"
                 output.bitangentWS  = nrmInputs.bitangentWS;
                 output.viewDirWS    = GetCameraPositionWS() - posInputs.positionWS;
 
-                #if defined(_SOFTPARTICLE_ON)
-                output.screenPos    = ComputeScreenPos(output.positionCS);
-                output.screenPos.z  = -TransformWorldToView(posInputs.positionWS).z;
-                #endif
-
                 return output;
             }
 
@@ -182,19 +165,7 @@ Shader "Custom/Fx/CustomParticle"
 
                 half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
 
-                // 软粒子
-                half softFactor = 1.0h;
-                #if defined(_SOFTPARTICLE_ON)
-                {
-                    float2 screenUV  = input.screenPos.xy / input.screenPos.w;
-                    float sceneDepth = LinearEyeDepth(
-                        SAMPLE_TEXTURE2D_X(_CameraDepthTexture, sampler_CameraDepthTexture, screenUV).r,
-                        _ZBufferParams);
-                    softFactor = saturate((sceneDepth - input.screenPos.z) / _SoftParticleRange);
-                }
-                #endif
-
-                half particleAlpha = input.color.a * softFactor;
+                half particleAlpha = input.color.a;
 
                 // ── 打湿模式 ──────────────────────────────────────────────
                 #if defined(_WETDECAL_ON)
