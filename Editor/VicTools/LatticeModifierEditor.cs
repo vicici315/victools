@@ -1,6 +1,8 @@
-// LatticeModifierEditor 1.1 - 晶格变形器编辑器，支持晶格单独移动模型随之变形
-// LatticeModifierEditor 1.2 添加晶格点动画控制
-// LatticeModifierEditor 1.3 优化晶格控制点选择，可以直接设置动画
+// LatticeModifierEditor 1.4 - 晶格变形器编辑器
+// 1.1 支持晶格单独移动，模型经过晶格区域产生变形，离开后恢复
+// 1.2 添加晶格点动画控制（子物体 CP 节点，支持 Animation/Timeline K帧）
+// 1.3 选中晶格点时同步选中 Hierarchy 中对应 CP 节点（蓝色高亮，不含父对象）
+// 1.4 静态 SceneView 回调：选中 CP 后晶格线框持续绘制，可继续点击/框选其他晶格点；修复打包后动画不生效
 // 支持：点击选中、Ctrl+点击加选、Shift+拖拽框选
 using System.Collections.Generic;
 using UnityEngine;
@@ -12,23 +14,29 @@ public class LatticeModifierEditor : Editor
     private LatticeModifier lattice;
     private HashSet<int> selectedPoints = new HashSet<int>();
 
-    // 框选状态
-    private bool isDragging;
-    private Vector2 dragStart;
-    private Vector2 dragEnd;
+    // 静态引用：保持晶格绘制即使 Editor 被 disable（选中 CP 子物体时）
+    private static LatticeModifier s_activeLattice;
+    private static HashSet<int> s_activeSelectedPoints;
+    private static bool s_registered;
+
+    // 框选状态（静态，在 CP 选中时也能用）
+    private static bool s_isDragging;
+    private static Vector2 s_dragStart;
+    private static Vector2 s_dragEnd;
 
     /// <summary>
     /// 将 3D 视窗中选中的控制点同步到 Hierarchy（选中对应的 CP 子物体）
     /// 只选中 CP 子物体，不包含父对象，这样 Animation/Timeline 能正确录制关键帧
     /// </summary>
-    private void SyncSelectionToHierarchy()
+    private static void SyncSelectionToHierarchy()
     {
-        if (!lattice.HasControlPointTransforms || selectedPoints.Count == 0) return;
+        if (s_activeLattice == null || !s_activeLattice.HasControlPointTransforms) return;
+        if (s_activeSelectedPoints == null || s_activeSelectedPoints.Count == 0) return;
 
         var objects = new List<UnityEngine.Object>();
-        foreach (int i in selectedPoints)
+        foreach (int i in s_activeSelectedPoints)
         {
-            Transform cpT = lattice.GetControlPointTransform(i);
+            Transform cpT = s_activeLattice.GetControlPointTransform(i);
             if (cpT != null) objects.Add(cpT.gameObject);
         }
         if (objects.Count > 0)
@@ -38,14 +46,20 @@ public class LatticeModifierEditor : Editor
     private void OnEnable()
     {
         lattice = (LatticeModifier)target;
+        s_activeLattice = lattice;
+        s_activeSelectedPoints = selectedPoints;
         EditorApplication.update += EditorUpdate;
-        SceneView.duringSceneGui += OnGlobalSceneGUI;
+        if (!s_registered)
+        {
+            SceneView.duringSceneGui += OnGlobalSceneGUIStatic;
+            s_registered = true;
+        }
     }
 
     private void OnDisable()
     {
         EditorApplication.update -= EditorUpdate;
-        SceneView.duringSceneGui -= OnGlobalSceneGUI;
+        // 不取消 duringSceneGui 注册，保持晶格线绘制
     }
 
     // 编辑器持续更新：确保移动晶格时目标对象实时变形
@@ -225,41 +239,43 @@ public class LatticeModifierEditor : Editor
     }
 
     /// <summary>
-    /// 全局 SceneView 回调：即使选中了 CP 子物体（Inspector 切走），也持续绘制晶格线框和控制点
+    /// 静态 SceneView 回调：即使选中了 CP 子物体（Editor 被 disable），也持续绘制晶格并支持交互
     /// </summary>
-    private void OnGlobalSceneGUI(SceneView sceneView)
+    private static void OnGlobalSceneGUIStatic(SceneView sceneView)
     {
-        if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null)
+        if (s_activeLattice == null || !s_activeLattice.IsInitialized || s_activeLattice.controlPoints == null)
             return;
 
-        // 如果当前选中的就是晶格物体本身，OnSceneGUI 会处理绘制，这里不重复
-        if (Selection.activeGameObject == lattice.gameObject)
+        // 如果当前选中的就是晶格物体本身，OnSceneGUI 会处理，这里不重复
+        if (Selection.activeGameObject == s_activeLattice.gameObject)
             return;
 
-        Transform t = lattice.transform;
-        int nx = lattice.PointCountX, ny = lattice.PointCountY, nz = lattice.PointCountZ;
+        Event e = Event.current;
+        Transform t = s_activeLattice.transform;
+        int nx = s_activeLattice.PointCountX, ny = s_activeLattice.PointCountY, nz = s_activeLattice.PointCountZ;
+        var selPts = s_activeSelectedPoints;
 
-        // 绘制晶格线框
+        // ── 绘制晶格线框 ──
         Handles.color = new Color(0.2f, 0.8f, 1f, 0.5f);
         for (int ix = 0; ix < nx; ix++)
         for (int iy = 0; iy < ny; iy++)
         for (int iz = 0; iz < nz; iz++)
         {
-            int idx = lattice.GetFlatIndex(ix, iy, iz);
-            Vector3 p = t.TransformPoint(lattice.controlPoints[idx]);
-            if (ix < nx - 1) Handles.DrawLine(p, t.TransformPoint(lattice.controlPoints[lattice.GetFlatIndex(ix + 1, iy, iz)]));
-            if (iy < ny - 1) Handles.DrawLine(p, t.TransformPoint(lattice.controlPoints[lattice.GetFlatIndex(ix, iy + 1, iz)]));
-            if (iz < nz - 1) Handles.DrawLine(p, t.TransformPoint(lattice.controlPoints[lattice.GetFlatIndex(ix, iy, iz + 1)]));
+            int idx = s_activeLattice.GetFlatIndex(ix, iy, iz);
+            Vector3 p = t.TransformPoint(s_activeLattice.controlPoints[idx]);
+            if (ix < nx - 1) Handles.DrawLine(p, t.TransformPoint(s_activeLattice.controlPoints[s_activeLattice.GetFlatIndex(ix + 1, iy, iz)]));
+            if (iy < ny - 1) Handles.DrawLine(p, t.TransformPoint(s_activeLattice.controlPoints[s_activeLattice.GetFlatIndex(ix, iy + 1, iz)]));
+            if (iz < nz - 1) Handles.DrawLine(p, t.TransformPoint(s_activeLattice.controlPoints[s_activeLattice.GetFlatIndex(ix, iy, iz + 1)]));
         }
 
-        // 绘制控制点球
-        for (int i = 0; i < lattice.controlPoints.Length; i++)
+        // ── 绘制控制点并处理点击 ──
+        for (int i = 0; i < s_activeLattice.controlPoints.Length; i++)
         {
-            Vector3 worldPos = t.TransformPoint(lattice.controlPoints[i]);
+            Vector3 worldPos = t.TransformPoint(s_activeLattice.controlPoints[i]);
             float sz = HandleUtility.GetHandleSize(worldPos) * 0.05f;
 
-            bool isSelected = selectedPoints.Contains(i);
-            lattice.GetPointIndex3D(i, out int pix, out int piy, out int piz);
+            bool isSelected = selPts != null && selPts.Contains(i);
+            s_activeLattice.GetPointIndex3D(i, out int pix, out int piy, out int piz);
             bool isCorner = (pix == 0 || pix == nx - 1) && (piy == 0 || piy == ny - 1) && (piz == 0 || piz == nz - 1);
 
             if (isSelected)
@@ -269,7 +285,133 @@ public class LatticeModifierEditor : Editor
             else
                 Handles.color = new Color(1f, 0.9f, 0.2f, 0.8f);
 
-            Handles.SphereHandleCap(0, worldPos, Quaternion.identity, sz * 2f, EventType.Repaint);
+            if (Handles.Button(worldPos, Quaternion.identity, sz, sz * 1.5f, Handles.SphereHandleCap))
+            {
+                if (e.control)
+                {
+                    if (selPts.Contains(i)) selPts.Remove(i);
+                    else selPts.Add(i);
+                }
+                else
+                {
+                    selPts.Clear();
+                    selPts.Add(i);
+                }
+                SyncSelectionToHierarchy();
+                sceneView.Repaint();
+            }
+        }
+
+        // ── Shift+拖拽框选 ──
+        if (e.shift)
+        {
+            int controlID = GUIUtility.GetControlID(FocusType.Passive);
+
+            switch (e.type)
+            {
+                case EventType.MouseDown:
+                    if (e.button == 0)
+                    {
+                        s_isDragging = true;
+                        s_dragStart = e.mousePosition;
+                        s_dragEnd = e.mousePosition;
+                        GUIUtility.hotControl = controlID;
+                        e.Use();
+                    }
+                    break;
+
+                case EventType.MouseDrag:
+                    if (s_isDragging)
+                    {
+                        s_dragEnd = e.mousePosition;
+                        e.Use();
+                        SceneView.RepaintAll();
+                    }
+                    break;
+
+                case EventType.MouseUp:
+                    if (s_isDragging && e.button == 0)
+                    {
+                        s_isDragging = false;
+                        GUIUtility.hotControl = 0;
+
+                        Rect selRect = new Rect(
+                            Mathf.Min(s_dragStart.x, s_dragEnd.x),
+                            Mathf.Min(s_dragStart.y, s_dragEnd.y),
+                            Mathf.Abs(s_dragEnd.x - s_dragStart.x),
+                            Mathf.Abs(s_dragEnd.y - s_dragStart.y)
+                        );
+
+                        if (!e.control) selPts.Clear();
+
+                        Camera cam = sceneView.camera;
+                        for (int i = 0; i < s_activeLattice.controlPoints.Length; i++)
+                        {
+                            Vector3 worldPos = t.TransformPoint(s_activeLattice.controlPoints[i]);
+                            Vector3 screenPos = cam.WorldToScreenPoint(worldPos);
+                            screenPos.y = cam.pixelHeight - screenPos.y;
+
+                            if (screenPos.z > 0 && selRect.Contains(new Vector2(screenPos.x, screenPos.y)))
+                                selPts.Add(i);
+                        }
+
+                        e.Use();
+                        SyncSelectionToHierarchy();
+                        sceneView.Repaint();
+                    }
+                    break;
+            }
+
+            if (s_isDragging)
+            {
+                Handles.BeginGUI();
+                Rect r = new Rect(
+                    Mathf.Min(s_dragStart.x, s_dragEnd.x),
+                    Mathf.Min(s_dragStart.y, s_dragEnd.y),
+                    Mathf.Abs(s_dragEnd.x - s_dragStart.x),
+                    Mathf.Abs(s_dragEnd.y - s_dragStart.y)
+                );
+                EditorGUI.DrawRect(r, new Color(0.2f, 0.6f, 1f, 0.15f));
+                Handles.color = new Color(0.2f, 0.6f, 1f, 0.8f);
+                Handles.DrawSolidRectangleWithOutline(
+                    new Vector3[] {
+                        new Vector3(r.xMin, r.yMin, 0),
+                        new Vector3(r.xMax, r.yMin, 0),
+                        new Vector3(r.xMax, r.yMax, 0),
+                        new Vector3(r.xMin, r.yMax, 0)
+                    },
+                    new Color(0.2f, 0.6f, 1f, 0.1f),
+                    new Color(0.2f, 0.6f, 1f, 0.8f)
+                );
+                Handles.EndGUI();
+            }
+        }
+
+        // ── 选中点的移动手柄 ──
+        if (selPts != null && selPts.Count > 0)
+        {
+            Vector3 center = Vector3.zero;
+            foreach (int i in selPts)
+                center += t.TransformPoint(s_activeLattice.controlPoints[i]);
+            center /= selPts.Count;
+
+            EditorGUI.BeginChangeCheck();
+            Vector3 newCenter = Handles.PositionHandle(center, t.rotation);
+            if (EditorGUI.EndChangeCheck())
+            {
+                Undo.RecordObject(s_activeLattice, "移动晶格控制点");
+                Vector3 delta = newCenter - center;
+                foreach (int i in selPts)
+                {
+                    Vector3 wp = t.TransformPoint(s_activeLattice.controlPoints[i]) + delta;
+                    s_activeLattice.controlPoints[i] = t.InverseTransformPoint(wp);
+                }
+                if (s_activeLattice.HasControlPointTransforms)
+                    s_activeLattice.SyncToTransforms();
+                if (s_activeLattice.liveUpdate)
+                    s_activeLattice.ApplyDeformation();
+                EditorUtility.SetDirty(s_activeLattice);
+            }
         }
     }
 
@@ -341,35 +483,35 @@ public class LatticeModifierEditor : Editor
                 case EventType.MouseDown:
                     if (e.button == 0)
                     {
-                        isDragging = true;
-                        dragStart = e.mousePosition;
-                        dragEnd = e.mousePosition;
+                        s_isDragging = true;
+                        s_dragStart = e.mousePosition;
+                        s_dragEnd = e.mousePosition;
                         GUIUtility.hotControl = controlID;
                         e.Use();
                     }
                     break;
 
                 case EventType.MouseDrag:
-                    if (isDragging)
+                    if (s_isDragging)
                     {
-                        dragEnd = e.mousePosition;
+                        s_dragEnd = e.mousePosition;
                         e.Use();
                         SceneView.RepaintAll();
                     }
                     break;
 
                 case EventType.MouseUp:
-                    if (isDragging && e.button == 0)
+                    if (s_isDragging && e.button == 0)
                     {
-                        isDragging = false;
+                        s_isDragging = false;
                         GUIUtility.hotControl = 0;
 
                         // 计算框选矩形
                         Rect selRect = new Rect(
-                            Mathf.Min(dragStart.x, dragEnd.x),
-                            Mathf.Min(dragStart.y, dragEnd.y),
-                            Mathf.Abs(dragEnd.x - dragStart.x),
-                            Mathf.Abs(dragEnd.y - dragStart.y)
+                            Mathf.Min(s_dragStart.x, s_dragEnd.x),
+                            Mathf.Min(s_dragStart.y, s_dragEnd.y),
+                            Mathf.Abs(s_dragEnd.x - s_dragStart.x),
+                            Mathf.Abs(s_dragEnd.y - s_dragStart.y)
                         );
 
                         // 如果没按 Ctrl 则清除之前的选择
@@ -398,14 +540,14 @@ public class LatticeModifierEditor : Editor
             }
 
             // 绘制框选矩形
-            if (isDragging)
+            if (s_isDragging)
             {
                 Handles.BeginGUI();
                 Rect r = new Rect(
-                    Mathf.Min(dragStart.x, dragEnd.x),
-                    Mathf.Min(dragStart.y, dragEnd.y),
-                    Mathf.Abs(dragEnd.x - dragStart.x),
-                    Mathf.Abs(dragEnd.y - dragStart.y)
+                    Mathf.Min(s_dragStart.x, s_dragEnd.x),
+                    Mathf.Min(s_dragStart.y, s_dragEnd.y),
+                    Mathf.Abs(s_dragEnd.x - s_dragStart.x),
+                    Mathf.Abs(s_dragEnd.y - s_dragStart.y)
                 );
                 EditorGUI.DrawRect(r, new Color(0.2f, 0.6f, 1f, 0.15f));
                 // 边框

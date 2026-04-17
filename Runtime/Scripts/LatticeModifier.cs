@@ -1,6 +1,7 @@
-// LatticeModifier 1.1 - FFD 晶格变形场
+// LatticeModifier 1.4 - FFD 晶格变形场
 // 晶格挂在独立空物体上，目标对象拖入 targetRenderer
-// 移动晶格或编辑控制点时，目标对象在晶格范围内的顶点实时变形
+// 移动晶格或模型时，处于晶格范围内的顶点实时变形，离开后恢复原形
+// 支持子物体控制点（CP_x_y_z），可被 Animation/Timeline K帧驱动变形
 using System;
 using UnityEngine;
 
@@ -297,7 +298,6 @@ public class LatticeModifier : MonoBehaviour
             var go = new GameObject($"CP_{ix}_{iy}_{iz}");
             go.transform.SetParent(transform, false);
             go.transform.localPosition = controlPoints[i];
-            go.hideFlags = HideFlags.DontSaveInBuild;
             controlPointTransforms[i] = go.transform;
         }
         useTransformHandles = true;
@@ -364,17 +364,23 @@ public class LatticeModifier : MonoBehaviour
     private void LateUpdate()
     {
         if (!initialized || !liveUpdate) return;
-        // 如果使用子物体控制点，每帧从 Transform 同步到数组再变形
+
         if (useTransformHandles && HasControlPointTransforms)
         {
             SyncFromTransforms();
-            ApplyDeformation();
         }
+
+        ApplyDeformation();
     }
 
     private void OnDestroy()
     {
-        if (deformedMesh != null && Application.isEditor && !Application.isPlaying)
-            DestroyImmediate(deformedMesh);
+        if (deformedMesh != null)
+        {
+            if (Application.isPlaying)
+                Destroy(deformedMesh);
+            else
+                DestroyImmediate(deformedMesh);
+        }
     }
 }
