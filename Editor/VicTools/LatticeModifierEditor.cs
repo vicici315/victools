@@ -1,4 +1,5 @@
 // LatticeModifierEditor 1.1 - 晶格变形器编辑器，支持晶格单独移动模型随之变形
+// LatticeModifierEditor 1.2 添加晶格点动画控制
 // 支持：点击选中、Ctrl+点击加选、Shift+拖拽框选
 using System.Collections.Generic;
 using UnityEngine;
@@ -30,6 +31,9 @@ public class LatticeModifierEditor : Editor
     private void EditorUpdate()
     {
         if (lattice == null || !lattice.IsInitialized || !lattice.liveUpdate) return;
+        // 如果有子物体控制点，先从 Transform 同步到数组
+        if (lattice.useTransformHandles && lattice.HasControlPointTransforms)
+            lattice.SyncFromTransforms();
         lattice.ApplyDeformation();
         // 强制 Scene 视图重绘
         SceneView.RepaintAll();
@@ -135,6 +139,8 @@ public class LatticeModifierEditor : Editor
             {
                 Undo.RecordObject(lattice, "重置晶格控制点");
                 lattice.ResetControlPoints();
+                if (lattice.HasControlPointTransforms)
+                    lattice.SyncToTransforms();
                 EditorUtility.SetDirty(lattice);
                 SceneView.RepaintAll();
             }
@@ -160,6 +166,35 @@ public class LatticeModifierEditor : Editor
                     Undo.RecordObject(lattice, "烘焙晶格变形");
                     lattice.BakeAndRemove();
                     selectedPoints.Clear();
+                    EditorUtility.SetDirty(lattice);
+                    SceneView.RepaintAll();
+                }
+            }
+            GUI.backgroundColor = Color.white;
+
+            // ── 动画控制点（子物体）──
+            EditorGUILayout.Space(5);
+            if (!lattice.HasControlPointTransforms)
+            {
+                GUI.backgroundColor = new Color(0.8f, 0.6f, 1f);
+                if (GUILayout.Button("创建动画控制点（支持 Timeline K帧）", GUILayout.Height(28)))
+                {
+                    Undo.RecordObject(lattice, "创建动画控制点");
+                    lattice.CreateControlPointTransforms();
+                    EditorUtility.SetDirty(lattice);
+                    SceneView.RepaintAll();
+                }
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(
+                    "动画控制点已创建，可在 Animation/Timeline 中对子物体 CP_x_y_z 的 Position 做关键帧动画。",
+                    MessageType.Info);
+                GUI.backgroundColor = new Color(1f, 0.6f, 0.4f);
+                if (GUILayout.Button("清除动画控制点", GUILayout.Height(24)))
+                {
+                    Undo.RecordObject(lattice, "清除动画控制点");
+                    lattice.DestroyControlPointTransforms();
                     EditorUtility.SetDirty(lattice);
                     SceneView.RepaintAll();
                 }
@@ -337,6 +372,9 @@ public class LatticeModifierEditor : Editor
                     Vector3 wp = t.TransformPoint(lattice.controlPoints[i]) + delta;
                     lattice.controlPoints[i] = t.InverseTransformPoint(wp);
                 }
+                // 同步到子物体 Transform（如果有）
+                if (lattice.HasControlPointTransforms)
+                    lattice.SyncToTransforms();
                 if (lattice.liveUpdate)
                     lattice.ApplyDeformation();
                 EditorUtility.SetDirty(lattice);

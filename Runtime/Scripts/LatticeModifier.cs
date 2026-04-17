@@ -17,6 +17,8 @@ public class LatticeModifier : MonoBehaviour
 
     [Header("设置")]
     public bool liveUpdate = true;
+    [Tooltip("使用子物体作为控制点（支持 Animation/Timeline K帧）")]
+    public bool useTransformHandles = false;
 
     [HideInInspector] public Vector3[] controlPoints;
     [HideInInspector] [SerializeField] private Vector3[] initialControlPoints;
@@ -25,6 +27,7 @@ public class LatticeModifier : MonoBehaviour
     [HideInInspector] [SerializeField] private Vector3 latticeMin;
     [HideInInspector] [SerializeField] private Vector3 latticeSize;
     [HideInInspector] [SerializeField] private bool initialized;
+    [HideInInspector] [SerializeField] private Transform[] controlPointTransforms;
 
     [NonSerialized] private Mesh deformedMesh;
 
@@ -277,6 +280,86 @@ public class LatticeModifier : MonoBehaviour
     public int GetFlatIndex(int ix, int iy, int iz)
     {
         return ix + iy * PointCountX + iz * PointCountX * PointCountY;
+    }
+
+    /// <summary>
+    /// 创建子物体控制点，每个控制点对应一个子 GameObject，可被 Animation/Timeline K帧
+    /// </summary>
+    public void CreateControlPointTransforms()
+    {
+        if (!initialized || controlPoints == null) return;
+        DestroyControlPointTransforms();
+
+        controlPointTransforms = new Transform[controlPoints.Length];
+        for (int i = 0; i < controlPoints.Length; i++)
+        {
+            GetPointIndex3D(i, out int ix, out int iy, out int iz);
+            var go = new GameObject($"CP_{ix}_{iy}_{iz}");
+            go.transform.SetParent(transform, false);
+            go.transform.localPosition = controlPoints[i];
+            go.hideFlags = HideFlags.DontSaveInBuild;
+            controlPointTransforms[i] = go.transform;
+        }
+        useTransformHandles = true;
+    }
+
+    /// <summary>
+    /// 清除子物体控制点
+    /// </summary>
+    public void DestroyControlPointTransforms()
+    {
+        if (controlPointTransforms != null)
+        {
+            foreach (var t in controlPointTransforms)
+            {
+                if (t != null) DestroyImmediate(t.gameObject);
+            }
+            controlPointTransforms = null;
+        }
+        useTransformHandles = false;
+    }
+
+    /// <summary>
+    /// 从子物体 Transform 同步位置到 controlPoints 数组
+    /// </summary>
+    public void SyncFromTransforms()
+    {
+        if (controlPointTransforms == null || controlPoints == null) return;
+        for (int i = 0; i < controlPoints.Length && i < controlPointTransforms.Length; i++)
+        {
+            if (controlPointTransforms[i] != null)
+                controlPoints[i] = controlPointTransforms[i].localPosition;
+        }
+    }
+
+    /// <summary>
+    /// 从 controlPoints 数组同步位置到子物体 Transform
+    /// </summary>
+    public void SyncToTransforms()
+    {
+        if (controlPointTransforms == null || controlPoints == null) return;
+        for (int i = 0; i < controlPoints.Length && i < controlPointTransforms.Length; i++)
+        {
+            if (controlPointTransforms[i] != null)
+                controlPointTransforms[i].localPosition = controlPoints[i];
+        }
+    }
+
+    /// <summary>
+    /// 子物体控制点是否已创建
+    /// </summary>
+    public bool HasControlPointTransforms =>
+        controlPointTransforms != null && controlPointTransforms.Length > 0 && controlPointTransforms[0] != null;
+
+    private void LateUpdate()
+    {
+        if (!initialized || !liveUpdate) return;
+        // 如果使用子物体控制点，每帧从 Transform 同步到数组再变形
+        if (useTransformHandles && HasControlPointTransforms)
+        {
+            SyncFromTransforms();
+            ApplyDeformation();
+        }
     }
 
     private void OnDestroy()
