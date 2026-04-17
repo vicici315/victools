@@ -48,10 +48,11 @@ namespace VicTools
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition, false, false);
             
             // 主要功能部分
-            DrawSection("主要功能", new string[] {
+            DrawSection("包含工具模块", new string[] {
                 "• 场景工具 - 快速选择和操作场景中的对象",
                 "• 材质查找 - 高速查找和管理材质",
-                "• 资源工具 - 项目资源文件管理批量配置；安全的批量重命名（将保留资源引用）"
+                "• 资源工具 - 项目资源文件管理批量配置；安全的批量重命名（将保留资源引用）",
+                "• 性能分析 - 对场景进行资源暂用评估，显示内存资源等基础信息，可以对场景内容分类统计快速选择"
             });
             
             // 使用提示部分
@@ -65,7 +66,12 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
-                "■ v2.8.3",
+                "■ v2.9.1",
+"PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）",
+"优化所有自定义Shader UI布局，归类更清晰。",
+"PBR_Lighting.shadergraph 材质修复主贴图Tilling Offset参数的共用问题。",
+"BlendShapeAnimator v1.7 - 添加 SkinnedMeshRenderer 包围盒扩展，防止轴心偏移导致视锥剔除（修复轴心偏移问题）",
+                "■ v2.9.0",
 "OutlineOffset_URP v1.1 添加轮廓外描边材质。",
 "SmoothMeshNormal v1.2 轮廓描边辅助工具用于圆滑mesh法线，添加<覆盖>选项，支持生成平滑网格直接覆盖原有Mesh。",
 "SmoothMeshNormal v1.3 添加<选择父对象>按钮。",

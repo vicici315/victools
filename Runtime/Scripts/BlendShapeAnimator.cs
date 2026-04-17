@@ -1,5 +1,7 @@
 // BlendShapeAnimator v1.4 - 新增 ParticleSystem startSpeed 随启用动画线性插值控制
 // BlendShapeAnimator v1.5 - 新增 粒子系统控制水花发射速度匹配水柱抛物线；添加 关闭动画手动设置进度参数
+// BlendShapeAnimator v1.6 - 性能优化：BakeMesh 缓存复用，避免每帧 new Mesh 产生 GC
+// BlendShapeAnimator v1.7 - 添加 SkinnedMeshRenderer 包围盒扩展，防止轴心偏移导致视锥剔除（修复轴心偏移问题）
 
 //（BlendShaper混合变形顶点定位脚本）
 using UnityEngine;
@@ -31,6 +33,14 @@ public class BlendShapeAnimator : MonoBehaviour
     [Tooltip("勾选时只跟随 XZ 平面，Y 轴（高度）保持不变")]
     public bool ignoreTrackerZ = false;
 
+    // [Header("包围盒扩展（防止视锥剔除）")]
+    [Tooltip("扩展 SkinnedMeshRenderer 的 localBounds，防止轴心偏移时模型被提前剔除。0 = 不扩展")]
+    public float boundsExpand = 0f;
+    
+    // 缓存原始 localBounds，用于还原和以原始中心对称扩展
+    [HideInInspector] [SerializeField] private Bounds _originalBounds;
+    [HideInInspector] [SerializeField] private bool _originalBoundsSaved = false;
+
     // [Header("粒子速度控制")]
     [Tooltip("要控制 startSpeed 的粒子系统")]
     public ParticleSystem targetParticle;
@@ -50,6 +60,9 @@ public class BlendShapeAnimator : MonoBehaviour
     private float _particleSpeedFrom;     // 每段动画起始速度
     private float _particleSpeedTarget;   // 每段动画目标速度
 
+    // BakeMesh 缓存：避免每帧 new Mesh 产生 GC 分配
+    [System.NonSerialized] private Mesh _bakedMeshCache;
+
     // ── 辅助：统一获取 Mesh 和 Transform ─────────────────────────
 
     private Mesh GetMesh()
@@ -67,6 +80,7 @@ public class BlendShapeAnimator : MonoBehaviour
     {
         if (targetRenderer == null)
             targetRenderer = GetComponent<Renderer>();
+        ApplyBoundsExpand();
         if (playOnAwake) Play();
     }
 
@@ -116,6 +130,78 @@ public class BlendShapeAnimator : MonoBehaviour
         }
     }
 
+    // ── 包围盒扩展 ──────────────────────────────────────────────
+
+    /// 保存原始 localBounds（首次调用时缓存，后续不覆盖）
+    private void SaveOriginalBounds()
+    {
+        if (_originalBoundsSaved || targetRenderer == null) return;
+        if (targetRenderer is SkinnedMeshRenderer smr)
+        {
+            _originalBounds = smr.localBounds;
+            _originalBoundsSaved = true;
+        }
+    }
+
+    /// 基于原始 bounds center 对称扩展 extents，不偏移中心点
+    public void ApplyBoundsExpand()
+    {
+        if (boundsExpand <= 0f || targetRenderer == null) return;
+        if (targetRenderer is SkinnedMeshRenderer smr)
+        {
+            SaveOriginalBounds();
+            // 始终从原始 bounds 出发扩展，避免多次调用累积偏移
+            var b = _originalBounds;
+            b.extents += Vector3.one * (boundsExpand * 0.5f);
+            // center 保持原始值不变，不会偏移坐标轴
+            smr.localBounds = b;
+        }
+    }
+
+    /// 还原 localBounds 到原始值
+    public void ResetBounds()
+    {
+        if (!_originalBoundsSaved || targetRenderer == null) return;
+        if (targetRenderer is SkinnedMeshRenderer smr)
+        {
+            smr.localBounds = _originalBounds;
+        }
+    }
+
+    /// 从 sharedMesh 重新读取 bounds 并还原（注意：mesh.bounds 的 center 是相对于 mesh 原点的，
+    /// 可能与 SMR 的 localBounds 坐标空间不同，优先使用 Editor 的 FBX 重置功能）
+    public void ResetBoundsFromMesh()
+    {
+        if (targetRenderer == null) return;
+        if (targetRenderer is SkinnedMeshRenderer smr && smr.sharedMesh != null)
+        {
+            // 重新计算：将 mesh bounds 转换到以 rootBone 为参考的本地空间
+            Bounds meshBounds = smr.sharedMesh.bounds;
+            if (smr.rootBone != null)
+            {
+                // rootBone 存在时，localBounds 是相对于 rootBone 的
+                // mesh.bounds 是相对于 mesh 原点的，需要考虑 rootBone 与 mesh transform 的偏移
+                Vector3 rootLocalPos = smr.transform.InverseTransformPoint(smr.rootBone.position);
+                meshBounds.center -= rootLocalPos;
+            }
+            smr.localBounds = meshBounds;
+            _originalBounds = meshBounds;
+            _originalBoundsSaved = true;
+        }
+    }
+
+    /// 用指定的 Bounds 还原 localBounds（由 Editor 从 FBX 原始资产读取后传入）
+    public void ResetBoundsTo(Bounds bounds)
+    {
+        if (targetRenderer == null) return;
+        if (targetRenderer is SkinnedMeshRenderer smr)
+        {
+            smr.localBounds = bounds;
+            _originalBounds = bounds;
+            _originalBoundsSaved = true;
+        }
+    }
+
     // ── 顶点追踪 ──────────────────────────────────────────────────
 
     public Vector3 GetVertexWorldPosition(int vertexIndex)
@@ -141,14 +227,14 @@ public class BlendShapeAnimator : MonoBehaviour
 
         Vector3 localPos;
 
-        // SkinnedMeshRenderer 运行时用 BakeMesh 获取蒙皮结果
+        // SkinnedMeshRenderer 运行时用 BakeMesh 获取蒙皮结果（缓存复用）
         if (Application.isPlaying && targetRenderer is SkinnedMeshRenderer smr)
         {
-            Mesh baked = new Mesh();
-            smr.BakeMesh(baked);
-            Vector3[] bakedVerts = baked.vertices;
+            if (_bakedMeshCache == null)
+                _bakedMeshCache = new Mesh();
+            smr.BakeMesh(_bakedMeshCache);
+            Vector3[] bakedVerts = _bakedMeshCache.vertices;
             localPos = vertexIndex < bakedVerts.Length ? bakedVerts[vertexIndex] : baseVerts[vertexIndex];
-            DestroyImmediate(baked);
         }
         else
         {
@@ -234,5 +320,17 @@ public class BlendShapeAnimator : MonoBehaviour
         _particleSpeedCurrent = Mathf.Lerp(_particleSpeedFrom, _particleSpeedTarget, eased);
         var main = targetParticle.main;
         main.startSpeed = new ParticleSystem.MinMaxCurve(_particleSpeedCurrent);
+    }
+
+    private void OnDestroy()
+    {
+        if (_bakedMeshCache != null)
+        {
+            if (Application.isPlaying)
+                Destroy(_bakedMeshCache);
+            else
+                DestroyImmediate(_bakedMeshCache);
+            _bakedMeshCache = null;
+        }
     }
 }

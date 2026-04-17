@@ -31,6 +31,8 @@
 // PBR_Mobile6.1 添加变色通道控制，MRA贴图的a通道作为基础颜色蒙版
 // PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错
 // PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
+// PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）；Subtractive混合光照改用URP标准算法
+
 Shader "Custom/PBR_Mobile"
 {
     Properties
@@ -59,24 +61,24 @@ Shader "Custom/PBR_Mobile"
         _OcclusionStrength  ("AO Strength", Range(0, 1)) = 0.5
         [Toggle(_PREVIEWAO)] _PreviewAOMap ("Preview AO(B) Channel", Float) = 0
 
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0.001, 3)) = 1.0
         [Toggle(_FILPG)] _FilpG("Filp Green Channel", Float) = 0
         [Toggle(_DEBUGNORMAL)] _DebugNormal("Debug Normal Map", Float) = 0
         
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
         [HDR]_EmissionColor ("Emission Color", Color) = (1,1,1,1)
         _EmissionMap ("Emission Map", 2D) = "white" {}
         _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
         [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0   
         
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionStrength ("Reflection Strength", Range(0, 10)) = 2.0
@@ -85,8 +87,8 @@ Shader "Custom/PBR_Mobile"
         _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
         _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
         
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_USEPOINTLIGHT)] _UsePointlight("Use Point Lighting", Float) = 0
         _PointLightIntensity ("Point Light Intensity", Range(0, 8)) = 1.0
         _PointLightRangeMultiplier ("Range Multiplier", Range(0.1, 3)) = 1.0
@@ -94,7 +96,6 @@ Shader "Custom/PBR_Mobile"
         _PointLightAmount ("Light Amount", Range(1, 16)) = 4
 
         // [Header(7  (Custom Spot Lights))]
-        [Space(5)]
         [Toggle(_USESPOTLIGHT)] _UseSpotlight("Use Spot Lighting", Float) = 0
         _SpotLightIntensity ("Spot Light Intensity", Range(0, 8)) = 1.0
         _SpotLightRangeMultiplier ("Range Multiplier", Range(0.1, 3)) = 1.0
@@ -817,21 +818,24 @@ Shader "Custom/PBR_Mobile"
                     bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
-                // 使用预计算的diffuseColor和specularColor（性能优化）
-                half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
-                
-                // Subtractive模式特殊处理：让静态物体接收动态物体的实时阴影
-                #if defined(LIGHTMAP_ON) && defined(LIGHTMAP_SHADOW_MIXING)
-                    // Unity标准的Subtractive模式实现：
-                    // 在阴影区域，使用unity_ShadowColor调暗烘焙光照
-                    // shadowAttenuation: 1.0 = 无阴影, 0.0 = 完全阴影
-                    half shadowStrength = 1.0 - shadowAttenuation;
-                    half3 shadowTint = lerp(half3(1, 1, 1), unity_ShadowColor.rgb, shadowStrength);
-                    // 烘焙时金属部分的渲染
-                    ambient = lerp(ambient, ambient*ambient*0.2 , mat.metallic);
-                    // 将实时阴影应用到烘焙光照上（保持烘焙的所有细节）
-                    ambient *= shadowTint;
+                // Subtractive模式：使用URP标准方法从lightmap中减去主光贡献
+                #if defined(LIGHTMAP_ON) && defined(LIGHTMAP_SHADOW_MIXING) && !defined(SHADOWS_SHADOWMASK)
+                    half contributionTerm = saturate(dot(lightDir, mat.normalWS));
+                    half3 lambert = mainLight.color * contributionTerm;
+                    half3 estimatedLightContribution = lambert * (1.0 - mainLight.shadowAttenuation);
+                    half3 subtractedLightmap = bakedGI - estimatedLightContribution;
+                    half3 realtimeShadow = max(subtractedLightmap, unity_ShadowColor.xyz);
+                    realtimeShadow = lerp(bakedGI, realtimeShadow, GetMainLightShadowStrength());
+                    bakedGI = min(bakedGI, realtimeShadow);
                 #endif
+                
+                // 间接漫反射：bakedGI只作用于漫反射通道（与URP Lit一致的能量分配）
+                half3 ambient = bakedGI * mat.diffuseColor;
+                // 间接高光近似：金属材质从bakedGI获取间接高光（轻量近似，不采样反射探针）
+                half NoV = saturate(dot(mat.normalWS, viewDirWS));
+                half fresnelTerm = fastPow(1.0 - NoV, 4.0);
+                half3 indirectSpecular = bakedGI * mat.specularColor * (fresnelTerm * mat.smoothness + mat.metallic * 0.15);
+                ambient += indirectSpecular;
                 
                 // 合成最终颜色：环境光 + 实时光照
                 half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
@@ -1036,6 +1040,108 @@ Shader "Custom/PBR_Mobile"
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 
                 return input.positionCS.z;
+            }
+            ENDHLSL
+        }
+        
+        // Meta Pass - 烘焙器读取材质albedo和emission的入口
+        Pass
+        {
+            Name "Meta"
+            Tags { "LightMode" = "Meta" }
+            Cull Off
+
+            HLSLPROGRAM
+            #pragma vertex UniversalVertexMeta
+            #pragma fragment frag_meta
+
+            #pragma shader_feature_local _USEMSAMAP
+            #pragma shader_feature_local _USEEMISSIONMAP
+            #pragma shader_feature_local _INVERTEMISMAP
+            #pragma shader_feature EDITOR_VISUALIZATION
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+            TEXTURE2D(_MetallicGlossMap);
+            SAMPLER(sampler_MetallicGlossMap);
+            TEXTURE2D(_EmissionMap);
+            SAMPLER(sampler_EmissionMap);
+
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Roughness;
+                half _SpecularScale;
+                half _ShadowScale;
+                half _HalfLambert;
+                half _Brightness;
+                half _BumpScale;
+                half _OcclusionContrast;
+                half _OcclusionStrength;
+                half _EmissionScale;
+                half4 _EmissionColor;
+                
+                half _PointLightIntensity;
+                half _PointLightRangeMultiplier;
+                half _PointLightFalloff;
+                half _PointLightAmount;
+                
+                half _SpotLightIntensity;
+                half _SpotLightRangeMultiplier;
+                half _SpotLightFalloff;
+                half _SpotLightAmount;
+                
+                half _SpotTextureContrast;
+                half _SpotTextureSize;
+                half _SpotTextureIntensity;
+                
+                float3 _BakedSpecularDirection;
+                
+                float _ReflectionStrength;
+                float _ReflectionBlur;
+                float _ReflectionFresnelPower;
+                float _ReflectionFresnelBias;
+            CBUFFER_END
+
+            // UniversalMetaPass必须在CBUFFER之后include，因为其中的UniversalVertexMeta使用了_BaseMap_ST
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/UniversalMetaPass.hlsl"
+
+            half4 frag_meta(Varyings input) : SV_Target
+            {
+                float2 uv = input.uv;
+                half4 baseMap = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
+                half3 albedo = baseMap.rgb * _BaseColor.rgb;
+
+                half metallic = _Metallic;
+                half roughness = _Roughness;
+                #ifdef _USEMSAMAP
+                    half4 mra = SAMPLE_TEXTURE2D(_MetallicGlossMap, sampler_MetallicGlossMap, uv);
+                    metallic *= mra.r;
+                    roughness *= mra.g;
+                #endif
+
+                // 与URP Lit一致的能量守恒分配
+                half oneMinusReflectivity = (1.0 - metallic) * 0.96;
+                half3 diffuse = albedo * oneMinusReflectivity;
+                half3 specular = lerp(half3(0.04, 0.04, 0.04), albedo, metallic);
+
+                MetaInput metaInput;
+                metaInput.Albedo = diffuse + specular * roughness * 0.5;
+
+                #ifdef _USEEMISSIONMAP
+                    half3 emissionMap = SAMPLE_TEXTURE2D(_EmissionMap, sampler_EmissionMap, uv).rgb;
+                    #ifdef _INVERTEMISMAP
+                        emissionMap = 1.0 - emissionMap;
+                    #endif
+                    metaInput.Emission = emissionMap * _EmissionColor.rgb * _EmissionScale;
+                #else
+                    metaInput.Emission = half3(0, 0, 0);
+                #endif
+
+                return UniversalFragmentMeta(input, metaInput);
             }
             ENDHLSL
         }

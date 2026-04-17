@@ -6,23 +6,23 @@ Shader "Custom/Glass_carWindow"
     Properties
     {
         [Header(Glass Properties)]
-        [Space(5)]
+        // [Space(5)]
         [MainColor]_BaseColor ("Base Color", Color) = (0.8, 0.9, 1.0, 0.0)
         _Transparency ("Global Transparency", Range(0, 1)) = 1
         
         [Header(Specular)]
-        [Space(5)]
+        // [Space(5)]
         _Smoothness ("Smoothness", Range(0.01, 1)) = 0.55
         _SpecularStrength ("Specular Strength", Range(0, 1)) = 0.5
         
-        [Header(Distortion)]
-        [Space(5)]
+        // [Header(Distortion)]
+        // [Space(5)]
         [Toggle(_USENORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0, 1)) = 0.5
         
-        [Header(Reflection)]
-        [Space(5)]
+        // [Header(Reflection)]
+        // [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection Map", Float) = 1
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionScale ("Reflection Scale", Range(0.1, 6.0)) = 1.2
@@ -34,15 +34,15 @@ Shader "Custom/Glass_carWindow"
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.12
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.0
         
-        [Header(Fresnel Ramp)]
-        [Space(5)]
+        // [Header(Fresnel Ramp)]
+        // [Space(5)]
         [Toggle(_USEFRESNELRAMP)] _UseFresnelRamp("Use Fresnel Ramp", Float) = 0
         _FresnelRampTexture ("Fresnel Ramp Texture", 2D) = "white" {}
         _FresnelRampRow ("Fresnel Ramp Row", Range(0.01, 0.99)) = 0.99
         _FresnelRampIntensity ("Fresnel Ramp Intensity", Range(0, 2)) = 0.2
         
         [Header(Render Settings)]
-        [Space(5)]
+        // [Space(5)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
     }
 

@@ -3,23 +3,22 @@
 // Glass_MobileNew.v2.2 添加法线控制顶点位移、uv游走实现水柱流动效果
 // Glass_MobileNew.v2.3 添加顶点颜色R通道作为顶点位移蒙版，约束水流起始位置的偏移
 // Glass_MobileNew.v2.4 修复法线控制顶点位移跳动问题
+// Glass_MobileNew.v2.5 优化场景模糊：_SceneBlurStrength 为 0 时跳过 9 点采样，直接单次采样
 Shader "Custom/Glass_MobileNew"
 {
     Properties
     {
         [Header(Glass Properties)]
-        [Space(5)]
+        // [Space(5)]
         [MainColor]_BaseColor ("Base Color", Color) = (1,1,1,0.5)
         _Transparency ("Global Transparency", Range(0, 1)) = 0.98
         
-        [Header(Specular)]
-        [Space(5)]
+        // [Header(Specular)]
         _Smoothness ("Smoothness", Range(0.01, 1)) = 0.88
         _SpecularStrength ("Specular Strength", Range(0, 1)) = 0.8
         _SceneBlurStrength ("Scene Blur Strength", Range(0, 1)) = 1
         
-        [Header(Distortion)]
-        [Space(5)]
+        // [Header(Distortion)]
         [Toggle(_USENORMALMAP)] _UseNormalMap ("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0, 2)) = 0.6
@@ -28,26 +27,22 @@ Shader "Custom/Glass_MobileNew"
         [Toggle(_USEVERTEXDEFORM)] _UseVertexDeform ("Vertex Deform", Float) = 0
         _VertexDeformStrength ("Deform Strength", Range(0, 1.5)) = 0.2
         
-        [Header(Refraction)]
-        [Space(5)]
+        // [Header(Refraction)]
         [Toggle(_USEREFRACTION)] _UseRefraction ("Use Refraction", Float) = 1
         _RefractionStrength ("Refraction Strength", Range(-1.81, 1.81)) = -0.3
         
-        [Header(Reflection)]
-        [Space(5)]
+        // [Header(Reflection)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection Map", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionScale ("Reflection Scale", Range(0.0, 2.0)) = 1.0
         _ReflectionBlur ("Max Reflection Blur", Range(0, 6)) = 6.0
         
         [Header(Fresnel)]
-        [Space(5)]
         _FresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.86
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.072
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.2
         
         [Header(Render Settings)]
-        [Space(5)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
     }
 
@@ -349,9 +344,17 @@ Shader "Custom/Glass_MobileNew"
                 
                 // 根据光滑度计算模糊级别（光滑度越低，模糊越强）
                 // _Smoothness: 0 = 粗糙（最大模糊），1 = 光滑（无模糊）
-                // _SceneBlurStrength: 控制整体模糊强度
-                float blurAmount = (1.0 - _Smoothness) * _SceneBlurStrength * 6.0; // 模糊强度范围 0-3
-                half3 sceneColor = SampleSceneColorBlurred(finalScreenUV, blurAmount);
+                // _SceneBlurStrength 或 _Smoothness 任一为极值时，直接单次采样跳过 9 点模糊
+                half3 sceneColor;
+                float blurAmount = (1.0 - _Smoothness) * _SceneBlurStrength * 6.0;
+                if (blurAmount < 0.01)
+                {
+                    sceneColor = SampleSceneColor(finalScreenUV).rgb;
+                }
+                else
+                {
+                    sceneColor = SampleSceneColorBlurred(finalScreenUV, blurAmount);
+                }
                 
                 // 光照计算（优化版）
                 Light mainLight = GetMainLight();

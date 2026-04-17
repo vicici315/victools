@@ -25,6 +25,121 @@ public class BlendShapeAnimatorEditor : Editor
         if (!Application.isPlaying) SceneView.RepaintAll();
     }
 
+    /// 从 FBX 原始资产中加载 SkinnedMeshRenderer 的原始 localBounds
+    /// 注意：不能用 mesh.bounds 替代，因为 SMR 的 localBounds 是相对于 rootBone 的，
+    /// 而 mesh.bounds 是相对于 mesh 原点的，两者 center 不同
+    private static Bounds? GetOriginalFBXBounds(SkinnedMeshRenderer currentSMR)
+    {
+        Mesh currentMesh = currentSMR.sharedMesh;
+        if (currentMesh == null) return null;
+        
+        string assetPath = AssetDatabase.GetAssetPath(currentMesh);
+        if (string.IsNullOrEmpty(assetPath)) return null;
+        
+        // 从 FBX 资产实例化临时对象，读取其 SkinnedMeshRenderer 的原始 localBounds
+        GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+        if (prefab == null) return null;
+        
+        // 在 FBX 的层级中查找同名的 SkinnedMeshRenderer
+        var allSMRs = prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+        foreach (var smr in allSMRs)
+        {
+            if (smr.sharedMesh == currentMesh || smr.sharedMesh.name == currentMesh.name)
+            {
+                return smr.localBounds;
+            }
+        }
+        
+        // 如果名字匹配不到，返回第一个 SMR 的 localBounds
+        if (allSMRs.Length > 0)
+        {
+            return allSMRs[0].localBounds;
+        }
+        
+        return null;
+    }
+
+    /// 从 FBX 原始资产还原 sharedMesh 和 localBounds
+    /// 修复 LatticeModifier.BakeAndRemove 后 mesh 被替换为运行时副本导致轴心偏移的问题
+    private static void RestoreMeshFromFBX(SkinnedMeshRenderer smr)
+    {
+        if (smr == null || smr.sharedMesh == null) return;
+        
+        Mesh currentMesh = smr.sharedMesh;
+        string assetPath = AssetDatabase.GetAssetPath(currentMesh);
+        
+        // 如果当前 mesh 没有资产路径（运行时创建的），尝试通过名字找原始 FBX
+        if (string.IsNullOrEmpty(assetPath))
+        {
+            // 去掉 _LatticeDeform 后缀尝试搜索
+            string meshName = currentMesh.name;
+            if (meshName.EndsWith("_LatticeDeform"))
+                meshName = meshName.Substring(0, meshName.Length - "_LatticeDeform".Length);
+            
+            // 在项目中搜索同名 mesh
+            string[] guids = AssetDatabase.FindAssets($"{meshName} t:Mesh");
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                // 只查找 FBX/模型文件
+                string ext = System.IO.Path.GetExtension(path).ToLower();
+                if (ext == ".fbx" || ext == ".obj" || ext == ".blend" || ext == ".dae")
+                {
+                    var allAssets = AssetDatabase.LoadAllAssetsAtPath(path);
+                    foreach (var asset in allAssets)
+                    {
+                        if (asset is Mesh fbxMesh && fbxMesh.name == meshName)
+                        {
+                            Undo.RecordObject(smr, "还原Mesh到FBX原始资产");
+                            smr.sharedMesh = fbxMesh;
+                            // 同时从 FBX 还原 localBounds
+                            GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(path);
+                            if (prefab != null)
+                            {
+                                var fbxSMRs = prefab.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+                                foreach (var fbxSMR in fbxSMRs)
+                                {
+                                    if (fbxSMR.sharedMesh == fbxMesh || fbxSMR.sharedMesh.name == meshName)
+                                    {
+                                        smr.localBounds = fbxSMR.localBounds;
+                                        break;
+                                    }
+                                }
+                            }
+                            EditorUtility.SetDirty(smr);
+                            Debug.Log($"[BlendShapeAnimator] 已从 '{path}' 还原原始 Mesh '{meshName}'，轴心已恢复");
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            Debug.LogError($"[BlendShapeAnimator] 无法找到原始 FBX 资产，当前 Mesh 名称: '{currentMesh.name}'。请手动将原始 FBX 的 Mesh 拖入 SkinnedMeshRenderer");
+            return;
+        }
+        
+        // 当前 mesh 有资产路径，说明它本身就是 FBX 资产中的 mesh，直接从资产重新加载
+        GameObject prefabFromPath = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+        if (prefabFromPath != null)
+        {
+            var fbxSMRs = prefabFromPath.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            foreach (var fbxSMR in fbxSMRs)
+            {
+                if (fbxSMR.sharedMesh != null && fbxSMR.sharedMesh.name == currentMesh.name)
+                {
+                    Undo.RecordObject(smr, "还原Mesh到FBX原始资产");
+                    smr.sharedMesh = fbxSMR.sharedMesh;
+                    smr.localBounds = fbxSMR.localBounds;
+                    EditorUtility.SetDirty(smr);
+                    Debug.Log($"[BlendShapeAnimator] 已从 '{assetPath}' 还原原始 Mesh 和 localBounds");
+                    return;
+                }
+            }
+        }
+        
+        Debug.LogWarning($"[BlendShapeAnimator] 资产路径 '{assetPath}' 中未找到匹配的 SkinnedMeshRenderer");
+    }
+
     // 统一获取 Mesh（兼容 SkinnedMeshRenderer 和 MeshFilter）
     private static Mesh GetMesh(BlendShapeAnimator anim)
     {
@@ -100,6 +215,48 @@ public class BlendShapeAnimatorEditor : Editor
 
         EditorGUILayout.PropertyField(so.FindProperty("vertexTracker"));
         EditorGUILayout.PropertyField(so.FindProperty("ignoreTrackerZ"));
+
+        // 包围盒扩展
+        using (new GUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            EditorGUILayout.LabelField("包围盒扩展（防止视锥剔除）", EditorStyles.boldLabel);
+            EditorGUILayout.PropertyField(so.FindProperty("boundsExpand"), new GUIContent("扩展量", "基于原始 bounds center 对称扩展 extents，不偏移坐标轴。0 = 不扩展"));
+            if (so.FindProperty("boundsExpand").floatValue > 0f && anim.targetRenderer is SkinnedMeshRenderer)
+            {
+                EditorGUILayout.HelpBox("Awake 时将自动扩展包围盒（以原始中心对称扩展，不偏移坐标轴）。", MessageType.Info);
+                if (GUILayout.Button("立即应用包围盒扩展"))
+                {
+                    Undo.RecordObject(anim.targetRenderer, "应用包围盒扩展");
+                    Undo.RecordObject(anim, "保存原始包围盒");
+                    anim.ApplyBoundsExpand();
+                    EditorUtility.SetDirty(anim.targetRenderer);
+                    EditorUtility.SetDirty(anim);
+                }
+            }
+            else if (so.FindProperty("boundsExpand").floatValue > 0f && anim.targetRenderer != null)
+            {
+                EditorGUILayout.HelpBox("包围盒扩展仅对 SkinnedMeshRenderer 有效。", MessageType.Warning);
+            }
+            
+            // 还原按钮（始终显示，只要是 SkinnedMeshRenderer）
+            if (anim.targetRenderer is SkinnedMeshRenderer smrForReset)
+            {
+                EditorGUILayout.Space(2);
+                GUI.backgroundColor = new Color(1f, 0.7f, 0.4f);
+                if (GUILayout.Button("还原 Mesh 与包围盒到 FBX 原始状态", GUILayout.Height(26)))
+                {
+                    RestoreMeshFromFBX(smrForReset);
+                    Bounds? fbxBounds = GetOriginalFBXBounds(smrForReset);
+                    if (fbxBounds.HasValue)
+                    {
+                        Undo.RecordObject(anim, "重置原始包围盒缓存");
+                        anim.ResetBoundsTo(fbxBounds.Value);
+                        EditorUtility.SetDirty(anim);
+                    }
+                }
+                GUI.backgroundColor = Color.white;
+            }
+        }
 
         bool changed = EditorGUI.EndChangeCheck();
         so.ApplyModifiedProperties();

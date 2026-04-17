@@ -9,7 +9,21 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
-### 版本 2.8.3
+### 版本 2.9.1
+
+- PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）
+
+- 优化所有自定义Shader UI布局，归类更清晰。
+
+- PBR_Lighting.shadergraph 材质修复主贴图Tilling Offset参数的共用问题。
+
+- BlendShapeAnimator v1.7 - 添加 SkinnedMeshRenderer 包围盒扩展，防止轴心偏移导致视锥剔除（修复轴心偏移问题）
+
+  ![image-20260417170533616](./README.assets/image-20260417170533616.png)
+
+
+
+### 版本 2.9.0
 
 - OutlineOffset_URP v1.1 添加轮廓外描边材质。
 
@@ -40,6 +54,10 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
   ![image-20260409115948288](./README.assets/image-20260409115948288.png)
 
 - PBR_Mobile_Trans.shader 继承PBR_Mobile6.3 添加“禁用主光颜色”选项。
+
+- CustomParticle 1.2 水质感粒子材质，粒子系统控制透明
+
+  ![image-20260416105422156](./README.assets/image-20260416105422156.png)
 
 
 

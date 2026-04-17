@@ -184,7 +184,7 @@ public class FPS : MonoBehaviour
                 ? (gpuEstimated ? $"~{gpuMs:0.0}" : $"{gpuMs:0.0}")
                 : "--";
 
-            fpsText.text = $"FPS:{displayFps:0.0}{frameRateInfo}\nCPU:{cpuStr}ms\nGPU:{gpuStr}ms";
+            fpsText.text = $"{frameRateInfo}FPS:{displayFps:0.0}\nCPU:{cpuStr}ms\nGPU:{gpuStr}ms";
         }
         else
         {

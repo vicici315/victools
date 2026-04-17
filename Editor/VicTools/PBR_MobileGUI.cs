@@ -87,30 +87,46 @@ public class PBR_MobileGUI : ShaderGUI
         DrawGlobalSettings();
         
         // EditorGUILayout.Space(5);
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawBaseProperties();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawMetallicRoughnessAO();
+        }
         // EditorGUILayout.Space(5);
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawNormalMap();
+        }
         // EditorGUILayout.Space(5);
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawEmission();
+        }
         // EditorGUILayout.Space(5);
         
         // 反射功能对两个版本都可用
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawReflection();
+        }
         
         // 只在非 Trans 版本显示点光源和聚光灯
         if (!isTransShader)
         {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
             DrawPointLights();
+            }
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
             DrawSpotLights();
+            }
             // EditorGUILayout.Space(5);
         }        
         
         if (isTransShader)
         {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
             DrawAlphaCull();
+            }
         }
-        EditorGUILayout.Space(5);
+        // EditorGUILayout.Space(5);
         DrawPerformance();
     }
 
@@ -415,7 +431,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawAlphaCull()
     {
-        EditorGUILayout.Space(5);
+        // EditorGUILayout.Space(5);
         if (_SrcBlend != null)
             m_MaterialEditor.ShaderProperty(_SrcBlend, "源混合模式");
         if (_DstBlend != null)

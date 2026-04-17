@@ -80,7 +80,6 @@ Shader "Custom/Fx/CustomParticle"
 
             CBUFFER_START(UnityPerMaterial)
                 half4 _MainTex_ST;
-                half4 _BumpMap_ST;
                 half4 _Color;
                 half4 _ScrollSpeed;
                 half  _WetStrength;
@@ -176,7 +175,7 @@ Shader "Custom/Fx/CustomParticle"
                     // 法线贴图扰动（可选）
                     #if defined(_USENORMALMAP)
                     {
-                        half2 bumpUV = TRANSFORM_TEX(input.uv, _BumpMap);
+                        half2 bumpUV = TRANSFORM_TEX(input.uv, _MainTex);
                         half3 normalTS = UnpackNormal(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, bumpUV));
                         normalTS.xy *= _BumpScale;
                         normalTS.z   = sqrt(1.0h - saturate(dot(normalTS.xy, normalTS.xy)));
@@ -244,4 +243,5 @@ Shader "Custom/Fx/CustomParticle"
     }
 
     FallBack "Particles/Additive"
+    CustomEditor "CustomParticleGUI"
 }

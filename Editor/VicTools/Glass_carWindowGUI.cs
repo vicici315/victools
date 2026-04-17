@@ -46,13 +46,27 @@ public class Glass_carWindowGUI : ShaderGUI
 
         // 绘制 GUI
         DrawGlobalSettings();
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawGlassProperties();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawSpecular();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawDistortion();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawRefraction(); // Glass_MobileNew独有
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawReflection();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawFresnel();
+        }
+        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawFresnelRamp(); // Glass_carWindow独有
+        }
         DrawRenderSettings();
     }
 
@@ -276,11 +290,11 @@ public class Glass_carWindowGUI : ShaderGUI
 
     private void DrawRenderSettings()
     {
-        // 根据是否有折射功能来决定标题编号
-        // string sectionNumber = (useRefraction != null) ? "8" : "7";
-        // GUILayout.Label($"{sectionNumber} ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
         GUILayout.Label("7 ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
         m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
+        m_MaterialEditor.RenderQueueField();
+        m_MaterialEditor.EnableInstancingField();
+        m_MaterialEditor.DoubleSidedGIField();
     }
 
     /// 获取材质参数存档路径
@@ -352,9 +366,6 @@ public class Glass_carWindowGUI : ShaderGUI
             
             if (!material.HasProperty(propertyName)) continue;
             
-            // 排除纹理
-            if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
-            
             if (!first) sb.AppendLine(",");
             first = false;
             
@@ -376,6 +387,22 @@ public class Glass_carWindowGUI : ShaderGUI
                 case ShaderUtil.ShaderPropertyType.Range:
                     sb.Append(material.GetFloat(propertyName).ToString());
                     break;
+                    
+                case ShaderUtil.ShaderPropertyType.TexEnv:
+                    Texture tex = material.GetTexture(propertyName);
+                    string texPath = "";
+                    if (tex != null)
+                    {
+                        texPath = AssetDatabase.GetAssetPath(tex);
+                    }
+                    Vector2 tiling = material.GetTextureScale(propertyName);
+                    Vector2 offset = material.GetTextureOffset(propertyName);
+                    sb.Append("{");
+                    sb.Append($"\"path\": \"{EscapeJsonString(texPath)}\", ");
+                    sb.Append($"\"tiling\": [{tiling.x}, {tiling.y}], ");
+                    sb.Append($"\"offset\": [{offset.x}, {offset.y}]");
+                    sb.Append("}");
+                    break;
             }
         }
         
@@ -386,7 +413,14 @@ public class Glass_carWindowGUI : ShaderGUI
         string path = GetPresetPath(presetName);
         System.IO.File.WriteAllText(path, sb.ToString());
         
-        Debug.Log($"玻璃材质参数已保存到: {path}");
+        Debug.Log($"玻璃材质参数已保存到: {path}（含纹理引用）");
+    }
+    
+    /// JSON字符串转义（处理路径中的反斜杠）
+    private static string EscapeJsonString(string str)
+    {
+        if (string.IsNullOrEmpty(str)) return "";
+        return str.Replace("\\", "/");
     }
     
     /// 读档材质参数
@@ -417,7 +451,7 @@ public class Glass_carWindowGUI : ShaderGUI
     }
     
     /// 从文件加载材质参数
-    private void LoadMaterialParametersFromFile(string filePath)
+    private void LoadMaterialParametersFromFile(string filePath, bool isReset = false)
     {
         Material material = m_MaterialEditor.target as Material;
         if (material == null || material.shader == null) return;
@@ -428,82 +462,181 @@ public class Glass_carWindowGUI : ShaderGUI
             return;
         }
         
-        // 记录撤销操作
-        Undo.RecordObject(material, "Load Glass Material Parameters");
-        
         // 读取JSON
         string json = System.IO.File.ReadAllText(filePath);
+        
+        // 检测存档中是否包含纹理数据
+        bool hasTextureData = json.Contains("\"path\":");
+        bool loadTextures = false;
+        
+        if (hasTextureData && !isReset)
+        {
+            loadTextures = EditorUtility.DisplayDialog("读取纹理",
+                "存档中包含纹理贴图引用，是否同时读取纹理？\n\n选择「是」将还原纹理贴图及Tiling/Offset\n选择「否」仅读取数值参数",
+                "是，读取纹理", "否，仅参数");
+        }
+        
+        // 记录撤销操作
+        Undo.RecordObject(material, "Load Glass Material Parameters");
         
         // 手动解析JSON
         var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
         
-        foreach (var line in lines)
+        // 收集缺失纹理的警告信息
+        System.Collections.Generic.List<string> missingTextures = new System.Collections.Generic.List<string>();
+        
+        for (int lineIdx = 0; lineIdx < lines.Length; lineIdx++)
         {
-            if (line.Contains(":"))
+            string line = lines[lineIdx];
+            if (!line.Contains(":")) continue;
+            
+            string trimmed = line.Trim().TrimEnd(',');
+            int colonIndex = trimmed.IndexOf(':');
+            if (colonIndex < 0) continue;
+            
+            string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
+            string valueStr = trimmed.Substring(colonIndex + 1).Trim();
+            
+            if (!material.HasProperty(propertyName)) continue;
+            
+            // 纹理类型：值以 { 开头
+            if (valueStr.StartsWith("{"))
             {
-                // 简单解析 "propertyName": value
-                string trimmed = line.Trim().TrimEnd(',');
-                int colonIndex = trimmed.IndexOf(':');
-                if (colonIndex < 0) continue;
+                if (!loadTextures) continue;
                 
-                string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
-                string valueStr = trimmed.Substring(colonIndex + 1).Trim();
-                
-                if (!material.HasProperty(propertyName)) continue;
-                
-                // 判断值类型
-                if (valueStr.StartsWith("["))
+                // 拼接多行直到找到 }
+                string texJson = valueStr;
+                while (!texJson.Contains("}") && lineIdx + 1 < lines.Length)
                 {
-                    // 数组类型（Color或Vector）
-                    valueStr = valueStr.Trim('[', ']');
-                    string[] parts = valueStr.Split(',');
-                    if (parts.Length == 4)
+                    lineIdx++;
+                    texJson += lines[lineIdx];
+                }
+                
+                // 解析纹理路径
+                string texPath = ExtractJsonStringValue(texJson, "path");
+                
+                if (!string.IsNullOrEmpty(texPath))
+                {
+                    Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                    if (tex != null)
                     {
-                        float[] values = new float[4];
-                        for (int i = 0; i < 4; i++)
-                        {
-                            float.TryParse(parts[i].Trim(), out values[i]);
-                        }
-                        
-                        // 尝试设置为Color或Vector
-                        try
-                        {
-                            material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
-                        }
-                        catch
-                        {
-                            material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
-                        }
+                        material.SetTexture(propertyName, tex);
+                    }
+                    else
+                    {
+                        missingTextures.Add($"  {propertyName}: {texPath}");
                     }
                 }
                 else
                 {
-                    // Float类型
-                    if (float.TryParse(valueStr, out float floatValue))
+                    // 路径为空，清除纹理
+                    material.SetTexture(propertyName, null);
+                }
+                
+                // 解析 tiling
+                float[] tilingValues = ExtractJsonFloatArray(texJson, "tiling");
+                if (tilingValues != null && tilingValues.Length == 2)
+                {
+                    material.SetTextureScale(propertyName, new Vector2(tilingValues[0], tilingValues[1]));
+                }
+                
+                // 解析 offset
+                float[] offsetValues = ExtractJsonFloatArray(texJson, "offset");
+                if (offsetValues != null && offsetValues.Length == 2)
+                {
+                    material.SetTextureOffset(propertyName, new Vector2(offsetValues[0], offsetValues[1]));
+                }
+                
+                continue;
+            }
+            
+            // 数组类型（Color或Vector）
+            if (valueStr.StartsWith("["))
+            {
+                valueStr = valueStr.Trim('[', ']');
+                string[] parts = valueStr.Split(',');
+                if (parts.Length == 4)
+                {
+                    float[] values = new float[4];
+                    for (int i = 0; i < 4; i++)
                     {
-                        material.SetFloat(propertyName, floatValue);
+                        float.TryParse(parts[i].Trim(), out values[i]);
                     }
+                    
+                    try
+                    {
+                        material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
+                    }
+                    catch
+                    {
+                        material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                    }
+                }
+            }
+            else
+            {
+                // Float类型
+                if (float.TryParse(valueStr, out float floatValue))
+                {
+                    material.SetFloat(propertyName, floatValue);
                 }
             }
         }
         
-        // 同步 shader_feature toggle 对应的 keyword，确保渲染分支（含透明排序）正确切换
-        // 注意：不能用 material.shader = material.shader，那会重置所有 keyword
-        SyncShaderKeywords(material);
-        
-        // 刷新材质
-        EditorUtility.SetDirty(material);
-        
-        // 刷新材质编辑器
-        if (m_MaterialEditor != null)
+        // 显示缺失纹理警告
+        if (missingTextures.Count > 0)
         {
-            m_MaterialEditor.Repaint();
+            string msg = "以下纹理资源不存在，已跳过：\n\n" + string.Join("\n", missingTextures);
+            EditorUtility.DisplayDialog("纹理缺失警告", msg, "确定");
+            Debug.LogWarning("[Glass_carWindowGUI] 读档时部分纹理资源不存在:\n" + string.Join("\n", missingTextures));
         }
         
-        // 刷新场景视图
+        // 同步 shader_feature toggle 对应的 keyword
+        SyncShaderKeywords(material);
+        
+        EditorUtility.SetDirty(material);
+        if (m_MaterialEditor != null) m_MaterialEditor.Repaint();
         SceneView.RepaintAll();
         
-        Debug.Log($"玻璃材质参数已从存档加载: {filePath}");
+        string texInfo = loadTextures ? "（含纹理）" : "（仅参数）";
+        Debug.Log($"玻璃材质参数已从存档加载{texInfo}: {filePath}");
+    }
+    
+    /// 从简易JSON中提取字符串值
+    private static string ExtractJsonStringValue(string json, string key)
+    {
+        string search = "\"" + key + "\":";
+        int idx = json.IndexOf(search);
+        if (idx < 0) return null;
+        
+        int start = json.IndexOf('"', idx + search.Length);
+        if (start < 0) return null;
+        int end = json.IndexOf('"', start + 1);
+        if (end < 0) return null;
+        
+        return json.Substring(start + 1, end - start - 1);
+    }
+    
+    /// 从简易JSON中提取浮点数组
+    private static float[] ExtractJsonFloatArray(string json, string key)
+    {
+        string search = "\"" + key + "\":";
+        int idx = json.IndexOf(search);
+        if (idx < 0) return null;
+        
+        int start = json.IndexOf('[', idx);
+        if (start < 0) return null;
+        int end = json.IndexOf(']', start);
+        if (end < 0) return null;
+        
+        string arrayStr = json.Substring(start + 1, end - start - 1);
+        string[] parts = arrayStr.Split(',');
+        float[] result = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+        {
+            float.TryParse(parts[i].Trim(), out result[i]);
+        }
+        return result;
     }
     
     /// 同步所有 shader_feature toggle 对应的 keyword
@@ -549,14 +682,14 @@ public class Glass_carWindowGUI : ShaderGUI
                 "将使用Default存档重置参数。\n\n注意：纹理不会被重置。", 
                 "确定", "取消"))
             {
-                LoadMaterialParametersFromFile(defaultPresetPath);
+                LoadMaterialParametersFromFile(defaultPresetPath, true);
             }
         }
         else
         {
             // Default存档不存在，创建它
             if (EditorUtility.DisplayDialog("创建Default存档", 
-                "Default存档不存在，将使用Shader默认值创建Default存档。\n\n注意：纹理不会被保存。", 
+                "Default存档不存在，将使用Shader默认值创建Default存档。", 
                 "确定", "取消"))
             {
                 // 创建临时材质以获取shader默认值
@@ -565,8 +698,10 @@ public class Glass_carWindowGUI : ShaderGUI
                 Shader shader = material.shader;
                 int propertyCount = ShaderUtil.GetPropertyCount(shader);
                 
-                // 创建参数字典
-                System.Collections.Generic.Dictionary<string, object> parameters = new System.Collections.Generic.Dictionary<string, object>();
+                // 手动构建JSON（与SaveMaterialParametersToFile一致的格式）
+                System.Text.StringBuilder sb = new System.Text.StringBuilder();
+                sb.AppendLine("{");
+                bool first = true;
                 
                 for (int i = 0; i < propertyCount; i++)
                 {
@@ -575,61 +710,42 @@ public class Glass_carWindowGUI : ShaderGUI
                     
                     if (!tempMaterial.HasProperty(propertyName)) continue;
                     
-                    // 排除纹理
-                    if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+                    if (!first) sb.AppendLine(",");
+                    first = false;
+                    
+                    sb.Append("  \"" + propertyName + "\": ");
                     
                     switch (propertyType)
                     {
                         case ShaderUtil.ShaderPropertyType.Color:
-                            Color color = tempMaterial.GetColor(propertyName);
-                            parameters[propertyName] = new float[] { color.r, color.g, color.b, color.a };
+                            Color c = tempMaterial.GetColor(propertyName);
+                            sb.Append($"[{c.r}, {c.g}, {c.b}, {c.a}]");
                             break;
-                            
                         case ShaderUtil.ShaderPropertyType.Vector:
-                            Vector4 vector = tempMaterial.GetVector(propertyName);
-                            parameters[propertyName] = new float[] { vector.x, vector.y, vector.z, vector.w };
+                            Vector4 v = tempMaterial.GetVector(propertyName);
+                            sb.Append($"[{v.x}, {v.y}, {v.z}, {v.w}]");
                             break;
-                            
                         case ShaderUtil.ShaderPropertyType.Float:
                         case ShaderUtil.ShaderPropertyType.Range:
-                            parameters[propertyName] = tempMaterial.GetFloat(propertyName);
+                            sb.Append(tempMaterial.GetFloat(propertyName).ToString());
+                            break;
+                        case ShaderUtil.ShaderPropertyType.TexEnv:
+                            sb.Append("{\"path\": \"\", \"tiling\": [1, 1], \"offset\": [0, 0]}");
                             break;
                     }
                 }
                 
-                // 序列化为JSON（手动构建简单JSON）
-                System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                sb.AppendLine("{");
-                bool first = true;
-                foreach (var kvp in parameters)
-                {
-                    if (!first) sb.AppendLine(",");
-                    first = false;
-                    
-                    sb.Append("  \"" + kvp.Key + "\": ");
-                    
-                    if (kvp.Value is float[])
-                    {
-                        float[] arr = (float[])kvp.Value;
-                        sb.Append($"[{arr[0]}, {arr[1]}, {arr[2]}, {arr[3]}]");
-                    }
-                    else
-                    {
-                        sb.Append(kvp.Value.ToString());
-                    }
-                }
                 sb.AppendLine();
                 sb.AppendLine("}");
                 
-                // 保存Default存档
                 System.IO.File.WriteAllText(defaultPresetPath, sb.ToString());
                 
                 Object.DestroyImmediate(tempMaterial);
                 
                 Debug.Log($"玻璃材质Default存档已创建: {defaultPresetPath}");
                 
-                // 加载Default存档
-                LoadMaterialParametersFromFile(defaultPresetPath);
+                // 加载Default存档（重置模式，不弹纹理提示）
+                LoadMaterialParametersFromFile(defaultPresetPath, true);
             }
         }
     }

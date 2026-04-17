@@ -46,24 +46,24 @@ Shader "Custom/PBR_Mobile_Trans"
         [Toggle(_PREVIEWAO)] _PreviewAOMap ("Preview AO(B) Channel", Float) = 0
         _Cutoff("Alpha Cutoff", Range(0.001, 1.0)) = 0.5
 
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0.001, 3)) = 1.0
         [Toggle(_FILPG)] _FilpG("Filp Green Channel", Float) = 0
         [HideInInspector] _DebugNormal("Debug Normal Map", Float) = 0
         
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
         [HDR]_EmissionColor ("Emission Color", Color) = (1,1,1,1)
         _EmissionMap ("Emission Map", 2D) = "white" {}
         _EmissionScale  ("Emission Scale", Range(0, 3)) = 1.0
         [Toggle(_INVERTEMISMAP)] _InvertEmisMap("Invert Emission Map", Float) = 0
         
-        [Header(........................................................)]
-        [Space(5)]
+        // [Header(........................................................)]
+        // [Space(5)]
         [Toggle(_USEREFLECTION)] _UseReflection("Use Reflection", Float) = 0
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionStrength ("Reflection Strength", Range(0, 6)) = 1.0
@@ -73,7 +73,6 @@ Shader "Custom/PBR_Mobile_Trans"
         _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
         
         [Header(6  (Custom Point Lights))]
-        [Space(5)]
         [HideInInspector] [Toggle(_USEPOINTLIGHT)] _UsePointlight("Use Point Lighting", Float) = 0
         _PointLightIntensity ("Point Light Intensity", Range(0, 8)) = 1.0
         _PointLightRangeMultiplier ("Range Multiplier", Range(0.1, 3)) = 1.0
@@ -81,7 +80,6 @@ Shader "Custom/PBR_Mobile_Trans"
         _PointLightAmount ("Light Amount", Range(1, 16)) = 4
         
         [Header(7  (Custom Spot Lights))]
-        [Space(5)]
         [HideInInspector] _UseSpotlight("Use Spot Lighting", Float) = 0
         [HideInInspector] _SpotLightIntensity ("Spot Light Intensity", Range(0, 8)) = 1.0
         [HideInInspector] _SpotLightRangeMultiplier ("Range Multiplier", Range(0.1, 3)) = 1.0
@@ -93,19 +91,17 @@ Shader "Custom/PBR_Mobile_Trans"
         [HideInInspector] _SpotTextureSize ("Spot Texture Size", Range(0.1, 1)) = 0.5
         [HideInInspector] _SpotTextureIntensity ("Spot Texture Intensity", Range(0, 2)) = 1.0
         
-        [Header(8  (Transparent))]
-        [Space(5)]
         // 透明裁剪模式（推荐）：_SrcBlend=1(One), _DstBlend=0(Zero), _ZWrite=1
         // 支持透明裁剪阴影，不会被黑色覆盖
         // 半透明模式：_SrcBlend=5(SrcAlpha), _DstBlend=10(OneMinusSrcAlpha), _ZWrite=0
         // 真正的半透明效果，但阴影投射会有问题
+        [Header(8  (Transparent))]
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend("Dst Blend", Float) = 0
         
         [Toggle] _ZWrite("Z Write", Float) = 1
         
         [Header(#  (Performance))]
-        [Space(5)]
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
     }
 
