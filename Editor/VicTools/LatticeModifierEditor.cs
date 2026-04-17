@@ -1,5 +1,6 @@
 // LatticeModifierEditor 1.1 - 晶格变形器编辑器，支持晶格单独移动模型随之变形
 // LatticeModifierEditor 1.2 添加晶格点动画控制
+// LatticeModifierEditor 1.3 优化晶格控制点选择，可以直接设置动画
 // 支持：点击选中、Ctrl+点击加选、Shift+拖拽框选
 using System.Collections.Generic;
 using UnityEngine;
@@ -16,15 +17,35 @@ public class LatticeModifierEditor : Editor
     private Vector2 dragStart;
     private Vector2 dragEnd;
 
+    /// <summary>
+    /// 将 3D 视窗中选中的控制点同步到 Hierarchy（选中对应的 CP 子物体）
+    /// 只选中 CP 子物体，不包含父对象，这样 Animation/Timeline 能正确录制关键帧
+    /// </summary>
+    private void SyncSelectionToHierarchy()
+    {
+        if (!lattice.HasControlPointTransforms || selectedPoints.Count == 0) return;
+
+        var objects = new List<UnityEngine.Object>();
+        foreach (int i in selectedPoints)
+        {
+            Transform cpT = lattice.GetControlPointTransform(i);
+            if (cpT != null) objects.Add(cpT.gameObject);
+        }
+        if (objects.Count > 0)
+            Selection.objects = objects.ToArray();
+    }
+
     private void OnEnable()
     {
         lattice = (LatticeModifier)target;
         EditorApplication.update += EditorUpdate;
+        SceneView.duringSceneGui += OnGlobalSceneGUI;
     }
 
     private void OnDisable()
     {
         EditorApplication.update -= EditorUpdate;
+        SceneView.duringSceneGui -= OnGlobalSceneGUI;
     }
 
     // 编辑器持续更新：确保移动晶格时目标对象实时变形
@@ -203,6 +224,55 @@ public class LatticeModifierEditor : Editor
         }
     }
 
+    /// <summary>
+    /// 全局 SceneView 回调：即使选中了 CP 子物体（Inspector 切走），也持续绘制晶格线框和控制点
+    /// </summary>
+    private void OnGlobalSceneGUI(SceneView sceneView)
+    {
+        if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null)
+            return;
+
+        // 如果当前选中的就是晶格物体本身，OnSceneGUI 会处理绘制，这里不重复
+        if (Selection.activeGameObject == lattice.gameObject)
+            return;
+
+        Transform t = lattice.transform;
+        int nx = lattice.PointCountX, ny = lattice.PointCountY, nz = lattice.PointCountZ;
+
+        // 绘制晶格线框
+        Handles.color = new Color(0.2f, 0.8f, 1f, 0.5f);
+        for (int ix = 0; ix < nx; ix++)
+        for (int iy = 0; iy < ny; iy++)
+        for (int iz = 0; iz < nz; iz++)
+        {
+            int idx = lattice.GetFlatIndex(ix, iy, iz);
+            Vector3 p = t.TransformPoint(lattice.controlPoints[idx]);
+            if (ix < nx - 1) Handles.DrawLine(p, t.TransformPoint(lattice.controlPoints[lattice.GetFlatIndex(ix + 1, iy, iz)]));
+            if (iy < ny - 1) Handles.DrawLine(p, t.TransformPoint(lattice.controlPoints[lattice.GetFlatIndex(ix, iy + 1, iz)]));
+            if (iz < nz - 1) Handles.DrawLine(p, t.TransformPoint(lattice.controlPoints[lattice.GetFlatIndex(ix, iy, iz + 1)]));
+        }
+
+        // 绘制控制点球
+        for (int i = 0; i < lattice.controlPoints.Length; i++)
+        {
+            Vector3 worldPos = t.TransformPoint(lattice.controlPoints[i]);
+            float sz = HandleUtility.GetHandleSize(worldPos) * 0.05f;
+
+            bool isSelected = selectedPoints.Contains(i);
+            lattice.GetPointIndex3D(i, out int pix, out int piy, out int piz);
+            bool isCorner = (pix == 0 || pix == nx - 1) && (piy == 0 || piy == ny - 1) && (piz == 0 || piz == nz - 1);
+
+            if (isSelected)
+                Handles.color = Color.white;
+            else if (isCorner)
+                Handles.color = new Color(1f, 0.3f, 0.3f, 0.9f);
+            else
+                Handles.color = new Color(1f, 0.9f, 0.2f, 0.8f);
+
+            Handles.SphereHandleCap(0, worldPos, Quaternion.identity, sz * 2f, EventType.Repaint);
+        }
+    }
+
     private void OnSceneGUI()
     {
         if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null)
@@ -256,6 +326,7 @@ public class LatticeModifierEditor : Editor
                     selectedPoints.Clear();
                     selectedPoints.Add(i);
                 }
+                SyncSelectionToHierarchy();
                 Repaint();
             }
         }
@@ -320,6 +391,7 @@ public class LatticeModifierEditor : Editor
                         }
 
                         e.Use();
+                        SyncSelectionToHierarchy();
                         Repaint();
                     }
                     break;

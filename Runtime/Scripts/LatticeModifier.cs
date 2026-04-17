@@ -351,6 +351,16 @@ public class LatticeModifier : MonoBehaviour
     public bool HasControlPointTransforms =>
         controlPointTransforms != null && controlPointTransforms.Length > 0 && controlPointTransforms[0] != null;
 
+    /// <summary>
+    /// 获取指定索引的控制点 Transform
+    /// </summary>
+    public Transform GetControlPointTransform(int index)
+    {
+        if (controlPointTransforms == null || index < 0 || index >= controlPointTransforms.Length)
+            return null;
+        return controlPointTransforms[index];
+    }
+
     private void LateUpdate()
     {
         if (!initialized || !liveUpdate) return;
