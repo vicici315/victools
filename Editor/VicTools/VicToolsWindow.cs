@@ -1636,7 +1636,52 @@ namespace VicTools
             {
                 EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal");
             });
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("创建晶格控制器"), false, CreateLatticeController);
             menu.ShowAsContext();
+        }
+
+        private void CreateLatticeController()
+        {
+            GameObject sel = Selection.activeGameObject;
+            if (sel == null)
+            {
+                EditorUtility.DisplayDialog("提示", "请先在场景中选中一个模型对象", "确定");
+                return;
+            }
+
+            Renderer rend = sel.GetComponent<Renderer>();
+            if (rend == null)
+            {
+                EditorUtility.DisplayDialog("提示", "选中的对象没有 Renderer 组件", "确定");
+                return;
+            }
+
+            GameObject latticeObj = new GameObject("Lattice_" + sel.name);
+            Undo.RegisterCreatedObjectUndo(latticeObj, "创建晶格控制器");
+            latticeObj.transform.position = sel.transform.position;
+            latticeObj.transform.rotation = sel.transform.rotation;
+
+            // 通过类型名查找 LatticeModifier（跨程序集）
+            var latticeType = System.Type.GetType("LatticeModifier, Vic.Runtim");
+            if (latticeType == null)
+            {
+                // fallback: 从所有程序集中查找
+                foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    latticeType = asm.GetType("LatticeModifier");
+                    if (latticeType != null) break;
+                }
+            }
+
+            if (latticeType != null)
+            {
+                var lattice = latticeObj.AddComponent(latticeType);
+                var field = latticeType.GetField("targetRenderer");
+                if (field != null) field.SetValue(lattice, rend);
+            }
+
+            Selection.activeGameObject = latticeObj;
         }
 
         /// 显示Menu下拉菜单

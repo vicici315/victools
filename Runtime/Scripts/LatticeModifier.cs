@@ -31,12 +31,36 @@ public class LatticeModifier : MonoBehaviour
     [HideInInspector] [SerializeField] private Transform[] controlPointTransforms;
 
     [NonSerialized] private Mesh deformedMesh;
+    [NonSerialized] private bool runtimeInitialized;
 
     public int PointCountX => divisionsX + 1;
     public int PointCountY => divisionsY + 1;
     public int PointCountZ => divisionsZ + 1;
     public int TotalPoints => PointCountX * PointCountY * PointCountZ;
     public bool IsInitialized => initialized;
+
+    /// 运行时/脚本重载后重新创建 deformedMesh
+    private void OnEnable()
+    {
+        if (!initialized || originalMesh == null || targetRenderer == null) return;
+        if (runtimeInitialized) return;
+
+        deformedMesh = CreateMeshCopy(originalMesh);
+        SetTargetMesh(deformedMesh);
+        runtimeInitialized = true;
+
+        if (useTransformHandles && HasControlPointTransforms)
+        {
+            SyncFromTransforms();
+            ApplyDeformation();
+        }
+
+        #if !UNITY_EDITOR
+        Debug.Log($"[LatticeModifier] OnEnable: deformedMesh={deformedMesh != null}, " +
+                  $"controlPoints={controlPoints?.Length}, transforms={HasControlPointTransforms}, " +
+                  $"useTransformHandles={useTransformHandles}");
+        #endif
+    }
 
     public void InitializeLattice()
     {
@@ -62,7 +86,7 @@ public class LatticeModifier : MonoBehaviour
         originalVertices = srcMesh.vertices;
 
         // 创建可读写的副本
-        deformedMesh = CreateReadableCopy(srcMesh);
+        deformedMesh = CreateMeshCopy(srcMesh);
         SetTargetMesh(deformedMesh);
 
         // 计算包围盒（晶格本地空间）
@@ -84,22 +108,14 @@ public class LatticeModifier : MonoBehaviour
         initialized = true;
     }
 
-    private Mesh CreateReadableCopy(Mesh src)
+    /// <summary>
+    /// 创建 mesh 的完整副本（保留所有 UV、法线、切线、BlendShape 等）
+    /// </summary>
+    private Mesh CreateMeshCopy(Mesh src)
     {
-        var m = new Mesh();
+        var m = Instantiate(src);
         m.name = src.name + "_LatticeDeform";
-        m.vertices = src.vertices;
-        m.normals = src.normals;
-        m.tangents = src.tangents;
-        m.uv = src.uv;
-        m.uv2 = src.uv2;
-        m.colors = src.colors;
-        m.boneWeights = src.boneWeights;
-        m.bindposes = src.bindposes;
-        m.subMeshCount = src.subMeshCount;
-        for (int i = 0; i < src.subMeshCount; i++)
-            m.SetTriangles(src.GetTriangles(i), i);
-        m.RecalculateBounds();
+        m.MarkDynamic();
         return m;
     }
 
@@ -150,24 +166,13 @@ public class LatticeModifier : MonoBehaviour
         return Binomial(n, i) * Mathf.Pow(t, i) * Mathf.Pow(1f - t, n - i);
     }
 
-    /// <summary>
     /// 确保 deformedMesh 存在（脚本重载后 NonSerialized 字段会丢失）
-    /// </summary>
     private void EnsureDeformedMesh()
     {
         if (deformedMesh != null) return;
         if (!initialized || originalMesh == null || targetRenderer == null) return;
 
-        // 检查当前 Mesh 是否已经是我们的副本
-        Mesh current = GetTargetMesh();
-        if (current != null && current != originalMesh && current.isReadable)
-        {
-            deformedMesh = current;
-            return;
-        }
-
-        // 重新创建
-        deformedMesh = CreateReadableCopy(originalMesh);
+        deformedMesh = CreateMeshCopy(originalMesh);
         SetTargetMesh(deformedMesh);
     }
 
@@ -175,7 +180,7 @@ public class LatticeModifier : MonoBehaviour
     {
         if (!initialized || targetRenderer == null) return;
         EnsureDeformedMesh();
-        if (deformedMesh == null || !deformedMesh.isReadable) return;
+        if (deformedMesh == null) return;
 
         int nx = PointCountX, ny = PointCountY, nz = PointCountZ;
         int l = divisionsX, m = divisionsY, n = divisionsZ;
@@ -237,7 +242,6 @@ public class LatticeModifier : MonoBehaviour
         }
 
         deformedMesh.vertices = newVerts;
-        deformedMesh.RecalculateNormals();
         deformedMesh.RecalculateBounds();
     }
 
@@ -283,9 +287,7 @@ public class LatticeModifier : MonoBehaviour
         return ix + iy * PointCountX + iz * PointCountX * PointCountY;
     }
 
-    /// <summary>
     /// 创建子物体控制点，每个控制点对应一个子 GameObject，可被 Animation/Timeline K帧
-    /// </summary>
     public void CreateControlPointTransforms()
     {
         if (!initialized || controlPoints == null) return;
@@ -303,9 +305,7 @@ public class LatticeModifier : MonoBehaviour
         useTransformHandles = true;
     }
 
-    /// <summary>
     /// 清除子物体控制点
-    /// </summary>
     public void DestroyControlPointTransforms()
     {
         if (controlPointTransforms != null)
@@ -319,9 +319,7 @@ public class LatticeModifier : MonoBehaviour
         useTransformHandles = false;
     }
 
-    /// <summary>
     /// 从子物体 Transform 同步位置到 controlPoints 数组
-    /// </summary>
     public void SyncFromTransforms()
     {
         if (controlPointTransforms == null || controlPoints == null) return;
@@ -332,9 +330,7 @@ public class LatticeModifier : MonoBehaviour
         }
     }
 
-    /// <summary>
     /// 从 controlPoints 数组同步位置到子物体 Transform
-    /// </summary>
     public void SyncToTransforms()
     {
         if (controlPointTransforms == null || controlPoints == null) return;
@@ -345,15 +341,11 @@ public class LatticeModifier : MonoBehaviour
         }
     }
 
-    /// <summary>
     /// 子物体控制点是否已创建
-    /// </summary>
     public bool HasControlPointTransforms =>
         controlPointTransforms != null && controlPointTransforms.Length > 0 && controlPointTransforms[0] != null;
 
-    /// <summary>
     /// 获取指定索引的控制点 Transform
-    /// </summary>
     public Transform GetControlPointTransform(int index)
     {
         if (controlPointTransforms == null || index < 0 || index >= controlPointTransforms.Length)

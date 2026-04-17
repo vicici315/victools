@@ -1,8 +1,9 @@
-// LatticeModifierEditor 1.4 - 晶格变形器编辑器
+// LatticeModifierEditor 1.0 - 晶格变形器编辑器
 // 1.1 支持晶格单独移动，模型经过晶格区域产生变形，离开后恢复
 // 1.2 添加晶格点动画控制（子物体 CP 节点，支持 Animation/Timeline K帧）
 // 1.3 选中晶格点时同步选中 Hierarchy 中对应 CP 节点（蓝色高亮，不含父对象）
 // 1.4 静态 SceneView 回调：选中 CP 后晶格线框持续绘制，可继续点击/框选其他晶格点；修复打包后动画不生效
+// 1.5 不重算法线，保持原始 mesh 的法线数据。变形只改顶点位置，法线保持原样（对于小幅度变形效果足够好）
 // 支持：点击选中、Ctrl+点击加选、Shift+拖拽框选
 using System.Collections.Generic;
 using UnityEngine;
@@ -24,10 +25,8 @@ public class LatticeModifierEditor : Editor
     private static Vector2 s_dragStart;
     private static Vector2 s_dragEnd;
 
-    /// <summary>
     /// 将 3D 视窗中选中的控制点同步到 Hierarchy（选中对应的 CP 子物体）
     /// 只选中 CP 子物体，不包含父对象，这样 Animation/Timeline 能正确录制关键帧
-    /// </summary>
     private static void SyncSelectionToHierarchy()
     {
         if (s_activeLattice == null || !s_activeLattice.HasControlPointTransforms) return;
@@ -238,9 +237,7 @@ public class LatticeModifierEditor : Editor
         }
     }
 
-    /// <summary>
     /// 静态 SceneView 回调：即使选中了 CP 子物体（Editor 被 disable），也持续绘制晶格并支持交互
-    /// </summary>
     private static void OnGlobalSceneGUIStatic(SceneView sceneView)
     {
         if (s_activeLattice == null || !s_activeLattice.IsInitialized || s_activeLattice.controlPoints == null)
@@ -596,9 +593,7 @@ public class LatticeModifierEditor : Editor
         }
     }
 
-    /// <summary>
     /// 自动创建独立的晶格物体：从目标对象上移除 LatticeModifier，在场景根级创建新物体并初始化
-    /// </summary>
     private void CreateStandaloneLattice()
     {
         Renderer targetRend = lattice.targetRenderer;
