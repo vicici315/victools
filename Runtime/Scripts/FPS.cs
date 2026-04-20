@@ -2,6 +2,7 @@
 // FPS5.0 与 Unity Stats 面板对齐的 FPS 统计 + CPU/GPU 帧耗时
 // FPS5.1 文本显示使用TextMeshProUGUI
 // FPS5.2 修复从后台/休眠恢复时帧率刷新率设置失效问题
+// FPS5.3 TMPro 条件编译，无 TMP 时回退到 UnityEngine.UI.Text
 // ----------------------------------------------------------------------------
 // FPS 算法：指数移动平均（EMA）对 1/unscaledDeltaTime 做平滑
 //   Unity Stats 面板内部使用 1/Time.smoothDeltaTime，
@@ -15,9 +16,15 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Unity.Profiling;
+#if TMP_PRESENT
 using TMPro;
+#endif
 
+#if TMP_PRESENT
 [RequireComponent(typeof(TextMeshProUGUI))]
+#else
+[RequireComponent(typeof(Text))]
+#endif
 public class FPS : MonoBehaviour
 {
     [Header("显示设置")]
@@ -44,14 +51,17 @@ public class FPS : MonoBehaviour
     public int  targetFrameRate = 60;
 
     // ---- 私有变量 ----
+#if TMP_PRESENT
     private TextMeshProUGUI fpsText;
-    private float fpsEma;       // EMA 平滑后的 FPS 值
-    private float displayFps;   // 上次刷新时锁定的显示值
-    private float elapsed;      // 距上次刷新经过的时间
+#else
+    private Text fpsText;
+#endif
+    private float fpsEma;
+    private float displayFps;
+    private float elapsed;
 
-    // 单帧 dt 上限：超过此值视为异常帧（休眠唤醒/卡顿），直接跳过 EMA 更新
     private const float kMaxDeltaTime = 0.5f;
-    private bool _needReset;    // 唤醒后标记需要重置状态
+    private bool _needReset;
 
     private ProfilerRecorder cpuMainThreadRecorder;
     private ProfilerRecorder cpuRenderThreadRecorder;
@@ -60,7 +70,11 @@ public class FPS : MonoBehaviour
 
     void Start()
     {
+#if TMP_PRESENT
         fpsText    = GetComponent<TextMeshProUGUI>();
+#else
+        fpsText    = GetComponent<Text>();
+#endif
         fpsText.fontSize = 26;
         fpsEma     = 0f;
         displayFps = 0f;
@@ -113,19 +127,16 @@ public class FPS : MonoBehaviour
 
     void OnApplicationPause(bool paused)
     {
-        // 从后台/休眠恢复时，标记下一帧重置，避免巨大 dt 污染 EMA 和 elapsed
         if (!paused) _needReset = true;
     }
 
     void OnApplicationFocus(bool hasFocus)
     {
-        // 部分平台（PC/Editor）通过 Focus 事件触发，同样处理
         if (hasFocus) _needReset = true;
     }
 
     void Update()
     {
-        // 唤醒后第一帧：重置 EMA 和计时器，跳过本帧计算
         if (_needReset)
         {
             _needReset = false;
@@ -135,20 +146,14 @@ public class FPS : MonoBehaviour
         }
 
         float dt = Time.unscaledDeltaTime;
-
-        // 钳制异常大的 dt（休眠唤醒漏网帧、极端卡顿），避免 EMA 被拉崩
         if (dt > kMaxDeltaTime) return;
 
-        // ---- EMA 更新 ----
-        // 每帧计算瞬时 FPS = 1/dt，然后做指数移动平均
-        // 与 Unity Stats 的 smoothDeltaTime 原理相同，读数高度一致
         float instantFps = dt > 0f ? 1f / dt : 0f;
         if (fpsEma <= 0f)
-            fpsEma = instantFps;                              // 首帧直接赋值，避免从 0 爬升
+            fpsEma = instantFps;
         else
-            fpsEma += (instantFps - fpsEma) * emaAlpha;      // EMA: new = old + alpha*(sample - old)
+            fpsEma += (instantFps - fpsEma) * emaAlpha;
 
-        // ---- 按 refreshRate 节流刷新显示 ----
         elapsed += dt;
         if (elapsed < refreshRate) return;
         elapsed -= refreshRate;
@@ -174,7 +179,6 @@ public class FPS : MonoBehaviour
             }
             if (gpuMs <= 0 && cpuMs > 0)
             {
-                // 用平均帧时间估算 GPU，比单帧 deltaTime 更稳定
                 gpuMs = System.Math.Max(0, dt * 1000.0 - cpuMs);
                 gpuEstimated = true;
             }

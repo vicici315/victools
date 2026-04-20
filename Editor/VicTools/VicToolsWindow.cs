@@ -10,7 +10,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.9.1";
+        public const string Ver = "2.9.2";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
@@ -1651,9 +1651,11 @@ namespace VicTools
             }
 
             Renderer rend = sel.GetComponent<Renderer>();
-            if (rend == null)
+            Renderer[] childRenderers = sel.GetComponentsInChildren<Renderer>(true);
+
+            if (rend == null && childRenderers.Length == 0)
             {
-                EditorUtility.DisplayDialog("提示", "选中的对象没有 Renderer 组件", "确定");
+                EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
                 return;
             }
 
@@ -1666,7 +1668,6 @@ namespace VicTools
             var latticeType = System.Type.GetType("LatticeModifier, Vic.Runtim");
             if (latticeType == null)
             {
-                // fallback: 从所有程序集中查找
                 foreach (var asm in System.AppDomain.CurrentDomain.GetAssemblies())
                 {
                     latticeType = asm.GetType("LatticeModifier");
@@ -1677,8 +1678,22 @@ namespace VicTools
             if (latticeType != null)
             {
                 var lattice = latticeObj.AddComponent(latticeType);
-                var field = latticeType.GetField("targetRenderer");
-                if (field != null) field.SetValue(lattice, rend);
+
+                // 判断使用单目标还是多目标模式
+                bool useMulti = (rend == null && childRenderers.Length > 0) || childRenderers.Length > 1;
+
+                if (useMulti)
+                {
+                    var modeField = latticeType.GetField("targetMode");
+                    if (modeField != null) modeField.SetValue(lattice, 1); // MultiRenderer = 1
+                    var rootField = latticeType.GetField("targetRoot");
+                    if (rootField != null) rootField.SetValue(lattice, sel.transform);
+                }
+                else
+                {
+                    var field = latticeType.GetField("targetRenderer");
+                    if (field != null) field.SetValue(lattice, rend);
+                }
             }
 
             Selection.activeGameObject = latticeObj;

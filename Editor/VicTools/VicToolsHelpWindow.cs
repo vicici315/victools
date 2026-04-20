@@ -66,6 +66,9 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.9.2",
+"主窗口Tools菜单添加[创建晶格控制器]。",
+"LatticeModifier 1.0 FFD 晶格变形场，晶格挂在独立空物体上，支持控制点Timeline动画。",
                 "■ v2.9.1",
 "PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）",
 "优化所有自定义Shader UI布局，归类更清晰。",

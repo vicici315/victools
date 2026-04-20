@@ -3,5 +3,14 @@
 	"references": [
 		"UnityEngine.UI",
 		"Unity.TextMeshPro"
+	],
+	"optionalUnityReferences": [],
+	"overrideReferences": false,
+	"versionDefines": [
+		{
+			"name": "com.unity.textmeshpro",
+			"expression": "",
+			"define": "TMP_PRESENT"
+		}
 	]
 }

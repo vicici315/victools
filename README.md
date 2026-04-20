@@ -9,6 +9,14 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.9.2
+
+- 主窗口添加Tools菜单：[创建晶格控制器]，可以对模型对象或者角色添加晶格变形，可以对晶格点进行Timeline动画控制。
+
+- LatticeModifier 1.0 FFD 晶格变形场，晶格挂在独立空物体上，目标对象拖入 targetRenderer。
+
+
+
 ### 版本 2.9.1
 
 - PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）
@@ -29,7 +37,8 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - SmoothMeshNormal v1.2 轮廓描边辅助工具用于圆滑mesh法线，添加<覆盖>选项，支持生成平滑网格直接覆盖原有Mesh。
 
-  ![image-20260409120239525](./README.assets/image-20260409120239525.png)![image-20260409155344198](./README.assets/image-20260409155344198.png)
+  ![image-20260409120239525](./README.assets/image-20260409120239525.png)
+  ![image-20260409155344198](./README.assets/image-20260409155344198.png)
 
   ![image-20260409142034847](./README.assets/image-20260409142034847.png)
 
