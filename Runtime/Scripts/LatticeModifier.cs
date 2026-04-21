@@ -7,6 +7,10 @@
 // LatticeModifier 2.1 添加删除晶格功能（还原 Mesh 并删除晶格物体），添加目标时自动识别带骨骼角色父级
 // LatticeModifier 2.2 支持不可读 Mesh（通过 Instantiate/BakeMesh 自动获取可读副本），修复只收集部分 Renderer 的问题
 // LatticeModifier 2.3 SkinnedMeshRenderer 双缓冲 Mesh 交替赋值，保留骨骼动画；重新初始化可保留晶格编辑恢复控制
+// LatticeModifier 2.4 修复运行时晶格变形失效：OnEnable 自动重建变形 Mesh 管线，保留控制点，动画与晶格叠加生效
+// LatticeModifier 2.5 新增手动指定 Renderer 列表（manualRenderers），支持多选对象创建晶格，严格按列表变形不展开子级
+// LatticeModifier 2.6 重新初始化保留控制点不再重置；运行/停止游戏自动重建 Mesh 管线；脏标记+顶点缓存优化编辑器性能
+// LatticeModifier 2.7 安全 Mesh 销毁机制：只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -24,6 +28,9 @@ public class LatticeModifier : MonoBehaviour
 
     [Header("多目标根节点（自动收集所有子 Renderer）")]
     public Transform targetRoot;
+
+    [Header("手动指定目标 Renderer（优先于根节点自动收集）")]
+    public List<Renderer> manualRenderers = new List<Renderer>();
 
     [Header("晶格段数（控制点数 = 段数 + 1）")]
     [Range(1, 8)] public int divisionsX = 2;
@@ -145,27 +152,152 @@ public class LatticeModifier : MonoBehaviour
         if (!initialized) return;
         if (runtimeInitialized) return;
 
-        if (targetMode == TargetMode.SingleRenderer)
-        {
-            if (targetRenderer != null && deformedMeshA != null)
-                SetRendererMesh(targetRenderer, deformedMeshA);
-        }
-        else
-        {
-            for (int i = 0; i < targetRenderers.Count; i++)
-            {
-                if (targetRenderers[i] == null) continue;
-                if (i < deformedMeshesA.Count && deformedMeshesA[i] != null)
-                    SetRendererMesh(targetRenderers[i], deformedMeshesA[i]);
-            }
-        }
+        // 运行时重新创建变形 Mesh（Play 模式序列化后旧引用可能失效）
+        // 保留控制点，只重建 Mesh 管线
+        RebuildDeformMeshes();
 
         runtimeInitialized = true;
 
         if (useTransformHandles && HasControlPointTransforms)
             SyncFromTransforms();
 
+        isDirty = true;
         ApplyDeformation();
+    }
+
+    /// 重建变形 Mesh 管线：还原 Renderer → 重新获取原始 Mesh → 创建变形副本 → 赋值
+    /// 不改变控制点和包围盒，仅刷新 Mesh 引用
+    private void RebuildDeformMeshes()
+    {
+        if (targetMode == TargetMode.SingleRenderer)
+            RebuildSingle();
+        else
+            RebuildMulti();
+    }
+
+    private void RebuildSingle()
+    {
+        if (targetRenderer == null) return;
+
+        // 还原到原始 mesh（如果 originalMesh 还有效）
+        if (originalMesh != null)
+            SetRendererMesh(targetRenderer, originalMesh);
+
+        // 重新获取当前 sharedMesh 作为源
+        Mesh sharedMesh = GetRendererMesh(targetRenderer);
+        if (sharedMesh == null) return;
+
+        singleIsSkinned = targetRenderer is SkinnedMeshRenderer;
+
+        // 如果 originalVertices 丢失，重新读取
+        if (originalVertices == null || originalVertices.Length == 0)
+        {
+            Mesh readableMesh = sharedMesh.isReadable ? sharedMesh : GetReadableMesh(targetRenderer);
+            if (readableMesh == null) return;
+            originalVertices = readableMesh.vertices;
+            if (readableMesh != sharedMesh)
+            {
+                if (Application.isPlaying) Destroy(readableMesh);
+                else DestroyImmediate(readableMesh);
+            }
+        }
+
+        // 只在 originalMesh 丢失或被污染时才更新
+        if (originalMesh == null || originalMesh.name.Contains("_LatticeDeform"))
+        {
+            if (!sharedMesh.name.Contains("_LatticeDeform"))
+                originalMesh = sharedMesh;
+        }
+
+        // 清理旧的变形 Mesh
+        if (deformedMeshA != null) SafeDestroyLatticeOnlyMesh(deformedMeshA);
+        if (deformedMeshB != null) SafeDestroyLatticeOnlyMesh(deformedMeshB);
+
+        deformedMeshA = CreateDeformMesh(originalMesh, originalVertices);
+        deformedMeshB = singleIsSkinned ? CreateDeformMesh(originalMesh, originalVertices) : null;
+        SetRendererMesh(targetRenderer, deformedMeshA);
+    }
+
+    private void RebuildMulti()
+    {
+        // 如果 targetRenderers 为空但 manualRenderers 有数据，重新走完整初始化
+        if (targetRenderers.Count == 0)
+        {
+            if (manualRenderers.Count > 0 || targetRoot != null)
+            {
+                InitMulti();
+            }
+            return;
+        }
+
+        // 还原所有 Renderer 到原始 mesh
+        for (int i = 0; i < targetRenderers.Count; i++)
+        {
+            if (targetRenderers[i] == null) continue;
+            if (i < originalMeshes.Count && originalMeshes[i] != null)
+                SetRendererMesh(targetRenderers[i], originalMeshes[i]);
+        }
+
+        // 清理旧的变形 Mesh
+        foreach (var dm in deformedMeshesA) SafeDestroyLatticeOnlyMesh(dm);
+        foreach (var dm in deformedMeshesB) SafeDestroyLatticeOnlyMesh(dm);
+        deformedMeshesA.Clear();
+        deformedMeshesB.Clear();
+
+        for (int i = 0; i < targetRenderers.Count; i++)
+        {
+            if (targetRenderers[i] == null || i >= originalMeshes.Count)
+            {
+                deformedMeshesA.Add(null);
+                deformedMeshesB.Add(null);
+                continue;
+            }
+
+            Mesh sharedMesh = GetRendererMesh(targetRenderers[i]);
+            if (sharedMesh == null)
+            {
+                deformedMeshesA.Add(null);
+                deformedMeshesB.Add(null);
+                continue;
+            }
+
+            // 如果 originalVertices 丢失，重新读取
+            if (i >= originalVerticesList.Count || originalVerticesList[i] == null || originalVerticesList[i].Length == 0)
+            {
+                Mesh readableMesh = sharedMesh.isReadable ? sharedMesh : GetReadableMesh(targetRenderers[i]);
+                if (readableMesh == null)
+                {
+                    deformedMeshesA.Add(null);
+                    deformedMeshesB.Add(null);
+                    continue;
+                }
+                while (originalVerticesList.Count <= i) originalVerticesList.Add(null);
+                originalVerticesList[i] = readableMesh.vertices;
+                if (readableMesh != sharedMesh)
+                {
+                    if (Application.isPlaying) Destroy(readableMesh);
+                    else DestroyImmediate(readableMesh);
+                }
+            }
+
+            // 只在 originalMesh 丢失时才重新获取，且排除变形 mesh
+            if (i < originalMeshes.Count && (originalMeshes[i] == null || originalMeshes[i].name.Contains("_LatticeDeform")))
+                originalMeshes[i] = sharedMesh.name.Contains("_LatticeDeform") ? null : sharedMesh;
+            else if (i >= originalMeshes.Count)
+            {
+                while (originalMeshes.Count <= i) originalMeshes.Add(null);
+                if (!sharedMesh.name.Contains("_LatticeDeform"))
+                    originalMeshes[i] = sharedMesh;
+            }
+
+            bool skinned = i < isSkinned.Count && isSkinned[i];
+            var dmA = CreateDeformMesh(sharedMesh, originalVerticesList[i]);
+            deformedMeshesA.Add(dmA);
+            deformedMeshesB.Add(skinned ? CreateDeformMesh(sharedMesh, originalVerticesList[i]) : null);
+            SetRendererMesh(targetRenderers[i], dmA);
+        }
+
+        useBufferB = false;
     }
 
     // ═══════════════════════════════════════════
@@ -173,6 +305,16 @@ public class LatticeModifier : MonoBehaviour
     // ═══════════════════════════════════════════
     public void InitializeLattice()
     {
+        if (initialized)
+        {
+            // 已初始化过：重建 Mesh 管线但保留控制点
+            RebuildDeformMeshes();
+            isDirty = true;
+            ApplyDeformation();
+            return;
+        }
+
+        // 首次初始化：完整流程（含生成控制点）
         if (targetMode == TargetMode.SingleRenderer) InitSingle();
         else InitMulti();
     }
@@ -210,10 +352,36 @@ public class LatticeModifier : MonoBehaviour
 
     private void InitMulti()
     {
-        if (targetRoot == null) { Debug.LogWarning("请先指定多目标根节点"); return; }
+        if (targetRoot == null && manualRenderers.Count == 0)
+        {
+            Debug.LogWarning("请先指定多目标根节点或手动添加 Renderer");
+            return;
+        }
         RestoreOriginal();
 
-        var renderers = targetRoot.GetComponentsInChildren<Renderer>(true);
+        // 优先使用手动指定的 Renderer 列表，否则从根节点自动收集
+        Renderer[] renderers;
+        if (manualRenderers.Count > 0)
+        {
+            // 过滤 null 并去重，严格只用列表中指定的 Renderer
+            var valid = new List<Renderer>();
+            foreach (var r in manualRenderers)
+            {
+                if (r != null && !valid.Contains(r))
+                    valid.Add(r);
+            }
+            renderers = valid.ToArray();
+        }
+        else if (targetRoot != null)
+        {
+            renderers = targetRoot.GetComponentsInChildren<Renderer>(true);
+        }
+        else
+        {
+            Debug.LogWarning("请先指定多目标根节点或手动添加 Renderer");
+            return;
+        }
+
         var vR = new List<Renderer>();
         var vM = new List<Mesh>();
         var vV = new List<Vector3[]>();
@@ -535,8 +703,8 @@ public class LatticeModifier : MonoBehaviour
                 if (targetRenderers[i] != null && i < originalMeshes.Count && originalMeshes[i] != null)
                     SetRendererMesh(targetRenderers[i], originalMeshes[i]);
             }
-            foreach (var dm in deformedMeshesA) { if (dm != null) DestroyImmediate(dm); }
-            foreach (var dm in deformedMeshesB) { if (dm != null) DestroyImmediate(dm); }
+            foreach (var dm in deformedMeshesA) SafeDestroyLatticeOnlyMesh(dm);
+            foreach (var dm in deformedMeshesB) SafeDestroyLatticeOnlyMesh(dm);
             deformedMeshesA.Clear();
             deformedMeshesB.Clear();
             targetRenderers.Clear();
@@ -573,10 +741,23 @@ public class LatticeModifier : MonoBehaviour
         }
     }
 
+    /// 安全销毁 mesh：只销毁我们创建的变形副本，绝不销毁项目资源
     private void SafeDestroyMesh(ref Mesh mesh)
     {
-        if (mesh != null) DestroyImmediate(mesh);
+        if (mesh != null && mesh.name.Contains("_LatticeDeform"))
+        {
+            if (Application.isPlaying) Destroy(mesh);
+            else DestroyImmediate(mesh);
+        }
         mesh = null;
+    }
+
+    private static void SafeDestroyLatticeOnlyMesh(Mesh mesh)
+    {
+        if (mesh == null) return;
+        if (!mesh.name.Contains("_LatticeDeform")) return;
+        if (Application.isPlaying) Destroy(mesh);
+        else DestroyImmediate(mesh);
     }
 
     // ═══════════════════════════════════════════
@@ -663,9 +844,9 @@ public class LatticeModifier : MonoBehaviour
 
     private void OnDestroy()
     {
-        void SD(Mesh m) { if (m == null) return; if (Application.isPlaying) Destroy(m); else DestroyImmediate(m); }
-        SD(deformedMeshA); SD(deformedMeshB);
-        foreach (var dm in deformedMeshesA) SD(dm);
-        foreach (var dm in deformedMeshesB) SD(dm);
+        SafeDestroyLatticeOnlyMesh(deformedMeshA);
+        SafeDestroyLatticeOnlyMesh(deformedMeshB);
+        foreach (var dm in deformedMeshesA) SafeDestroyLatticeOnlyMesh(dm);
+        foreach (var dm in deformedMeshesB) SafeDestroyLatticeOnlyMesh(dm);
     }
 }

@@ -9,11 +9,23 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.9.3
+
+- Grass 1.0 添加自定义草地生成材质，支持纹理通道控制生长长度。
+
+  ![image-20260421174921063](./README.assets/Grass1.gif)
+
+- LatticeModifier 2.7 安全 Mesh 销毁机制，只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失。
+
+
+
 ### 版本 2.9.2
 
 - 主窗口添加Tools菜单：[创建晶格控制器]，可以对模型对象或者角色添加晶格变形，可以对晶格点进行Timeline动画控制。
 
-- LatticeModifier 1.0 FFD 晶格变形场，晶格挂在独立空物体上，目标对象拖入 targetRenderer。
+- LatticeModifier 1.0 FFD 晶格变形场，晶格挂在独立空物体上，目标对象拖入 targetRenderer，可被 Animation/Timeline K帧驱动变形。
+
+  ![Lattice1](./README.assets/Lattice1.gif)
 
 
 

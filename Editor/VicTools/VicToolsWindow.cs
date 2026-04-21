@@ -10,7 +10,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.9.2";
+        public const string Ver = "2.9.3";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
@@ -1643,26 +1643,38 @@ namespace VicTools
 
         private void CreateLatticeController()
         {
-            GameObject sel = Selection.activeGameObject;
-            if (sel == null)
+            var selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
             {
-                EditorUtility.DisplayDialog("提示", "请先在场景中选中一个模型对象", "确定");
+                EditorUtility.DisplayDialog("提示", "请先在场景中选中模型对象（支持多选）", "确定");
                 return;
             }
 
-            Renderer rend = sel.GetComponent<Renderer>();
-            Renderer[] childRenderers = sel.GetComponentsInChildren<Renderer>(true);
+            // 收集所有选中对象的 Renderer（含子物体）
+            var allRenderers = new System.Collections.Generic.List<Renderer>();
+            foreach (var sel in selectedObjects)
+            {
+                var rend = sel.GetComponent<Renderer>();
+                if (rend != null && !allRenderers.Contains(rend)) allRenderers.Add(rend);
+                var childRenderers = sel.GetComponentsInChildren<Renderer>(true);
+                foreach (var cr in childRenderers)
+                {
+                    if (!allRenderers.Contains(cr)) allRenderers.Add(cr);
+                }
+            }
 
-            if (rend == null && childRenderers.Length == 0)
+            if (allRenderers.Count == 0)
             {
                 EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
                 return;
             }
 
-            GameObject latticeObj = new GameObject("Lattice_" + sel.name);
+            // 用第一个选中对象的位置和名称
+            GameObject primary = selectedObjects[0];
+            GameObject latticeObj = new GameObject("Lattice_" + primary.name);
             Undo.RegisterCreatedObjectUndo(latticeObj, "创建晶格控制器");
-            latticeObj.transform.position = sel.transform.position;
-            latticeObj.transform.rotation = sel.transform.rotation;
+            latticeObj.transform.position = primary.transform.position;
+            latticeObj.transform.rotation = primary.transform.rotation;
 
             // 通过类型名查找 LatticeModifier（跨程序集）
             var latticeType = System.Type.GetType("LatticeModifier, Vic.Runtim");
@@ -1679,20 +1691,19 @@ namespace VicTools
             {
                 var lattice = latticeObj.AddComponent(latticeType);
 
-                // 判断使用单目标还是多目标模式
-                bool useMulti = (rend == null && childRenderers.Length > 0) || childRenderers.Length > 1;
-
-                if (useMulti)
+                if (allRenderers.Count == 1)
                 {
-                    var modeField = latticeType.GetField("targetMode");
-                    if (modeField != null) modeField.SetValue(lattice, 1); // MultiRenderer = 1
-                    var rootField = latticeType.GetField("targetRoot");
-                    if (rootField != null) rootField.SetValue(lattice, sel.transform);
+                    // 单个 Renderer → 单目标模式
+                    var field = latticeType.GetField("targetRenderer");
+                    if (field != null) field.SetValue(lattice, allRenderers[0]);
                 }
                 else
                 {
-                    var field = latticeType.GetField("targetRenderer");
-                    if (field != null) field.SetValue(lattice, rend);
+                    // 多个 Renderer → 多目标模式，使用手动列表
+                    var modeField = latticeType.GetField("targetMode");
+                    if (modeField != null) modeField.SetValue(lattice, 1); // MultiRenderer = 1
+                    var manualField = latticeType.GetField("manualRenderers");
+                    if (manualField != null) manualField.SetValue(lattice, allRenderers);
                 }
             }
 

@@ -6,6 +6,8 @@
 // LatticeModifierEditor 1.5 不重算法线，保持原始 mesh 的法线数据，变形只改顶点位置
 // LatticeModifierEditor 2.0 支持单目标/多目标（整个预设/带蒙皮角色）两种模式，SceneView 绘制逻辑合并
 // LatticeModifierEditor 2.1 添加删除晶格按钮（还原 Mesh 并删除晶格物体），单目标模式自动识别带骨骼角色父级切换多目标
+// LatticeModifierEditor 2.2 添加目标按钮支持多选，显示手动 Renderer 列表字段，运行/停止游戏自动重建晶格，移除每帧 RepaintAll 优化性能
+// LatticeModifierEditor 2.3 支持缩放旋转等工具手柄操作控制点；优化缩放旋转工具操作
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
@@ -23,6 +25,11 @@ public class LatticeModifierEditor : Editor
     private static bool s_isDragging;
     private static Vector2 s_dragStart;
     private static Vector2 s_dragEnd;
+
+    // 缩放/旋转手柄：记录拖拽开始时的控制点位置和中心，避免变换叠加
+    private static Dictionary<int, Vector3> s_handleStartPositions;
+    private static Vector3 s_handleStartCenter;
+    private static bool s_handleDragging;
 
     private static void SyncSelectionToHierarchy()
     {
@@ -45,6 +52,7 @@ public class LatticeModifierEditor : Editor
         s_activeLattice = lattice;
         s_activeSelectedPoints = selectedPoints;
         EditorApplication.update += EditorUpdate;
+        EditorApplication.playModeStateChanged += OnPlayModeChanged;
         if (!s_registered)
         {
             SceneView.duringSceneGui += OnGlobalSceneGUIStatic;
@@ -55,6 +63,28 @@ public class LatticeModifierEditor : Editor
     private void OnDisable()
     {
         EditorApplication.update -= EditorUpdate;
+        EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+    }
+
+    private void OnPlayModeChanged(PlayModeStateChange state)
+    {
+        if (lattice == null || !lattice.IsInitialized) return;
+
+        // 进入 Play 模式后、退出 Play 模式后自动重新初始化
+        if (state == PlayModeStateChange.EnteredPlayMode ||
+            state == PlayModeStateChange.EnteredEditMode)
+        {
+            // 延迟一帧执行，确保 Unity 序列化/反序列化完成
+            EditorApplication.delayCall += () =>
+            {
+                if (lattice != null && lattice.IsInitialized)
+                {
+                    lattice.InitializeLattice();
+                    EditorUtility.SetDirty(lattice);
+                    SceneView.RepaintAll();
+                }
+            };
+        }
     }
 
     private void EditorUpdate()
@@ -87,60 +117,70 @@ public class LatticeModifierEditor : Editor
         else
         {
             EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRoot"), new GUIContent("多目标根节点"));
+            EditorGUILayout.PropertyField(serializedObject.FindProperty("manualRenderers"), new GUIContent("手动指定 Renderer"), true);
         }
 
-        // ── 添加目标按钮（统一入口，智能判断） ──
-        GUI.backgroundColor = new Color(0.5f, 0.9f, 1f);
-        if (GUILayout.Button("添加目标（将场景中的对象拖入上方字段，或先选中对象再点此按钮）", GUILayout.Height(26)))
-        {
-            GameObject sel = null;
-            foreach (var obj in Selection.gameObjects)
-            {
-                if (obj != lattice.gameObject)
-                {
-                    sel = obj;
-                    break;
-                }
-            }
+        // ── 添加目标按钮（支持多选） ──
+        // GUI.backgroundColor = new Color(0.5f, 0.9f, 1f);
+        // if (GUILayout.Button("添加目标（选中对象后点此按钮，支持多选）", GUILayout.Height(26)))
+        // {
+        //     // 收集所有选中的非晶格对象
+        //     var selectedObjects = new List<GameObject>();
+        //     foreach (var obj in Selection.gameObjects)
+        //     {
+        //         if (obj != lattice.gameObject)
+        //             selectedObjects.Add(obj);
+        //     }
 
-            if (sel != null)
-            {
-                Undo.RecordObject(lattice, "设置目标");
+        //     if (selectedObjects.Count == 0)
+        //     {
+        //         EditorUtility.DisplayDialog("提示",
+        //             "请先在 Hierarchy 中选中目标对象（可 Ctrl+点击多选），或直接将对象拖入上方字段", "确定");
+        //     }
+        //     else
+        //     {
+        //         Undo.RecordObject(lattice, "设置目标");
 
-                Renderer rend = sel.GetComponent<Renderer>();
-                if (rend != null && isSingle)
-                {
-                    lattice.targetRenderer = rend;
-                }
-                else
-                {
-                    var childRenderers = sel.GetComponentsInChildren<Renderer>(true);
-                    if (childRenderers.Length > 0)
-                    {
-                        lattice.targetMode = LatticeModifier.TargetMode.MultiRenderer;
-                        lattice.targetRoot = sel.transform;
-                    }
-                    else if (rend != null)
-                    {
-                        lattice.targetMode = LatticeModifier.TargetMode.SingleRenderer;
-                        lattice.targetRenderer = rend;
-                    }
-                    else
-                    {
-                        EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
-                    }
-                }
+        //         // 收集所有选中对象的 Renderer（含子物体）
+        //         var allRenderers = new List<Renderer>();
+        //         foreach (var sel in selectedObjects)
+        //         {
+        //             Renderer rend = sel.GetComponent<Renderer>();
+        //             if (rend != null) allRenderers.Add(rend);
+        //             var childRenderers = sel.GetComponentsInChildren<Renderer>(true);
+        //             foreach (var cr in childRenderers)
+        //             {
+        //                 if (!allRenderers.Contains(cr))
+        //                     allRenderers.Add(cr);
+        //             }
+        //         }
 
-                serializedObject.Update();
-                EditorUtility.SetDirty(lattice);
-            }
-            else
-            {
-                EditorUtility.DisplayDialog("提示",
-                    "请先在 Hierarchy 中选中目标对象（可 Ctrl+点击同时选中晶格和目标），或直接将对象拖入上方字段", "确定");
-            }
-        }
-        GUI.backgroundColor = Color.white;
+        //         if (allRenderers.Count == 0)
+        //         {
+        //             EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
+        //         }
+        //         else if (allRenderers.Count == 1 && isSingle)
+        //         {
+        //             // 单个 Renderer，单目标模式
+        //             lattice.targetRenderer = allRenderers[0];
+        //         }
+        //         else
+        //         {
+        //             // 多个 Renderer 或已是多目标模式 → 切换多目标，添加到手动列表
+        //             lattice.targetMode = LatticeModifier.TargetMode.MultiRenderer;
+        //             // 合并到 manualRenderers（不重复）
+        //             foreach (var r in allRenderers)
+        //             {
+        //                 if (!lattice.manualRenderers.Contains(r))
+        //                     lattice.manualRenderers.Add(r);
+        //             }
+        //         }
+
+        //         serializedObject.Update();
+        //         EditorUtility.SetDirty(lattice);
+        //     }
+        // }
+        // GUI.backgroundColor = Color.white;
 
         // 模式可能在按钮中被自动切换，重新读取
         isSingle = lattice.targetMode == LatticeModifier.TargetMode.SingleRenderer;
@@ -159,7 +199,7 @@ public class LatticeModifierEditor : Editor
             if (isSingle && lattice.targetRenderer == null)
                 EditorGUILayout.HelpBox("请将要变形的模型拖入「目标对象」字段", MessageType.Warning);
             else if (!isSingle && lattice.targetRoot == null)
-                EditorGUILayout.HelpBox("请将要变形的根节点拖入「多目标根节点」字段（会自动收集所有子 Renderer）", MessageType.Warning);
+                EditorGUILayout.HelpBox("请将要变形的根节点拖入「多目标根节点」（会自动收集所有子 Renderer）", MessageType.Warning);
             else
             {
                 Transform checkT = isSingle ? lattice.targetRenderer?.transform : lattice.targetRoot;
@@ -467,7 +507,7 @@ public class LatticeModifierEditor : Editor
             }
         }
 
-        // ── 选中点的移动手柄 ──
+        // ── 选中点的移动/旋转/缩放手柄 ──
         if (selPts != null && selPts.Count > 0)
         {
             Vector3 center = Vector3.zero;
@@ -475,22 +515,105 @@ public class LatticeModifierEditor : Editor
                 center += t.TransformPoint(lat.controlPoints[i]);
             center /= selPts.Count;
 
-            EditorGUI.BeginChangeCheck();
-            Vector3 newCenter = Handles.PositionHandle(center, t.rotation);
-            if (EditorGUI.EndChangeCheck())
+            if (Tools.current == Tool.Scale)
             {
-                Undo.RecordObject(lat, "移动晶格控制点");
-                Vector3 delta = newCenter - center;
-                foreach (int i in selPts)
+                // 拖拽期间使用锁定的中心点
+                Vector3 handleCenter = s_handleDragging ? s_handleStartCenter : center;
+
+                EditorGUI.BeginChangeCheck();
+                Vector3 newScale = Handles.ScaleHandle(Vector3.one, handleCenter, t.rotation, HandleUtility.GetHandleSize(handleCenter));
+                if (EditorGUI.EndChangeCheck())
                 {
-                    Vector3 wp = t.TransformPoint(lat.controlPoints[i]) + delta;
-                    lat.controlPoints[i] = t.InverseTransformPoint(wp);
+                    if (!s_handleDragging)
+                    {
+                        s_handleDragging = true;
+                        s_handleStartCenter = center;
+                        handleCenter = center;
+                        s_handleStartPositions = new Dictionary<int, Vector3>();
+                        foreach (int i in selPts)
+                            s_handleStartPositions[i] = t.TransformPoint(lat.controlPoints[i]);
+                    }
+
+                    Undo.RecordObject(lat, "缩放晶格控制点");
+                    foreach (int i in selPts)
+                    {
+                        Vector3 startWp = s_handleStartPositions[i];
+                        Vector3 offset = startWp - handleCenter;
+                        offset.x *= newScale.x;
+                        offset.y *= newScale.y;
+                        offset.z *= newScale.z;
+                        lat.controlPoints[i] = t.InverseTransformPoint(handleCenter + offset);
+                    }
+                    if (lat.HasControlPointTransforms)
+                        lat.SyncToTransforms();
+                    if (lat.liveUpdate)
+                        lat.ApplyDeformation();
+                    EditorUtility.SetDirty(lat);
                 }
-                if (lat.HasControlPointTransforms)
-                    lat.SyncToTransforms();
-                if (lat.liveUpdate)
-                    lat.ApplyDeformation();
-                EditorUtility.SetDirty(lat);
+                else if (s_handleDragging && Event.current.type == EventType.MouseUp)
+                {
+                    s_handleDragging = false;
+                    s_handleStartPositions = null;
+                }
+            }
+            else if (Tools.current == Tool.Rotate)
+            {
+                Vector3 handleCenter = s_handleDragging ? s_handleStartCenter : center;
+
+                EditorGUI.BeginChangeCheck();
+                Quaternion newRot = Handles.RotationHandle(Quaternion.identity, handleCenter);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    if (!s_handleDragging)
+                    {
+                        s_handleDragging = true;
+                        s_handleStartCenter = center;
+                        handleCenter = center;
+                        s_handleStartPositions = new Dictionary<int, Vector3>();
+                        foreach (int i in selPts)
+                            s_handleStartPositions[i] = t.TransformPoint(lat.controlPoints[i]);
+                    }
+
+                    Undo.RecordObject(lat, "旋转晶格控制点");
+                    foreach (int i in selPts)
+                    {
+                        Vector3 startWp = s_handleStartPositions[i];
+                        Vector3 offset = startWp - handleCenter;
+                        offset = newRot * offset;
+                        lat.controlPoints[i] = t.InverseTransformPoint(handleCenter + offset);
+                    }
+                    if (lat.HasControlPointTransforms)
+                        lat.SyncToTransforms();
+                    if (lat.liveUpdate)
+                        lat.ApplyDeformation();
+                    EditorUtility.SetDirty(lat);
+                }
+                else if (s_handleDragging && Event.current.type == EventType.MouseUp)
+                {
+                    s_handleDragging = false;
+                    s_handleStartPositions = null;
+                }
+            }
+            else
+            {
+                // 默认移动模式
+                EditorGUI.BeginChangeCheck();
+                Vector3 newCenter = Handles.PositionHandle(center, t.rotation);
+                if (EditorGUI.EndChangeCheck())
+                {
+                    Undo.RecordObject(lat, "移动晶格控制点");
+                    Vector3 delta = newCenter - center;
+                    foreach (int i in selPts)
+                    {
+                        Vector3 wp = t.TransformPoint(lat.controlPoints[i]) + delta;
+                        lat.controlPoints[i] = t.InverseTransformPoint(wp);
+                    }
+                    if (lat.HasControlPointTransforms)
+                        lat.SyncToTransforms();
+                    if (lat.liveUpdate)
+                        lat.ApplyDeformation();
+                    EditorUtility.SetDirty(lat);
+                }
             }
         }
     }
