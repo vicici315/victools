@@ -11,9 +11,13 @@
 
 using UnityEngine;
 using UnityEditor;
+using Vic.Runtime;
+
+namespace Vic.Editor
+{
 
 [CustomEditor(typeof(BlendShapeAnimator))]
-public class BlendShapeAnimatorEditor : Editor
+public class BlendShapeAnimatorEditor : UnityEditor.Editor
 {
     private int _lastVertexIndex = -1;
 
@@ -148,6 +152,56 @@ public class BlendShapeAnimatorEditor : Editor
         var mf = anim.targetRenderer.GetComponent<MeshFilter>();
         return mf != null ? mf.sharedMesh : null;
     }
+
+    // 自动启用 Mesh 的 Read/Write 功能
+    private static void EnableMeshReadWrite(Mesh mesh)
+    {
+        if (mesh == null)
+        {
+            Debug.LogWarning("[BlendShapeAnimator] 未找到有效的 Mesh！");
+            return;
+        }
+
+        string assetPath = AssetDatabase.GetAssetPath(mesh);
+        if (string.IsNullOrEmpty(assetPath))
+        {
+            Debug.LogWarning($"[BlendShapeAnimator] Mesh '{mesh.name}' 不是资产文件，无法修改导入设置。");
+            return;
+        }
+
+        ModelImporter importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+        if (importer == null)
+        {
+            Debug.LogWarning($"[BlendShapeAnimator] 无法获取 '{assetPath}' 的模型导入器。");
+            return;
+        }
+
+        if (importer.isReadable)
+        {
+            Debug.Log($"[BlendShapeAnimator] Mesh '{mesh.name}' 已经启用了 Read/Write，无需修改。");
+            return;
+        }
+
+        // 弹出确认对话框
+        bool confirm = EditorUtility.DisplayDialog(
+            "启用 Read/Write",
+            $"即将为 Mesh '{mesh.name}' 启用 Read/Write 功能。\n\n"
+            + "注意：此操作会重新导入模型，可能导致场景中的引用暂时丢失。\n\n"
+            + "是否继续？",
+            "确定",
+            "取消");
+
+        if (!confirm) return;
+
+        // 修改导入设置
+        importer.isReadable = true;
+        importer.SaveAndReimport();
+
+        Debug.Log($"[BlendShapeAnimator] ✅ 已成功为 Mesh '{mesh.name}' 启用 Read/Write！请重新选择对象以刷新 Inspector。");
+        
+        // 刷新资源数据库
+        AssetDatabase.Refresh();
+    }
 // 属性栏UI显示
     public override void OnInspectorGUI()
     {
@@ -202,10 +256,21 @@ public class BlendShapeAnimatorEditor : Editor
         {
             int vertCount = mesh.vertexCount;
 
+            // 检查 Read/Write 是否启用
             if (vertCount > 0 && mesh.vertices.Length == 0)
+            {
                 EditorGUILayout.HelpBox(
                     $"Mesh '{mesh.name}' 的 Read/Write 未启用，请在模型导入设置中勾选 Read/Write Enabled。",
                     MessageType.Error);
+                
+                // 提供一键修复按钮
+                GUI.backgroundColor = new Color(1f, 0.7f, 0.3f);
+                if (GUILayout.Button("自动启用 Read/Write", GUILayout.Height(28)))
+                {
+                    EnableMeshReadWrite(mesh);
+                }
+                GUI.backgroundColor = Color.white;
+            }
         }
 
         EditorGUILayout.PropertyField(so.FindProperty("trackVertexIndex"));
@@ -328,3 +393,4 @@ public class BlendShapeAnimatorEditor : Editor
             $"V{anim.trackVertexIndex}\n{worldPos:F3}", EditorStyles.miniLabel);
     }
 }
+} // namespace Vic.Editor

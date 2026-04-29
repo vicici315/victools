@@ -2,7 +2,9 @@ fileFormatVersion: 2
 guid: CC5Ktin/VHJENuQEnrZXjkDXXmUQ2EwsX1/BJAC7OQPEbWIQHMRqOQA=
 ShaderImporter:
   externalObjects: {}
-  defaultTextures: []
+  defaultTextures:
+  - _BaseMap: {instanceID: 0}
+  - _WindDistortionMap: {fileID: 2800000, guid: a61b2a08d8ae1cf49bde6c7d47c3be80, type: 3}
   nonModifiableTextures: []
   userData: 
   assetBundleName: 

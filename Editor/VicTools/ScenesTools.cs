@@ -1,6 +1,7 @@
 // 场景工具 v2.14 添加lighting材质(用于烘焙打灯时查看实时灯光效果)快速切换功能按钮
 // 场景工具 v2.16 添加【选择材质】按钮，用于选择场景中选中对象的材质球
 // 场景工具 v2.17 添加【↓】快速统一赋予最后选中对象的材质按钮；添加模型一键落地按钮
+// 场景工具 v2.18 资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -121,7 +122,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.17]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.18]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -653,6 +654,12 @@ public class ResourceBoxFileItem
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField($"资源箱: ( {_resourceBox.Count} )", style.subheading, GUILayout.Height(24));
             GUILayout.FlexibleSpace();
+            // 按类型排序按钮
+            GUI.backgroundColor = Color.yellow;
+            if (GUILayout.Button("按类型排序"))
+            {
+                SortResourceBoxByType();
+            }
             // 清除资源箱按钮（带确认）
             GUI.backgroundColor = Color.red;
             if (GUILayout.Button("清空资源箱 X"))
@@ -887,7 +894,7 @@ public class ResourceBoxFileItem
                         }
                         GUI.backgroundColor = Color.white;
                     } else {
-                        // if (!isObjectNull && obj is not SceneAsset)
+                        if (!isObjectNull && obj is not SceneAsset)
                         GUILayout.Space(20);
                     }
 
@@ -1163,6 +1170,117 @@ public class ResourceBoxFileItem
         }
 
         /// 处理拖拽的对象
+        /// 获取对象类型的排序优先级（数值越小越靠前）
+        private static int GetTypeOrder(Object obj)
+        {
+            if (obj == null) return 999;
+            return obj switch
+            {
+                SceneAsset => 0,
+                GameObject => 1,
+                Material => 2,
+                Mesh => 3,
+                Texture => 4,
+                AudioClip => 5,
+                AnimationClip => 6,
+                _ => 50
+            };
+        }
+
+        /// 将资源箱列表按类型集中排列（同类型保持原有相对顺序）
+        private void SortResourceBoxByType()
+        {
+            if (_resourceBox.Count == 0) return;
+
+            // 稳定排序：按类型优先级，同类型保持原顺序
+            var sorted = _resourceBox
+                .Select((obj, idx) => (obj, idx))
+                .OrderBy(t => GetTypeOrder(t.obj))
+                .ThenBy(t => t.obj?.name ?? "", StringComparer.OrdinalIgnoreCase)   // 按名称排列
+                .Select(t => t.obj)
+                .ToList();
+
+            _resourceBox.Clear();
+            _resourceBox.AddRange(sorted);
+
+            // 重建索引映射
+            RebuildIndexMappings();
+
+            SaveResourceBox(false);
+            if (Parent) Parent.Repaint();
+        }
+
+        /// 重建 null 对象显示名称和 InstanceID 的索引映射
+        private void RebuildIndexMappings()
+        {
+            // 重建 instanceID -> index 映射
+            var newInstanceIDs = new Dictionary<int, int>();
+            var newNullDisplayNames = new Dictionary<int, string>();
+
+            // 先建立 instanceID -> displayName 的反查表（旧索引）
+            var idToDisplay = new Dictionary<int, string>(_instanceIDToDisplayName);
+
+            for (int i = 0; i < _resourceBox.Count; i++)
+            {
+                var obj = _resourceBox[i];
+                if (obj != null)
+                {
+                    int iid = obj.GetInstanceID();
+                    newInstanceIDs[i] = iid;
+                }
+                else
+                {
+                    // null 对象：从旧 instanceID 映射中找 displayName
+                    // 遍历旧 _resourceBoxInstanceIDs 找到对应 instanceID
+                    foreach (var kvp in _resourceBoxInstanceIDs)
+                    {
+                        if (!newInstanceIDs.ContainsValue(kvp.Value) &&
+                            idToDisplay.TryGetValue(kvp.Value, out var dn))
+                        {
+                            newInstanceIDs[i] = kvp.Value;
+                            newNullDisplayNames[i] = dn;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            _resourceBoxInstanceIDs.Clear();
+            _nullObjectDisplayNames.Clear();
+            foreach (var kvp in newInstanceIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
+            foreach (var kvp in newNullDisplayNames) _nullObjectDisplayNames[kvp.Key] = kvp.Value;
+        }
+
+        /// 将对象插入资源箱，按类型插入到同类型末尾
+        private void InsertToResourceBoxByType(Object obj)
+        {
+            int order = GetTypeOrder(obj);
+            // 找到同类型最后一个的位置，插入其后；若无同类型则找第一个更大类型的位置
+            int insertIndex = _resourceBox.Count; // 默认追加到末尾
+            bool foundSameType = false;
+            for (int i = 0; i < _resourceBox.Count; i++)
+            {
+                int cur = GetTypeOrder(_resourceBox[i]);
+                if (cur == order)
+                {
+                    insertIndex = i + 1;
+                    foundSameType = true;
+                }
+                else if (!foundSameType && cur > order)
+                {
+                    insertIndex = i;
+                    break;
+                }
+            }
+            _resourceBox.Insert(insertIndex, obj);
+
+            var parentName = GetTopLevelParentName(obj);
+            var displayName = !string.IsNullOrEmpty(parentName)
+                ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}"
+                : $"<{obj.GetType().Name}> {obj.name}";
+            _resourceBoxDisplayNames[obj] = displayName;
+        }
+
         private void HandleDragAndDropObjects(Object[] draggedObjects)
         {
             if (draggedObjects == null || draggedObjects.Length == 0)
@@ -1172,34 +1290,22 @@ public class ResourceBoxFileItem
             foreach (var obj in draggedObjects)
             {
                 if (!obj || _resourceBox.Contains(obj)) continue;
-                // 检查对象是否具有kDontSaveInEditor标志，如果有则清除它
                 if (((int)obj.hideFlags & (int)HideFlags.DontSaveInEditor) != 0)
                 {
                     obj.hideFlags &= ~HideFlags.DontSaveInEditor;
                     Debug.Log($"已清除对象 {obj.name} 的DontSaveInEditor标志");
                 }
-                    
-                _resourceBox.Add(obj);
-                
-                // 计算并保存displayName到字典
-                var parentName = GetTopLevelParentName(obj);
-                var displayName = !string.IsNullOrEmpty(parentName) 
-                    ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}" 
-                    : $"<{obj.GetType().Name}> {obj.name}";
-                _resourceBoxDisplayNames[obj] = displayName;
-                
+
+                InsertToResourceBoxByType(obj);
                 addedCount++;
             }
 
             if (addedCount <= 0) return;
-            // 强制重绘窗口
-            if (Parent)
-                Parent.Repaint();
-
+            RebuildIndexMappings();
+            UpdateSelectedObjectsInResourceBox();
+            if (Parent) Parent.Repaint();
             // 立即保存资源箱数据（自动保存，不显示提示框）
             SaveResourceBox(false);
-                
-            // Debug.Log($"通过拖拽添加了 {addedCount} 个对象到资源箱");
         }
 
         /// 添加选中的对象到资源箱
@@ -1217,31 +1323,20 @@ public class ResourceBoxFileItem
             foreach (var obj in selectedObjects)
             {
                 if (!obj || _resourceBox.Contains(obj)) continue;
-                // 检查对象是否具有kDontSaveInEditor标志，如果有则清除它
                 if (((int)obj.hideFlags & (int)HideFlags.DontSaveInEditor) != 0)
                 {
                     obj.hideFlags &= ~HideFlags.DontSaveInEditor;
                     Debug.Log($"已清除对象 {obj.name} 的DontSaveInEditor标志");
                 }
-                    
-                _resourceBox.Add(obj);
-                
-                // 计算并保存displayName到字典
-                var parentName = GetTopLevelParentName(obj);
-                var displayName = !string.IsNullOrEmpty(parentName) 
-                    ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}" 
-                    : $"<{obj.GetType().Name}> {obj.name}";
-                _resourceBoxDisplayNames[obj] = displayName;
-                
+
+                InsertToResourceBoxByType(obj);
                 addedCount++;
             }
 
             if (addedCount <= 0) return;
-            // 强制重绘窗口
-            if (Parent)
-                Parent.Repaint();
-                
-            // 立即保存资源箱数据（自动保存，不显示提示框）
+            RebuildIndexMappings();
+            UpdateSelectedObjectsInResourceBox();
+            if (Parent) Parent.Repaint();
             SaveResourceBox(false);
         }
 

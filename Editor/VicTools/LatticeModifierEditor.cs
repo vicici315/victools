@@ -8,6 +8,7 @@
 // LatticeModifierEditor 2.1 添加删除晶格按钮（还原 Mesh 并删除晶格物体），单目标模式自动识别带骨骼角色父级切换多目标
 // LatticeModifierEditor 2.2 添加目标按钮支持多选，显示手动 Renderer 列表字段，运行/停止游戏自动重建晶格，移除每帧 RepaintAll 优化性能
 // LatticeModifierEditor 2.3 支持缩放旋转等工具手柄操作控制点；优化缩放旋转工具操作
+// LatticeModifierEditor 2.4 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示。
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
@@ -53,6 +54,7 @@ public class LatticeModifierEditor : Editor
         s_activeSelectedPoints = selectedPoints;
         EditorApplication.update += EditorUpdate;
         EditorApplication.playModeStateChanged += OnPlayModeChanged;
+        Selection.selectionChanged += OnSelectionChanged;
         if (!s_registered)
         {
             SceneView.duringSceneGui += OnGlobalSceneGUIStatic;
@@ -62,8 +64,39 @@ public class LatticeModifierEditor : Editor
 
     private void OnDisable()
     {
+        Tools.hidden = false;
         EditorApplication.update -= EditorUpdate;
         EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+        Selection.selectionChanged -= OnSelectionChanged;
+    }
+
+    /// Hierarchy 中选中 CP 节点时，反查索引同步到 selectedPoints
+    private void OnSelectionChanged()
+    {
+        if (lattice == null || !lattice.HasControlPointTransforms) return;
+
+        var newSel = new HashSet<int>();
+        foreach (var go in Selection.gameObjects)
+        {
+            // 遍历所有控制点找到匹配的 Transform
+            int total = lattice.PointCountX * lattice.PointCountY * lattice.PointCountZ;
+            for (int i = 0; i < total; i++)
+            {
+                Transform cp = lattice.GetControlPointTransform(i);
+                if (cp != null && cp.gameObject == go)
+                {
+                    newSel.Add(i);
+                    break;
+                }
+            }
+        }
+
+        if (newSel.Count == 0) return; // 不是 CP 节点，不干扰其他选择
+
+        selectedPoints.Clear();
+        foreach (int i in newSel) selectedPoints.Add(i);
+        s_activeSelectedPoints = selectedPoints;
+        SceneView.RepaintAll();
     }
 
     private void OnPlayModeChanged(PlayModeStateChange state)
@@ -87,11 +120,54 @@ public class LatticeModifierEditor : Editor
         }
     }
 
+    // 上一帧控制点位置快照，用于检测 CP Transform 是否被外部移动
+    private Vector3[] _lastCpPositions;
+
     private void EditorUpdate()
     {
         if (lattice == null || !lattice.IsInitialized || !lattice.liveUpdate) return;
-        if (lattice.useTransformHandles && lattice.HasControlPointTransforms)
-            lattice.SyncFromTransforms();
+
+        if (lattice.HasControlPointTransforms)
+        {
+            // 检测 CP Transform 是否发生变化（用户在 Hierarchy 中移动了 CP 节点）
+            int total = lattice.PointCountX * lattice.PointCountY * lattice.PointCountZ;
+            bool changed = false;
+
+            if (_lastCpPositions == null || _lastCpPositions.Length != total)
+            {
+                _lastCpPositions = new Vector3[total];
+                for (int i = 0; i < total; i++)
+                {
+                    Transform cp = lattice.GetControlPointTransform(i);
+                    if (cp != null) _lastCpPositions[i] = cp.localPosition;
+                }
+            }
+            else
+            {
+                for (int i = 0; i < total; i++)
+                {
+                    Transform cp = lattice.GetControlPointTransform(i);
+                    if (cp != null && cp.localPosition != _lastCpPositions[i])
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (changed)
+            {
+                Undo.RecordObject(lattice, "移动晶格控制点");
+                lattice.SyncFromTransforms();
+                for (int i = 0; i < total; i++)
+                {
+                    Transform cp = lattice.GetControlPointTransform(i);
+                    if (cp != null) _lastCpPositions[i] = cp.localPosition;
+                }
+                EditorUtility.SetDirty(lattice);
+            }
+        }
+
         lattice.ApplyDeformation();
     }
 
@@ -189,7 +265,6 @@ public class LatticeModifierEditor : Editor
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsY"), new GUIContent("Y 段数"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsZ"), new GUIContent("Z 段数"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("liveUpdate"), new GUIContent("实时更新"));
-        EditorGUILayout.PropertyField(serializedObject.FindProperty("useTransformHandles"), new GUIContent("使用子物体控制点"));
         serializedObject.ApplyModifiedProperties();
 
         EditorGUILayout.Space(10);
@@ -340,11 +415,9 @@ public class LatticeModifierEditor : Editor
             if (EditorUtility.DisplayDialog("烘焙确认",
                 "将当前变形烘焙到 Mesh，晶格数据将被清除。确定？", "确定", "取消"))
             {
-                Undo.RecordObject(lattice, "烘焙晶格变形");
-                lattice.BakeAndRemove();
-                selectedPoints.Clear();
-                EditorUtility.SetDirty(lattice);
-                SceneView.RepaintAll();
+                BakeDeformationToAsset();
+                GUIUtility.ExitGUI();
+                return;
             }
         }
         EditorGUILayout.EndHorizontal();
@@ -386,6 +459,9 @@ public class LatticeModifierEditor : Editor
     private static void DrawLatticeAndHandles(LatticeModifier lat, HashSet<int> selPts, SceneView sceneView, bool isInstance)
     {
         if (lat == null || !lat.IsInitialized || lat.controlPoints == null) return;
+
+        // 有控制点被选中时隐藏 Unity 内置 Transform Handle，避免出现两个移动工具
+        Tools.hidden = selPts != null && selPts.Count > 0;
 
         Event e = Event.current;
         Transform t = lat.transform;
@@ -634,8 +710,96 @@ public class LatticeModifierEditor : Editor
     }
 
     // ═══════════════════════════════════════════
-    //  创建独立晶格物体
+    //  烘焙变形到 Mesh Asset
     // ═══════════════════════════════════════════
+    private void BakeDeformationToAsset()
+    {
+        // 确保变形已经应用到最新状态
+        lattice.ApplyDeformation();
+
+        var renderers = lattice.GetActiveRenderers();
+        if (renderers.Count == 0)
+        {
+            Debug.LogWarning("[LatticeModifier] 没有找到目标 Renderer，烘焙取消");
+            return;
+        }
+
+        // 选择保存目录
+        string savePath = EditorUtility.SaveFolderPanel("选择烘焙 Mesh 保存目录", "Assets", "");
+        if (string.IsNullOrEmpty(savePath)) return;
+
+        // 转换为相对路径
+        if (!savePath.StartsWith(Application.dataPath))
+        {
+            EditorUtility.DisplayDialog("路径错误", "请选择 Assets 目录内的文件夹", "确定");
+            return;
+        }
+        string relativeDir = "Assets" + savePath.Substring(Application.dataPath.Length);
+
+        // ── 第一步：保存所有变形 Mesh 为 Asset ──
+        bool anyFailed = false;
+        var savedMeshes = new List<(Renderer rend, Mesh persistedMesh)>();
+
+        foreach (var rend in renderers)
+        {
+            if (rend == null) continue;
+
+            Mesh currentMesh = LatticeModifier.GetRendererMeshStatic(rend);
+            if (currentMesh == null)
+            {
+                Debug.LogWarning($"[LatticeModifier] {rend.name} 没有有效 Mesh，跳过");
+                anyFailed = true;
+                continue;
+            }
+
+            string baseName = rend.name + "_Baked";
+            Mesh bakedMesh = UnityEngine.Object.Instantiate(currentMesh);
+            bakedMesh.name = baseName;
+
+            string assetPath = AssetDatabase.GenerateUniqueAssetPath($"{relativeDir}/{baseName}.asset");
+            AssetDatabase.CreateAsset(bakedMesh, assetPath);
+            // CreateAsset 后 bakedMesh 已经是持久化对象，直接使用
+            savedMeshes.Add((rend, bakedMesh));
+        }
+
+        // SaveAssets 持久化到磁盘，不调用 Refresh（避免触发重新导入还原 Renderer）
+        AssetDatabase.SaveAssets();
+
+        // ── 第二步：把持久化 Mesh 赋给 Renderer ──
+        foreach (var (rend, persistedMesh) in savedMeshes)
+        {
+            if (rend is SkinnedMeshRenderer smr)
+            {
+                Undo.RecordObject(smr, "烘焙晶格变形");
+                smr.sharedMesh = persistedMesh;
+                EditorUtility.SetDirty(smr);
+            }
+            else
+            {
+                var mf = rend.GetComponent<MeshFilter>();
+                if (mf != null)
+                {
+                    Undo.RecordObject(mf, "烘焙晶格变形");
+                    mf.sharedMesh = persistedMesh;
+                    EditorUtility.SetDirty(mf);
+                }
+            }
+        }
+
+        // ── 第三步：清理晶格数据（Renderer 已持有持久化 Mesh，此时清理安全）──
+        Undo.RecordObject(lattice, "烘焙晶格变形");
+        lattice.BakeAndRemove();
+        selectedPoints.Clear();
+        s_activeLattice = null;
+        s_activeSelectedPoints = null;
+        EditorUtility.SetDirty(lattice);
+        SceneView.RepaintAll();
+
+        if (anyFailed)
+            Debug.LogWarning("[LatticeModifier] 部分 Renderer 烘焙失败，请检查 Console");
+        else
+            Debug.Log($"[LatticeModifier] 烘焙完成，共保存 {savedMeshes.Count} 个 Mesh Asset 到 {relativeDir}");
+    }
     private void CreateStandaloneLattice()
     {
         bool isSingle = lattice.targetMode == LatticeModifier.TargetMode.SingleRenderer;

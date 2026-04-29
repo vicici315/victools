@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Game.Utils
+namespace Vic.Runtime
 {
     /// 旋转控制器组件
     /// 用于让挂载的对象沿着指定轴以指定速度旋转

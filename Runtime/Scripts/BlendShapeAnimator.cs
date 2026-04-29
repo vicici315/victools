@@ -2,9 +2,13 @@
 // BlendShapeAnimator v1.5 - 新增 粒子系统控制水花发射速度匹配水柱抛物线；添加 关闭动画手动设置进度参数
 // BlendShapeAnimator v1.6 - 性能优化：BakeMesh 缓存复用，避免每帧 new Mesh 产生 GC
 // BlendShapeAnimator v1.7 - 添加 SkinnedMeshRenderer 包围盒扩展，防止轴心偏移导致视锥剔除（修复轴心偏移问题）
+// BlendShapeAnimator v1.8 - 自动设置混合变形模型文件启用 Read/Write 选项
 
 //（BlendShaper混合变形顶点定位脚本）
 using UnityEngine;
+
+namespace Vic.Runtime
+{
 
 [ExecuteAlways]
 public class BlendShapeAnimator : MonoBehaviour
@@ -73,6 +77,74 @@ public class BlendShapeAnimator : MonoBehaviour
     }
 
     private Transform GetMeshTransform() => targetRenderer != null ? targetRenderer.transform : null;
+
+#if UNITY_EDITOR
+    // 在编辑器模式下自动修复 Read/Write 设置（无需用户确认）
+    private void TryFixReadWriteEnabled(Mesh mesh)
+    {
+        // 使用反射调用编辑器功能，避免编译错误
+        System.Type assetDatabaseType = System.Type.GetType("UnityEditor.AssetDatabase, UnityEditor");
+        System.Type assetImporterType = System.Type.GetType("UnityEditor.AssetImporter, UnityEditor");
+        
+        if (assetDatabaseType == null || assetImporterType == null)
+        {
+            Debug.LogWarning($"[BlendShapeAnimator] Mesh '{mesh.name}' 的 Read/Write 未启用。");
+            return;
+        }
+
+        // 获取资源路径
+        System.Reflection.MethodInfo getAssetPathMethod = assetDatabaseType.GetMethod("GetAssetPath", new System.Type[] { typeof(UnityEngine.Object) });
+        if (getAssetPathMethod == null) return;
+        
+        string assetPath = getAssetPathMethod.Invoke(null, new object[] { mesh }) as string;
+        if (string.IsNullOrEmpty(assetPath))
+        {
+            Debug.LogWarning($"[BlendShapeAnimator] Mesh '{mesh.name}' 不是资产文件，无法修改导入设置。");
+            return;
+        }
+
+        // 获取 AssetImporter
+        System.Reflection.MethodInfo getAtPathMethod = assetImporterType.GetMethod("GetAtPath");
+        if (getAtPathMethod == null) return;
+        
+        object importer = getAtPathMethod.Invoke(null, new object[] { assetPath });
+        if (importer == null) return;
+
+        // 检查是否是 ModelImporter
+        System.Type modelImporterType = System.Type.GetType("UnityEditor.ModelImporter, UnityEditor");
+        if (modelImporterType == null || !modelImporterType.IsInstanceOfType(importer))
+        {
+            Debug.LogWarning($"[BlendShapeAnimator] 无法修改 '{assetPath}' 的导入设置。");
+            return;
+        }
+
+        // 检查是否已经启用
+        System.Reflection.PropertyInfo isReadableProperty = modelImporterType.GetProperty("isReadable");
+        if (isReadableProperty == null) return;
+        
+        bool isReadable = (bool)isReadableProperty.GetValue(importer);
+        if (isReadable)
+        {
+            Debug.Log($"[BlendShapeAnimator] Mesh '{mesh.name}' 已经启用了 Read/Write。");
+            return;
+        }
+
+        // 直接修改导入设置，无需用户确认
+        Debug.Log($"[BlendShapeAnimator] ⚙️ 正在为 Mesh '{mesh.name}' 自动启用 Read/Write...");
+        isReadableProperty.SetValue(importer, true);
+        
+        System.Reflection.MethodInfo saveAndReimportMethod = modelImporterType.GetMethod("SaveAndReimport");
+        if (saveAndReimportMethod != null)
+        {
+            saveAndReimportMethod.Invoke(importer, null);
+            Debug.Log($"[BlendShapeAnimator] ✅ 已成功为 Mesh '{mesh.name}' 启用 Read/Write！模型已重新导入。");
+        }
+
+        // 刷新资源数据库
+        System.Reflection.MethodInfo refreshMethod = assetDatabaseType.GetMethod("Refresh");
+        refreshMethod?.Invoke(null, null);
+    }
+#endif
 
     // ── Unity 生命周期 ────────────────────────────────────────────
 
@@ -216,12 +288,36 @@ public class BlendShapeAnimator : MonoBehaviour
             return Vector3.zero;
         }
 
-        Vector3[] baseVerts = mesh.vertices;
-        if (baseVerts == null || baseVerts.Length == 0)
+        // 在访问 vertices 之前先检查 Read/Write 是否启用
+#if UNITY_EDITOR
+        // 通过尝试访问来检测 isReadable 状态
+        Vector3[] testVerts = null;
+        try
         {
-            Debug.LogWarning($"[BlendShapeAnimator] Mesh '{mesh.name}' 的 Read/Write 未启用，请在模型导入设置中勾选");
+            testVerts = mesh.vertices;
+        }
+        catch (System.Exception)
+        {
+            // 如果访问失败，说明 Read/Write 未启用，尝试自动修复
+            TryFixReadWriteEnabled(mesh);
             return Vector3.zero;
         }
+
+        if (testVerts == null || testVerts.Length == 0)
+        {
+            TryFixReadWriteEnabled(mesh);
+            return Vector3.zero;
+        }
+#else
+        // 运行时直接检查
+        if (!mesh.isReadable)
+        {
+            Debug.LogError($"[BlendShapeAnimator] Mesh '{mesh.name}' 的 Read/Write 未启用，请在模型导入设置中勾选 Read/Write Enabled。");
+            return Vector3.zero;
+        }
+#endif
+
+        Vector3[] baseVerts = mesh.vertices;
 
         if (vertexIndex >= baseVerts.Length) return Vector3.zero;
 
@@ -334,3 +430,4 @@ public class BlendShapeAnimator : MonoBehaviour
         }
     }
 }
+} // namespace Vic.Runtime

@@ -3,6 +3,7 @@ using UnityEditor;
 using System.Collections.Generic;
 using System.Linq;
 using System;
+using Vic.Runtime;
 
 namespace VicTools
 {
@@ -10,7 +11,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.9.3";
+        public const string Ver = "2.9.4";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
@@ -1428,6 +1429,12 @@ namespace VicTools
             {
                 ShowToolsDropdown();
             }
+            GUI.backgroundColor = Color.green;
+            if (GUILayout.Button(new GUIContent("Material", "创建材质"), GUILayout.Width(56), GUILayout.Height(14)))
+            {
+                ShowMaterialDropdown();
+            }
+            GUI.backgroundColor = Color.white;
             GUILayout.FlexibleSpace(); // 将按钮推到右侧
             
             // 帮助按钮
@@ -1628,19 +1635,114 @@ namespace VicTools
         private void ShowToolsDropdown()
         {
             GenericMenu menu = new GenericMenu();
-            menu.AddItem(new GUIContent("CustomLightTool: ComputeBuffer"), false, () =>
+            menu.AddItem(new GUIContent("■ 主材质自定义灯光工具: ComputeBuffer"), false, () =>
             {
                 EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/CustomLightTool: ComputeBufferTool");
             });
-            menu.AddItem(new GUIContent("OutlineTool: SmoothedNormal"), false, () =>
+            menu.AddItem(new GUIContent("■ 轮廓描边辅助工具: SmoothedNormal"), false, () =>
             {
                 EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal");
             });
             menu.AddSeparator("");
-            menu.AddItem(new GUIContent("创建晶格控制器"), false, CreateLatticeController);
+            menu.AddItem(new GUIContent("创建 晶格控制器"), false, CreateLatticeController);
+            // menu.AddSeparator("");
+            menu.AddItem(new GUIContent("创建 混合变形控制"), false, CreateBlendShapeAni);
+            menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制"), false, CreateEmissionFlicker);
+            menu.AddItem(new GUIContent("创建 旋转动画控制脚步"), false, CreateRotationController);
             menu.ShowAsContext();
         }
 
+        private void CreateRotationController()
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            int count = 0;
+
+            foreach (GameObject obj in selectedObjects)
+            {
+                
+                if (obj.GetComponent<RotationController>() == null)
+                {
+                    obj.AddComponent<RotationController>();
+                    count++;
+                }
+                else
+                {
+                    EditorUtility.DisplayDialog("提示",  $"物体 {obj.name} 已经包含 RotationController 组件。", "确定");
+                }
+            }
+            Debug.Log($"成功为 {count} 个物体添加了组件。");
+        }
+        private void CreateEmissionFlicker()
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            int count = 0;
+
+            foreach (GameObject obj in selectedObjects)
+            {
+                Renderer renderer = obj.GetComponent<Renderer>();
+
+                if (renderer == null)
+                {
+                    Debug.LogWarning($"[{obj.name}] 没有 Renderer 组件，无法检查 Shader。");
+                    break;
+                }
+                if (renderer.sharedMaterial == null)
+                {
+                    Debug.LogWarning($"[{obj.name}] 没有分配材质。");
+                    break;
+                }
+                if (renderer.sharedMaterial.shader.name == "Custom/PBR_Mobile")
+                {
+                    if (obj.GetComponent<EmissionFlicker>() == null)
+                    {
+                        obj.AddComponent<EmissionFlicker>();
+                        count++;
+                    }
+                }
+                
+            }
+            Debug.Log($"成功为 {count} 个物体添加了组件。");
+        }
+        private void CreateBlendShapeAni()
+        {
+            var selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "请先在场景中选中模型对象", "确定");
+                return;
+            }
+            // GetComponent 会在物体本身查找，如果找不到则返回 null
+            SkinnedMeshRenderer smr = selectedObjects[0].GetComponent<SkinnedMeshRenderer>();
+
+            // 3. 判断
+            if (smr != null)
+            {
+                // 可以在这里进行后续操作，例如获取 Mesh 或 骨骼信息
+                if (smr.sharedMesh != null)
+                {
+                    Debug.Log($"网格名称: {smr.sharedMesh.name}, 顶点数: {smr.sharedMesh.vertexCount}");
+                    // 2. 检查是否已经挂载了该脚本，避免重复添加
+                    if (selectedObjects[0].GetComponent<BlendShapeAnimator>() == null)
+                    {
+                        // 3. 添加组件
+                        selectedObjects[0].AddComponent<BlendShapeAnimator>();
+                        Debug.Log($"成功将 BlendShapeAnimator 挂载到：{selectedObjects[0].name}");
+                        
+                        // 可选：自动选中该物体以便查看 Inspector
+                        Selection.activeGameObject = selectedObjects[0];
+                    }
+                    else
+                    {
+                        EditorUtility.DisplayDialog("提示", $"物体 {selectedObjects[0].name} 已经包含 BlendShapeAnimator 组件。", "确定");
+                    }
+                }
+            }
+            else
+            {
+                EditorUtility.DisplayDialog("提示", $"选中物体 [{selectedObjects[0].name}] 不包含混合变形 SkinnedMeshRenderer。", "确定");
+            }
+
+        }
         private void CreateLatticeController()
         {
             var selectedObjects = Selection.gameObjects;
@@ -1714,12 +1816,80 @@ namespace VicTools
         private void ShowMenuDropdown()
         {
             GenericMenu menu = new GenericMenu();
-            
+
             menu.AddItem(new GUIContent("● 校正(PBR_Mobile)烘焙高光方向"), false, SceneTools.ApplyLightDirectionToMaterials);
-            // 添加"校正PBR_Mobile5.8 高光"菜单项
             menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.9 高光、反射数值"), false, CorrectPBRMobile58Specular);
-            
             menu.ShowAsContext();
+        }
+
+        private void ShowMaterialDropdown()
+        {
+            GenericMenu menu = new GenericMenu();
+            // ── 创建材质球 ──
+            menu.AddItem(new GUIContent("创建材质球/PBR_Mobile（自定义PBR主材质）"),           false, () => CreateMaterialFromShader("Custom/PBR_Mobile"));
+            menu.AddItem(new GUIContent("创建材质球/PBR_Mobile_Trans（自定义PBR主材质透明版）"),     false, () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans"));
+            menu.AddSeparator("创建材质球/");   // 二级菜单分割线
+            menu.AddItem(new GUIContent("创建材质球/AddTrans（透明叠加，可模拟灯光照射）"),            false, () => CreateMaterialFromShader("Custom/AddTrans"));
+            menu.AddItem(new GUIContent("创建材质球/Glass_carWindow（玻璃材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_carWindow"));
+            menu.AddItem(new GUIContent("创建材质球/Glass_MobileNew（折射效果水材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_MobileNew"));
+            menu.AddItem(new GUIContent("创建材质球/Tree_Trans（植被树叶透明飘动材质）"),           false, () => CreateMaterialFromShader("Custom/Tree_Trans"));
+            menu.AddItem(new GUIContent("创建材质球/Grass（草地材质）"),                false, () => CreateMaterialFromShader("Custom/Grass"));
+            menu.AddItem(new GUIContent("创建材质球/Texture（纯贴图颜色Alpha透明）"),              false, () => CreateMaterialFromShader("Custom/Texture"));
+            menu.AddItem(new GUIContent("创建材质球/ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
+            menu.AddItem(new GUIContent("创建材质球/FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）"), false, () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC"));
+            // menu.AddItem(new GUIContent("创建材质球/Toon"),                 false, () => CreateMaterialFromShader("Custom/Toon"));
+            menu.AddSeparator("创建材质球/");
+            menu.AddItem(new GUIContent("创建材质球/Outline（模型描边）/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
+            menu.AddItem(new GUIContent("创建材质球/Outline（模型描边）/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
+            menu.AddItem(new GUIContent("创建材质球/Fx（特效）/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));
+            menu.ShowAsContext();
+        }
+
+        private static void CreateMaterialFromShader(string shaderName)
+        {
+            Shader shader = Shader.Find(shaderName);
+            if (shader == null)
+            {
+                EditorUtility.DisplayDialog("找不到 Shader", $"未找到 Shader：{shaderName}\n请确认已正确导入。", "确定");
+                return;
+            }
+
+            string defaultName = System.IO.Path.GetFileName(shaderName.Replace("/", "_")) + "_Mat";
+            string savePath = EditorUtility.SaveFilePanelInProject(
+                $"创建 {shaderName} 材质球", defaultName, "mat",
+                $"选择 {shaderName} 材质球的保存位置");
+            if (string.IsNullOrEmpty(savePath)) return;
+
+            var mat = new Material(shader) { name = System.IO.Path.GetFileNameWithoutExtension(savePath) };
+            AssetDatabase.CreateAsset(mat, savePath);
+            AssetDatabase.SaveAssets();
+
+            // 尝试将材质赋予场景中选中的对象
+            var renderers = Selection.gameObjects
+                .Select(go => go.GetComponent<Renderer>())
+                .Where(r => r != null)
+                .ToArray();
+
+            if (renderers.Length > 0)
+            {
+                foreach (var renderer in renderers)
+                {
+                    Undo.RecordObject(renderer, "Assign Material");
+                    renderer.sharedMaterial = mat;
+                    // ShadowReceiver shader 只接收阴影不投射，自动关闭 CastShadows
+                    if (shaderName == "Custom/ShadowReceiver")
+                        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    EditorUtility.SetDirty(renderer);
+                }
+                Debug.Log($"[CreateMaterial] 已创建并赋予 {renderers.Length} 个对象：{savePath}");
+            }
+            else
+            {
+                Debug.Log($"[CreateMaterial] 已创建：{savePath}");
+            }
+
+            Selection.activeObject = mat;
+            EditorGUIUtility.PingObject(mat);
         }
 
         /// 校正PBR_Mobile5.8高光 - 调整材质的SpecularScale参数
@@ -2181,5 +2351,6 @@ namespace VicTools
             texture.hideFlags = HideFlags.HideAndDontSave;
             return texture;
         }
+
     }
 }

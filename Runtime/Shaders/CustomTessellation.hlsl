@@ -42,8 +42,7 @@ vertexOutput tessVert(vertexInput v)
     return o;
 }
 
-// _TessellationUniform is declared in the UnityPerMaterial CBUFFER in Grass.shader
-
+//“TessellationUniform”在“Grass.shader”文件中的“UnityPerMaterial” CBUFFER 中被声明。
 TessellationFactors patchConstantFunction(InputPatch<vertexInput, 3> patch)
 {
     TessellationFactors f;

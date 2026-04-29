@@ -11,6 +11,8 @@
 // LatticeModifier 2.5 新增手动指定 Renderer 列表（manualRenderers），支持多选对象创建晶格，严格按列表变形不展开子级
 // LatticeModifier 2.6 重新初始化保留控制点不再重置；运行/停止游戏自动重建 Mesh 管线；脏标记+顶点缓存优化编辑器性能
 // LatticeModifier 2.7 安全 Mesh 销毁机制：只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失
+// LatticeModifier 2.8 重写烘焙晶格变形功能，解决mesh丢失bug
+// LatticeModifier 2.9 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -39,8 +41,6 @@ public class LatticeModifier : MonoBehaviour
 
     [Header("设置")]
     public bool liveUpdate = true;
-    [Tooltip("使用子物体作为控制点（支持 Animation/Timeline K帧）")]
-    public bool useTransformHandles = false;
 
     [HideInInspector] public Vector3[] controlPoints;
     [HideInInspector] [SerializeField] private Vector3[] initialControlPoints;
@@ -158,7 +158,7 @@ public class LatticeModifier : MonoBehaviour
 
         runtimeInitialized = true;
 
-        if (useTransformHandles && HasControlPointTransforms)
+        if (HasControlPointTransforms)
             SyncFromTransforms();
 
         isDirty = true;
@@ -203,9 +203,9 @@ public class LatticeModifier : MonoBehaviour
         }
 
         // 只在 originalMesh 丢失或被污染时才更新
-        if (originalMesh == null || originalMesh.name.Contains("_LatticeDeform"))
+        if (originalMesh == null || IsLatticeDeformMesh(originalMesh))
         {
-            if (!sharedMesh.name.Contains("_LatticeDeform"))
+            if (!IsLatticeDeformMesh(sharedMesh))
                 originalMesh = sharedMesh;
         }
 
@@ -281,12 +281,12 @@ public class LatticeModifier : MonoBehaviour
             }
 
             // 只在 originalMesh 丢失时才重新获取，且排除变形 mesh
-            if (i < originalMeshes.Count && (originalMeshes[i] == null || originalMeshes[i].name.Contains("_LatticeDeform")))
-                originalMeshes[i] = sharedMesh.name.Contains("_LatticeDeform") ? null : sharedMesh;
+            if (i < originalMeshes.Count && (originalMeshes[i] == null || IsLatticeDeformMesh(originalMeshes[i])))
+                originalMeshes[i] = IsLatticeDeformMesh(sharedMesh) ? null : sharedMesh;
             else if (i >= originalMeshes.Count)
             {
                 while (originalMeshes.Count <= i) originalMeshes.Add(null);
-                if (!sharedMesh.name.Contains("_LatticeDeform"))
+                if (!IsLatticeDeformMesh(sharedMesh))
                     originalMeshes[i] = sharedMesh;
             }
 
@@ -467,35 +467,61 @@ public class LatticeModifier : MonoBehaviour
     // ═══════════════════════════════════════════
     //  Mesh 工具
     // ═══════════════════════════════════════════
+    // 用 instanceID 保证每个变形 Mesh 名称全局唯一，防止多模型共享同名 Mesh 时误判
+    private static readonly string LatticeDeformSuffix = "_LatticeDeform_";
+
     private Mesh CreateDeformMesh(Mesh src, Vector3[] vertices)
     {
-        try
+        string uniqueName = src.name + LatticeDeformSuffix + GetInstanceID();
+        Mesh nm = null;
+        if (src.isReadable)
         {
-            var m = Instantiate(src);
-            m.name = src.name + "_LatticeDeform";
-            m.MarkDynamic();
-            var _ = m.vertices;
-            return m;
+            nm = Instantiate(src);
+            nm.name = uniqueName;
+            nm.MarkDynamic();
+            return nm;
         }
-        catch { }
 
-        var nm = new Mesh { name = src.name + "_LatticeDeform" };
+        // 源 Mesh 不可读，手动构建新 Mesh
+        // vertices 参数已由调用方通过 GetReadableMesh 安全读出
+        nm = new Mesh { name = uniqueName };
         nm.vertices = vertices;
-        try { nm.subMeshCount = src.subMeshCount; for (int s = 0; s < src.subMeshCount; s++) nm.SetTriangles(src.GetTriangles(s), s); } catch { }
         try
         {
-            if (src.normals?.Length > 0) nm.normals = src.normals;
-            if (src.tangents?.Length > 0) nm.tangents = src.tangents;
-            if (src.uv?.Length > 0) nm.uv = src.uv;
-            if (src.uv2?.Length > 0) nm.uv2 = src.uv2;
-            if (src.colors?.Length > 0) nm.colors = src.colors;
-            if (src.boneWeights?.Length > 0) nm.boneWeights = src.boneWeights;
-            if (src.bindposes?.Length > 0) nm.bindposes = src.bindposes;
+            nm.subMeshCount = src.subMeshCount;
+            // 用 MeshDataArray 读取索引和其他通道（只读，不需要 isReadable）
+            var dataArr = Mesh.AcquireReadOnlyMeshData(src);
+            var data = dataArr[0];
+            for (int s = 0; s < data.subMeshCount; s++)
+            {
+                var desc = data.GetSubMesh(s);
+                using var idxNative = new Unity.Collections.NativeArray<int>(desc.indexCount, Unity.Collections.Allocator.Temp);
+                data.GetIndices(idxNative, s);
+                nm.SetTriangles(idxNative.ToArray(), s);
+            }
+            var normNative = new Unity.Collections.NativeArray<Vector3>(data.vertexCount, Unity.Collections.Allocator.Temp);
+            data.GetNormals(normNative);
+            nm.normals = normNative.ToArray(); normNative.Dispose();
+            var tanNative = new Unity.Collections.NativeArray<Vector4>(data.vertexCount, Unity.Collections.Allocator.Temp);
+            data.GetTangents(tanNative);
+            nm.tangents = tanNative.ToArray(); tanNative.Dispose();
+            var uvNative = new Unity.Collections.NativeArray<Vector2>(data.vertexCount, Unity.Collections.Allocator.Temp);
+            data.GetUVs(0, uvNative); nm.uv = uvNative.ToArray();
+            data.GetUVs(1, uvNative); nm.uv2 = uvNative.ToArray();
+            uvNative.Dispose();
+            dataArr.Dispose();
         }
         catch { }
         nm.RecalculateBounds();
         nm.MarkDynamic();
         return nm;
+    }
+
+    private bool IsLatticeDeformMesh(Mesh mesh)
+    {
+        if (mesh == null) return false;
+        // 检查是否包含本实例的唯一后缀，防止误判其他晶格的 Mesh
+        return mesh.name.Contains(LatticeDeformSuffix + GetInstanceID());
     }
 
     private Mesh GetReadableMesh(Renderer rend)
@@ -510,6 +536,8 @@ public class LatticeModifier : MonoBehaviour
         }
         return null;
     }
+
+    public static Mesh GetRendererMeshStatic(Renderer rend) => GetRendererMesh(rend);
 
     private static Mesh GetRendererMesh(Renderer rend)
     {
@@ -720,11 +748,14 @@ public class LatticeModifier : MonoBehaviour
 
     public void BakeAndRemove()
     {
-        initialized = false;
-        controlPoints = null;
-        initialControlPoints = null;
+        // 编辑器侧已将持久化 Mesh 赋给 Renderer，这里只负责清理晶格内部数据
+        // 销毁变形副本（B 缓冲），A 缓冲由编辑器侧接管，不在此销毁
         if (targetMode == TargetMode.SingleRenderer)
         {
+            // 只销毁 B 缓冲，A 由编辑器侧负责
+            if (deformedMeshB != null && IsLatticeDeformMesh(deformedMeshB))
+                DestroyImmediate(deformedMeshB);
+
             originalVertices = null;
             originalMesh = null;
             deformedMeshA = null;
@@ -732,6 +763,13 @@ public class LatticeModifier : MonoBehaviour
         }
         else
         {
+            for (int i = 0; i < targetRenderers.Count; i++)
+            {
+                // 只销毁 B 缓冲
+                Mesh bufB = i < deformedMeshesB.Count ? deformedMeshesB[i] : null;
+                if (bufB != null && IsLatticeDeformMesh(bufB))
+                    DestroyImmediate(bufB);
+            }
             targetRenderers.Clear();
             originalMeshes.Clear();
             originalVerticesList.Clear();
@@ -739,12 +777,16 @@ public class LatticeModifier : MonoBehaviour
             deformedMeshesB.Clear();
             isSkinned.Clear();
         }
+
+        initialized = false;
+        controlPoints = null;
+        initialControlPoints = null;
     }
 
-    /// 安全销毁 mesh：只销毁我们创建的变形副本，绝不销毁项目资源
+    /// 安全销毁 mesh：只销毁本实例创建的变形副本，绝不销毁项目资源
     private void SafeDestroyMesh(ref Mesh mesh)
     {
-        if (mesh != null && mesh.name.Contains("_LatticeDeform"))
+        if (mesh != null && IsLatticeDeformMesh(mesh))
         {
             if (Application.isPlaying) Destroy(mesh);
             else DestroyImmediate(mesh);
@@ -752,10 +794,10 @@ public class LatticeModifier : MonoBehaviour
         mesh = null;
     }
 
-    private static void SafeDestroyLatticeOnlyMesh(Mesh mesh)
+    private void SafeDestroyLatticeOnlyMesh(Mesh mesh)
     {
         if (mesh == null) return;
-        if (!mesh.name.Contains("_LatticeDeform")) return;
+        if (!IsLatticeDeformMesh(mesh)) return;
         if (Application.isPlaying) Destroy(mesh);
         else DestroyImmediate(mesh);
     }
@@ -792,7 +834,6 @@ public class LatticeModifier : MonoBehaviour
             go.transform.localPosition = controlPoints[i];
             controlPointTransforms[i] = go.transform;
         }
-        useTransformHandles = true;
     }
 
     public void DestroyControlPointTransforms()
@@ -803,7 +844,6 @@ public class LatticeModifier : MonoBehaviour
                 if (t != null) DestroyImmediate(t.gameObject);
             controlPointTransforms = null;
         }
-        useTransformHandles = false;
     }
 
     public void SyncFromTransforms()
@@ -837,13 +877,31 @@ public class LatticeModifier : MonoBehaviour
     private void LateUpdate()
     {
         if (!initialized || !liveUpdate) return;
-        if (useTransformHandles && HasControlPointTransforms)
+        if (HasControlPointTransforms)
             SyncFromTransforms();
         ApplyDeformation();
     }
 
     private void OnDestroy()
     {
+        // 先还原 Renderer 到原始 Mesh，再销毁变形副本，防止模型消失
+        if (initialized)
+        {
+            if (targetMode == TargetMode.SingleRenderer)
+            {
+                if (targetRenderer != null && originalMesh != null)
+                    SetRendererMesh(targetRenderer, originalMesh);
+            }
+            else
+            {
+                for (int i = 0; i < targetRenderers.Count; i++)
+                {
+                    if (targetRenderers[i] != null && i < originalMeshes.Count && originalMeshes[i] != null)
+                        SetRendererMesh(targetRenderers[i], originalMeshes[i]);
+                }
+            }
+        }
+
         SafeDestroyLatticeOnlyMesh(deformedMeshA);
         SafeDestroyLatticeOnlyMesh(deformedMeshB);
         foreach (var dm in deformedMeshesA) SafeDestroyLatticeOnlyMesh(dm);

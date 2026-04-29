@@ -24,7 +24,9 @@ public class GrassGUI : ShaderGUI
     private MaterialProperty bladeHeightRandom;
     private MaterialProperty bladeForward;
     private MaterialProperty bladeCurve;
+    private MaterialProperty bladeSegments;
     private MaterialProperty bendRotationRandom;
+    private MaterialProperty bladeRootSink;
     private MaterialProperty windDistortionMap;
     private MaterialProperty windFrequency;
     private MaterialProperty windStrength;
@@ -66,7 +68,9 @@ public class GrassGUI : ShaderGUI
         bladeHeightRandom = FindProperty("_BladeHeightRandom", m_Properties);
         bladeForward = FindProperty("_BladeForward", m_Properties);
         bladeCurve = FindProperty("_BladeCurve", m_Properties);
+        bladeSegments = FindProperty("_BladeSegments", m_Properties);
         bendRotationRandom = FindProperty("_BendRotationRandom", m_Properties);
+        bladeRootSink = FindProperty("_BladeRootSink", m_Properties);
         windDistortionMap = FindProperty("_WindDistortionMap", m_Properties);
         windFrequency = FindProperty("_WindFrequency", m_Properties);
         windStrength = FindProperty("_WindStrength", m_Properties);
@@ -141,7 +145,9 @@ public class GrassGUI : ShaderGUI
         m_MaterialEditor.FloatProperty(bladeHeightRandom, "高度随机");
         m_MaterialEditor.FloatProperty(bladeForward, "前倾量");
         m_MaterialEditor.RangeProperty(bladeCurve, "弯曲度");
+        m_MaterialEditor.RangeProperty(bladeSegments, "草体段数（1~3，3段有尖角）");
         m_MaterialEditor.RangeProperty(bendRotationRandom, "朝向随机");
+        m_MaterialEditor.RangeProperty(bladeRootSink, "根部下沉");
     }
 
     private void DrawWind()

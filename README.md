@@ -9,6 +9,26 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.9.4
+
+- 【场景工具 v2.18】资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列。
+
+  ![image-20260429144215583](./README.assets/image-20260429144215583.png)
+
+- 新增 [Material] 菜单，快速创建Custom Shader材质球。
+
+  ![image-20260429144142367](./README.assets/image-20260429144142367.png)
+
+- [Tools] 菜单添加（晶格控制器、混合变形控制、主材质自发光闪烁、旋转动画控制）组件工具快速创建。
+
+  ![image-20260429141704471](./README.assets/image-20260429141704471.png)
+
+- Texture 1.3 不再依赖 DepthOnlyPass.hlsl，改为自己实现的轻量 pass，CBUFFER 用 _MainTex_ST 保持一致。
+
+- LatticeModifierEditor 2.4 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示。
+
+
+
 ### 版本 2.9.3
 
 - Grass 1.0 添加自定义草地生成材质，支持纹理通道控制生长长度。

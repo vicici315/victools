@@ -1,11 +1,11 @@
 // Grass.shader
-// URP Geometry Grass Shader - Tessellation + Geometry Shader
 // =============================================================================
 // Grass 1.1 添加基础贴图纹理，控制草地根部颜色，A通道控制草生长区域
 // Grass 1.2 DisableBatching防止打包后batching改变坐标空间；A通道控制边缘草宽度与动态约束；添加最小宽度属性
 // Grass 1.3 前倾量改为角度旋转；风/弯曲按t2渐进混入根部锚定；从法线构建正交坐标系不依赖模型切线
 // Grass 1.4 替换rand为frac-dot哈希避免half精度溢出；安全windDir处理；强制float精度；Domain Shader归一化法线切线
 // Grass 1.5 优化（弯曲度、风力强度）参数的控制；添加（颜色倾向）参数控制使用纯色或贴图颜色
+// Grass 1.6 添加草体段数设置，可以削去尖角；添加草根部下沉参数用于隐藏根本拉扯，贴图使用half精度
 Shader "Custom/Grass"
 {
     Properties
@@ -13,28 +13,30 @@ Shader "Custom/Grass"
         [Header(Tessellation)]
         _TessellationUniform("Tessellation Uniform", Range(1, 64)) = 1
         [Header(Shading)]
-        _TopColor("Top Color", Color) = (1, 1, 1, 1)
-        _BottomColor("Bottom Color", Color) = (1, 1, 1, 1)
-        _ColorBias("Color Bias", Range(0, 1)) = 0.5
+        _TopColor("Top Color", Color) = (0.45, 0.86, 0.17, 1)
+        _BottomColor("Bottom Color", Color) = (0.02, 0.25, 0.08, 1)
+        _ColorBias("Color Bias", Range(0, 1)) = 0.4
         _BaseMap("Grass Color Map (RGB=Color, A=Aspect)", 2D) = "white" {}
         _AlphaCutoff("Alpha Cutoff (A < this = no grass)", Range(0, 1)) = 0.1
         _BladeMinHeight("Blade Min Height (below = cull)", Range(0, 1)) = 0.05
-        _TranslucentGain("Translucent Gain", Range(0, 1)) = 0.5
+        _TranslucentGain("Translucent Gain", Range(0, 1)) = 0.6
 
         [Header(Blade)]
-        _BladeWidth("Blade Width", Range(0.0001, 1)) = 0.05
-        _BladeWidthRandom("Blade Width Random", Range(0, 1)) = 0.02
-        _BladeMinWidth("Blade Min Width", Range(0.0, 1.0)) = 0.01
-        _BladeHeight("Blade Height", Float) = 0.5
+        _BladeWidth("Blade Width", Range(0.0001, 1)) = 0.1
+        _BladeWidthRandom("Blade Width Random", Range(0, 1)) = 0.05
+        _BladeMinWidth("Blade Min Width", Range(0.0, 1.0)) = 0.04
+        _BladeHeight("Blade Height", Float) = 0.4
         _BladeHeightRandom("Blade Height Random", Float) = 0.3
-        _BladeForward("Blade Forward Amount", Float) = 0.38
+        _BladeForward("Blade Forward Amount", Float) = 0.8
         _BladeCurve("Blade Curvature Amount", Range(0, 1)) = 0.5
+        _BladeSegments("Blade Segments", Range(1, 3)) = 3
         _BendRotationRandom("Bend Rotation Random", Range(0, 1)) = 0.5
+        _BladeRootSink("Blade Root Sink", Range(0, 1)) = 0.02
 
         [Header(Wind)]
-        _WindDistortionMap("Wind Distortion Map", 2D) = "white" {}
-        _WindFrequency("Wind Frequency", Vector) = (0.05, 0.05, 0, 0)
-        _WindStrength("Wind Strength", Float) = 1
+        _WindDistortionMap("Wind Distortion Map", 2D) = "blue" {}
+        _WindFrequency("Wind Frequency", Vector) = (0.15, 0.25, 0, 0)
+        _WindStrength("Wind Strength", Float) = 0.5
     }
 
     SubShader
@@ -67,20 +69,30 @@ Shader "Custom/Grass"
             float4 _BaseMap_ST;
             float4 _WindDistortionMap_ST;
             float4 _WindFrequency; // xy used, zw padding
+
+            // 第6个 float4 槽位 (对齐到 16 字节边界)
             float _TessellationUniform;
             float _AlphaCutoff;
             float _TranslucentGain;
             float _BladeHeight;
+
+            // 第7个 float4 槽位
             float _BladeHeightRandom;
             float _BladeMinHeight;
             float _BladeWidth;
             float _BladeWidthRandom;
+
+            // 第8个 float4 槽位
             float _BladeMinWidth;
             float _BladeForward;
             float _BladeCurve;
+            float _BladeSegments;
+
+            // 第9个 float4 槽位
             float _BendRotationRandom;
             float _WindStrength;
             float _ColorBias;
+            float _BladeRootSink;
         CBUFFER_END
 
         TEXTURE2D(_WindDistortionMap);
@@ -142,12 +154,16 @@ Shader "Custom/Grass"
             return VertexOutput(localPosition, uv, localNormal, grassColor);
         }
 
-        [maxvertexcount(BLADE_SEGMENTS * 2 + 1)]
+        [maxvertexcount(BLADE_SEGMENTS * 2 + 3)]
         void geo(triangle vertexOutput IN[3], inout TriangleStream<geometryOutput> triStream)
         {
             // 使用三角形重心位置，避免只取IN[0]导致相邻三角形草叶位置跳变
             float3 pos = (IN[0].vertex.xyz + IN[1].vertex.xyz + IN[2].vertex.xyz) / 3.0;
             float3 vNormal = normalize(IN[0].normal + IN[1].normal + IN[2].normal);
+
+            // 根部下沉：沿法线反方向偏移，让拉扯隐于地面下
+            pos -= vNormal * _BladeRootSink;
+
             float2 meshUV = (IN[0].uv + IN[1].uv + IN[2].uv) / 3.0;
 
             float3 refDir = abs(vNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
@@ -156,10 +172,10 @@ Shader "Custom/Grass"
 
             // 采样颜色纹理
             float2 colorUV = meshUV * _BaseMap_ST.xy + _BaseMap_ST.zw;
-            float4 grassColorSample = SAMPLE_TEXTURE2D_LOD(_BaseMap, sampler_BaseMap, colorUV, 0);
+            half4 grassColorSample = SAMPLE_TEXTURE2D_LOD(_BaseMap, sampler_BaseMap, colorUV, 0);
 
-            if (grassColorSample.a < _AlphaCutoff)
-                return;
+            // 用 bool 控制是否生成草叶，避免提前 return 跳过 RestartStrip
+            bool shouldGenerate = (grassColorSample.a >= _AlphaCutoff);
 
             float3x3 tangentToLocal = float3x3(
                 vTangentDir.x, vBinormal.x, vNormal.x,
@@ -167,60 +183,71 @@ Shader "Custom/Grass"
                 vTangentDir.z, vBinormal.z, vNormal.z
             );
 
-            // 朝向随机：_BendRotationRandom=0 所有草朝同一方向，=1 完全随机360°
             float facingAngle = rand(pos) * UNITY_TWO_PI * _BendRotationRandom;
             float3x3 facingRotationMatrix = AngleAxis3x3(facingAngle, float3(0, 0, 1));
 
             float growFactor = saturate((grassColorSample.a - _AlphaCutoff) / max(1.0 - _AlphaCutoff, 0.001));
             float dynamicAtten = lerp(0.2, 1.0, growFactor);
 
-            // 前倾角度 — 将 _BladeForward 转为弯曲角度（弧度），不再作为位移
             float forwardAngle = rand(pos.yyz) * _BladeForward * UNITY_PI * 0.25 * dynamicAtten;
-            // 弯曲角度 — 由 _BladeCurve 控制弯曲程度（0=不弯曲，1=最大弯曲）
             float bendAngle = rand(pos.zzx) * _BladeCurve * UNITY_PI * 0.15 * dynamicAtten;
-            // 合并前倾和弯曲为总弯曲角度
             float totalBendAngle = forwardAngle + bendAngle;
 
-            // Wind — clamp 到安全范围
+            // Wind
             float2 windUV = pos.xz * _WindDistortionMap_ST.xy + _WindDistortionMap_ST.zw + _WindFrequency.xy * _Time.y;
             float2 windSample = (SAMPLE_TEXTURE2D_LOD(_WindDistortionMap, sampler_WindDistortionMap, windUV, 0).xy * 2 - 1) * _WindStrength * dynamicAtten;
-            // 风力方向向量（对象空间 XZ 平面）
-            float3 windVec = float3(windSample.x, 0, windSample.y);
 
-            // 基础变换（无风无弯曲）
             float3x3 baseTransform = mul(tangentToLocal, facingRotationMatrix);
 
-            float height = ((rand(pos.zyx) * 2 - 1) * _BladeHeightRandom + _BladeHeight) * growFactor;
-            if (height < _BladeMinHeight) return;
+            float height = max(((rand(pos.zyx) * 2 - 1) * _BladeHeightRandom + _BladeHeight) * growFactor, 0);
+            shouldGenerate = shouldGenerate && (height >= _BladeMinHeight);
+
             float width = max(((rand(pos.xzy) * 2 - 1) * _BladeWidthRandom + _BladeWidth) * growFactor, _BladeMinWidth);
 
-            float4 grassColor = float4(grassColorSample.rgb, 1);
+            // 宽高比安全剔除
+            shouldGenerate = shouldGenerate && (width <= height * 2.0);
 
-            // Generate blade segments — 弯曲随 t^1.2 渐进，风力做位置偏移
-            for (int i = 0; i < BLADE_SEGMENTS; i++)
+            if (shouldGenerate)
             {
-                float t = i / (float)BLADE_SEGMENTS;
-                float segmentHeight = height * t;
-                float segmentWidth = width * (1 - t);
+                float heightScale = saturate(height / max(_BladeHeight, 0.01));
+                float3 windVec = float3(windSample.x, 0, windSample.y) * heightScale;
+                totalBendAngle *= heightScale;
 
-                // t^1.2 渐进：弯曲重心偏下，根部仍锚定
-                float tSq = pow(t, 0.4);
+                half4 grassColor = half4(grassColorSample.rgb, 1);
 
-                float3x3 segBendRot = AngleAxis3x3(totalBendAngle * tSq, float3(1, 0, 0));
-                float3x3 transformMatrix = mul(baseTransform, segBendRot);
+                int segments = clamp((int)round(_BladeSegments), 1, BLADE_SEGMENTS);
+                int layerCount = segments < BLADE_SEGMENTS ? (segments + 1) : BLADE_SEGMENTS;
 
-                // 风力位置偏移随 t² 渐进，根部不动
-                float3 segWindOffset = windVec * t * t;
+                [unroll]
+                for (int i = 0; i < BLADE_SEGMENTS; i++)
+                {
+                    if (i >= layerCount) break;
 
-                triStream.Append(GenerateGrassVertex(pos, segmentWidth, segmentHeight, float2(0, t), transformMatrix, segWindOffset, grassColor));
-                triStream.Append(GenerateGrassVertex(pos, -segmentWidth, segmentHeight, float2(1, t), transformMatrix, segWindOffset, grassColor));
+                    float t = i / (float)BLADE_SEGMENTS;
+                    float segmentHeight = height * t;
+                    float segmentWidth = width * (1 - t);
+
+                    float tSq = i > 0 ? pow(t, 0.4) : 0.0;
+
+                    float3x3 segBendRot = AngleAxis3x3(totalBendAngle * tSq, float3(1, 0, 0));
+                    float3x3 transformMatrix = mul(baseTransform, segBendRot);
+                    float3 segWindOffset = windVec * t * t;
+
+                    triStream.Append(GenerateGrassVertex(pos, segmentWidth, segmentHeight, float2(0, t), transformMatrix, segWindOffset, grassColor));
+                    triStream.Append(GenerateGrassVertex(pos, -segmentWidth, segmentHeight, float2(1, t), transformMatrix, segWindOffset, grassColor));
+                }
+
+                if (segments >= 3)
+                {
+                    float3x3 tipBendRot = AngleAxis3x3(totalBendAngle, float3(1, 0, 0));
+                    float3x3 tipTransform = mul(baseTransform, tipBendRot);
+                    float3 tipWindOffset = windVec;
+                    triStream.Append(GenerateGrassVertex(pos, 0, height, float2(0.5, 1), tipTransform, tipWindOffset, grassColor));
+                }
             }
 
-            // Tip vertex — 完整弯曲 + 完整风偏移
-            float3x3 tipBendRot = AngleAxis3x3(totalBendAngle, float3(1, 0, 0));
-            float3x3 tipTransform = mul(baseTransform, tipBendRot);
-            float3 tipWindOffset = windVec;
-            triStream.Append(GenerateGrassVertex(pos, 0, height, float2(0.5, 1), tipTransform, tipWindOffset, grassColor));
+            // 无论是否生成草叶，始终 RestartStrip 确保每棵草的 strip 完全隔离
+            triStream.RestartStrip();
         }
         ENDHLSL
 
