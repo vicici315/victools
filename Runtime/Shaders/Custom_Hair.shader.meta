@@ -6,6 +6,7 @@ ShaderImporter:
   - _BaseMap: {instanceID: 0}
   - _NormalMap: {instanceID: 0}
   - _ShiftMap: {fileID: 2800000, guid: 64600b283385d60458e9892f3cfea78c, type: 3}
+  - _SpecRamp: {fileID: 2800000, guid: 7250ef23bac848149b461bbad85554f9, type: 3}
   nonModifiableTextures: []
   userData: 
   assetBundleName: 

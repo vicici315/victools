@@ -2,6 +2,7 @@
 // Kajiya-Kay 各向异性双高光 + Shift Map
 // 双 Pass：Pass1 不透明主体（完整光照）+ Pass2 半透明边缘（简化光照）
 // Custom_Hair 1.2 性能优化：Pass2 简化光照，减少纹理采样和 normalize 调用，头发进入阴影区域保留微小高光
+// Custom_Hair 2.0 使用Ramp贴图作为头发高光渐变的控制（略微提高性能）
 Shader "Custom/Hair"
 {
     Properties
@@ -20,20 +21,17 @@ Shader "Custom/Hair"
 
         [Header(Anisotropic Specular)]
         _ShiftMap("Shift Map (R通道)", 2D) = "gray" {}
+        _SpecRamp("Specular Ramp (横向渐变)", 2D) = "white" {}
+        _SpecRampRow("Ramp Row Select (渐变行选择)", Range(0, 1)) = 0.5
         _HairDirRotate("Hair Dir Rotate", Range(-180, 180)) = -13
-        [HDR] _SpecColor1("Primary Specular Color", Color) = (1,1,1,1)
-        _SpecPower1("Primary Specular Power", Range(1, 256)) = 155
-        _SpecShift1("Primary Shift", Range(-1, 1)) = 0.418
-        [HDR] _SpecColor2("Secondary Specular Color", Color) = (0.5,0.5,0.5,1)
-        _SpecPower2("Secondary Specular Power", Range(1, 256)) = 50
-        _SpecShift2("Secondary Shift", Range(-1, 1)) = -0.052
+        _SpecIntensity("Specular Intensity", Range(0, 3)) = 0.25
+        _SpecPower("Specular Sharpness", Range(1, 2)) = 1.2
+        _SpecShift("Specular Shift", Range(-2, 2)) = 0.5
 
-        [Header(Ambient and Rim)]
         [HDR] _AmbientColor("Ambient Color", Color) = (0.3,0.3,0.3,1)
         _RimPower("Rim Power", Range(1, 8)) = 6.39
         _RimIntensity("Rim Intensity", Range(0, 1)) = 0.258
 
-        [Header(Render Settings)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull("Cull Mode", Float) = 0
     }
 
@@ -49,12 +47,10 @@ Shader "Custom/Hair"
         half   _ShadowBiasScale;
         half   _NormalScale;
         half   _HairDirRotate;
-        half4  _SpecColor1;
-        half   _SpecPower1;
-        half   _SpecShift1;
-        half4  _SpecColor2;
-        half   _SpecPower2;
-        half   _SpecShift2;
+        half   _SpecRampRow;
+        half   _SpecIntensity;
+        half   _SpecPower;
+        half   _SpecShift;
         half4  _AmbientColor;
         half   _RimPower;
         half   _RimIntensity;
@@ -63,6 +59,7 @@ Shader "Custom/Hair"
     TEXTURE2D(_BaseMap);   SAMPLER(sampler_BaseMap);
     TEXTURE2D(_NormalMap); SAMPLER(sampler_NormalMap);
     TEXTURE2D(_ShiftMap);  SAMPLER(sampler_ShiftMap);
+    TEXTURE2D(_SpecRamp);  SAMPLER(sampler_SpecRamp);
     ENDHLSL
 
     SubShader
@@ -125,14 +122,6 @@ Shader "Custom/Hair"
                 return OUT;
             }
 
-            // Kajiya-Kay：用 exp2/log2 替代 pow，移动端更友好
-            half StrandSpec(half3 T, half3 H, half exponent)
-            {
-                half TdotH = dot(T, H);
-                half sinTH = sqrt(max(0.001, 1.0 - TdotH * TdotH));
-                return exp2(exponent * log2(max(sinTH, 0.001)));
-            }
-
             half3 ShiftT(half3 T, half3 N, half shift)
             {
                 return normalize(T + N * shift);
@@ -171,12 +160,18 @@ Shader "Custom/Hair"
                 // 漫反射
                 half3 diffuse = tex.rgb * mainLight.color * (NdotL * shadow);
 
-                // 双高光（阴影区域保留部分高光，避免完全消失）
-                half3 T1 = ShiftT(T, N, _SpecShift1 + shiftTex);
-                half3 T2 = ShiftT(T, N, _SpecShift2 + shiftTex);
-                half specShadow = max(shadow, 0.07);
-                half3 specular = (_SpecColor1.rgb * StrandSpec(T1, H, _SpecPower1)
-                                + _SpecColor2.rgb * StrandSpec(T2, H, _SpecPower2)) * specShadow;
+                // 各向异性高光：用 Ramp 贴图控制渐变
+                half3 T1 = ShiftT(T, N, _SpecShift + shiftTex);
+                half TdotH = dot(T1, H);
+                // cosTH 在高光峰值(T⊥H)时=0，远离时趋向1
+                // 用 1 - pow(|cosTH|, 1/power) 映射：只有峰值附近 UV 才接近 1
+                half absCos = abs(TdotH);
+                half specUV = 1.0 - exp2((1.0 / max(_SpecPower, 1.0)) * log2(max(absCos, 0.001)));
+                half3 specRamp = SAMPLE_TEXTURE2D(_SpecRamp, sampler_SpecRamp, half2(specUV, _SpecRampRow)).rgb;
+                // 遮罩：NdotL 压制背光面，NdotV 压制掠射角（发丝末端）
+                half specMask = saturate(dot(N, L)) * saturate(dot(N, V) * 3.0);
+                half specShadow = max(shadow, 0.12);
+                half3 specular = _AmbientColor.rgb * specRamp * _SpecIntensity * specShadow * specMask;
 
                 // 环境光（阴影区域补偿）
                 half lightFactor = NdotL * shadow;
@@ -267,11 +262,13 @@ Shader "Custom/Hair"
                 // 漫反射
                 half3 diffuse = tex.rgb * mainLight.color * (NdotL * shadow);
 
-                // 单高光（阴影区域保留部分）
+                // 高光（Ramp 采样，简化版）
                 half TdotH = dot(T, H);
-                half sinTH = sqrt(max(0.001, 1.0 - TdotH * TdotH));
-                half spec = exp2(_SpecPower1 * 0.5 * log2(max(sinTH, 0.001))) * max(shadow, 0.2);
-                half3 specular = _SpecColor1.rgb * spec;
+                half absCos = abs(TdotH);
+                half specUV = 1.0 - exp2((1.0 / max(_SpecPower * 0.5, 1.0)) * log2(max(absCos, 0.001)));
+                half3 specRamp = SAMPLE_TEXTURE2D(_SpecRamp, sampler_SpecRamp, half2(specUV, _SpecRampRow)).rgb;
+                half specMask = saturate(dot(N, L)) * saturate(dot(N, V) * 3.0);
+                half3 specular = specRamp * _SpecIntensity * max(shadow, 0.2) * specMask;
 
                 // 环境光
                 half3 ambient = _AmbientColor.rgb * tex.rgb * (1.0 - NdotL * shadow);

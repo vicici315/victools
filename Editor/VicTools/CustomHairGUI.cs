@@ -30,17 +30,12 @@ public class CustomHairGUI : ShaderGUI
         EditorGUILayout.Space(6);
         EditorGUILayout.LabelField("各向异性高光 (Kajiya-Kay)", EditorStyles.boldLabel);
         materialEditor.TexturePropertySingleLine(new GUIContent("Shift Map (R通道)"), FindProperty("_ShiftMap", properties));
+        materialEditor.TexturePropertySingleLine(new GUIContent("Specular Ramp (横向渐变)"), FindProperty("_SpecRamp", properties));
+        materialEditor.ShaderProperty(FindProperty("_SpecRampRow", properties), "渐变行选择");
         materialEditor.ShaderProperty(FindProperty("_HairDirRotate", properties), "方向旋转");
-        EditorGUILayout.Space(3);
-        EditorGUILayout.LabelField("主高光", EditorStyles.miniLabel);
-        materialEditor.ShaderProperty(FindProperty("_SpecColor1", properties), "  颜色");
-        materialEditor.ShaderProperty(FindProperty("_SpecPower1", properties), "  锐度");
-        materialEditor.ShaderProperty(FindProperty("_SpecShift1", properties), "  偏移");
-        EditorGUILayout.Space(3);
-        EditorGUILayout.LabelField("副高光", EditorStyles.miniLabel);
-        materialEditor.ShaderProperty(FindProperty("_SpecColor2", properties), "  颜色");
-        materialEditor.ShaderProperty(FindProperty("_SpecPower2", properties), "  锐度");
-        materialEditor.ShaderProperty(FindProperty("_SpecShift2", properties), "  偏移");
+        materialEditor.ShaderProperty(FindProperty("_SpecIntensity", properties), "高光强度");
+        materialEditor.ShaderProperty(FindProperty("_SpecPower", properties), "高光锐度");
+        materialEditor.ShaderProperty(FindProperty("_SpecShift", properties), "高光偏移");
 
         // ── 环境光 & 边缘光 ──
         EditorGUILayout.Space(6);

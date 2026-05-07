@@ -2,6 +2,7 @@
 // 场景工具 v2.16 添加【选择材质】按钮，用于选择场景中选中对象的材质球
 // 场景工具 v2.17 添加【↓】快速统一赋予最后选中对象的材质按钮；添加模型一键落地按钮
 // 场景工具 v2.18 资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列
+// 场景工具 v2.19 修复丢失对象删除出现的Bug
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -122,7 +123,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.18]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.19]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -998,9 +999,23 @@ public class ResourceBoxFileItem
                     if (GUILayout.Button("X", GUILayout.Width(20), GUILayout.ExpandWidth(false)))
                     {
                         // 删除对象前，先清理相关的映射
-                        if (_resourceBoxInstanceIDs.TryGetValue(i, out int instanceID))
+                        // 仅当被删除的对象本身是null时，才安全地移除instanceID映射
+                        if (_resourceBoxInstanceIDs.TryGetValue(i, out int removedInstanceID))
                         {
-                            _instanceIDToDisplayName.Remove(instanceID);
+                            // 确认这个instanceID不属于列表中其他有效对象，避免误删
+                            bool isUsedByOther = false;
+                            for (int j = 0; j < _resourceBox.Count; j++)
+                            {
+                                if (j != i && _resourceBox[j] && _resourceBox[j].GetInstanceID() == removedInstanceID)
+                                {
+                                    isUsedByOther = true;
+                                    break;
+                                }
+                            }
+                            if (!isUsedByOther)
+                            {
+                                _instanceIDToDisplayName.Remove(removedInstanceID);
+                            }
                         }
                         
                         _resourceBox.RemoveAt(i);
@@ -1049,9 +1064,14 @@ public class ResourceBoxFileItem
                             _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
                         }
                         
-                        i--; // 调整索引
                         // 立即保存资源箱数据
                         SaveResourceBox(false);
+                        
+                        // 结束当前行的布局，然后跳出循环
+                        // 避免在IMGUI循环中继续渲染已变更的列表，防止Layout/Repaint不一致
+                        GUI.backgroundColor = Color.white;
+                        EditorGUILayout.EndHorizontal();
+                        break;
                     }
                     GUI.backgroundColor = Color.white;
                     EditorGUILayout.LabelField($"{i + 1}", GUILayout.Width(25), GUILayout.ExpandWidth(false));
