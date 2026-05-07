@@ -13,6 +13,7 @@
 // LatticeModifier 2.7 安全 Mesh 销毁机制：只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失
 // LatticeModifier 2.8 重写烘焙晶格变形功能，解决mesh丢失bug
 // LatticeModifier 2.9 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示
+// LatticeModifier 2.10 添加“扩展选择”按钮，可以扩展选择表面晶格控制点
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -106,13 +107,30 @@ public class LatticeModifier : MonoBehaviour
         }
         else return true;
 
-        if (targetMode == TargetMode.SingleRenderer && targetRenderer != null)
+        if (targetMode == TargetMode.SingleRenderer)
         {
-            Matrix4x4 curTarget = targetRenderer.transform.localToWorldMatrix;
-            if (curTarget != cachedTargetMatrix)
+            if (targetRenderer != null)
             {
-                cachedTargetMatrix = curTarget;
-                return true;
+                Matrix4x4 curTarget = targetRenderer.transform.localToWorldMatrix;
+                if (curTarget != cachedTargetMatrix)
+                {
+                    cachedTargetMatrix = curTarget;
+                    return true;
+                }
+            }
+        }
+        else
+        {
+            // 多目标模式：检测任意 Renderer 的 transform 变化
+            for (int i = 0; i < targetRenderers.Count; i++)
+            {
+                if (targetRenderers[i] == null) continue;
+                Matrix4x4 curTarget = targetRenderers[i].transform.localToWorldMatrix;
+                if (curTarget != cachedTargetMatrix)
+                {
+                    cachedTargetMatrix = curTarget;
+                    return true;
+                }
             }
         }
 
@@ -216,6 +234,7 @@ public class LatticeModifier : MonoBehaviour
         deformedMeshA = CreateDeformMesh(originalMesh, originalVertices);
         deformedMeshB = singleIsSkinned ? CreateDeformMesh(originalMesh, originalVertices) : null;
         SetRendererMesh(targetRenderer, deformedMeshA);
+        useBufferB = false;
     }
 
     private void RebuildMulti()
@@ -511,7 +530,10 @@ public class LatticeModifier : MonoBehaviour
             uvNative.Dispose();
             dataArr.Dispose();
         }
-        catch { }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[LatticeModifier] 构建不可读 Mesh '{src.name}' 的变形副本时部分数据读取失败: {ex.Message}");
+        }
         nm.RecalculateBounds();
         nm.MarkDynamic();
         return nm;

@@ -1,0 +1,12 @@
+fileFormatVersion: 2
+guid: Bi8cvSv/BXpal9dpKgDDDYvmHt/7slYvs2aSCD6iQyc8cCUSYFYIH4g=
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures:
+  - _BaseMap: {instanceID: 0}
+  - _NormalMap: {instanceID: 0}
+  - _ShiftMap: {fileID: 2800000, guid: 64600b283385d60458e9892f3cfea78c, type: 3}
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

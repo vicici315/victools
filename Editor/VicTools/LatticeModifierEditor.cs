@@ -9,6 +9,11 @@
 // LatticeModifierEditor 2.2 添加目标按钮支持多选，显示手动 Renderer 列表字段，运行/停止游戏自动重建晶格，移除每帧 RepaintAll 优化性能
 // LatticeModifierEditor 2.3 支持缩放旋转等工具手柄操作控制点；优化缩放旋转工具操作
 // LatticeModifierEditor 2.4 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示。
+// LatticeModifierEditor 2.5 设置选中控制点显示大小。
+// LatticeModifierEditor 2.6 选中晶格点焦点落在晶格体，添加【创建快照】按钮
+//      Shift + 拖拽：框选添加控制点
+//      Shift + Alt + 拖拽：框选减去控制点
+//      Shift + Ctrl + 拖拽：框选追加（不清除已有选择）。
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
@@ -34,17 +39,9 @@ public class LatticeModifierEditor : Editor
 
     private static void SyncSelectionToHierarchy()
     {
-        if (s_activeLattice == null || !s_activeLattice.HasControlPointTransforms) return;
-        if (s_activeSelectedPoints == null || s_activeSelectedPoints.Count == 0) return;
-
-        var objects = new List<UnityEngine.Object>();
-        foreach (int i in s_activeSelectedPoints)
-        {
-            Transform cpT = s_activeLattice.GetControlPointTransform(i);
-            if (cpT != null) objects.Add(cpT.gameObject);
-        }
-        if (objects.Count > 0)
-            Selection.objects = objects.ToArray();
+        if (s_activeLattice == null) return;
+        // 选中控制点时，保持焦点在晶格对象上（而非 CP 子物体），确保 Inspector 显示晶格面板
+        Selection.activeGameObject = s_activeLattice.gameObject;
     }
 
     private void OnEnable()
@@ -379,7 +376,7 @@ public class LatticeModifierEditor : Editor
         }
 
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1f);
-        if (GUILayout.Button("重新初始化", GUILayout.Height(28)))
+        if (GUILayout.Button("重新初始化（选中晶格体）", GUILayout.Height(28)))
         {
             Undo.RecordObject(lattice, "重新初始化晶格");
             lattice.InitializeLattice();
@@ -387,6 +384,15 @@ public class LatticeModifierEditor : Editor
             EditorUtility.SetDirty(lattice);
             SceneView.RepaintAll();
         }
+
+        GUI.backgroundColor = new Color(0.6f, 1f, 0.6f);
+        GUI.enabled = selectedPoints.Count > 0;
+        if (GUILayout.Button("扩展选择", GUILayout.Height(28), GUILayout.Width(70)))
+        {
+            ExpandSelection();
+            SceneView.RepaintAll();
+        }
+        GUI.enabled = true;
         EditorGUILayout.EndHorizontal();
 
         EditorGUILayout.Space(3);
@@ -420,6 +426,12 @@ public class LatticeModifierEditor : Editor
                 return;
             }
         }
+
+        GUI.backgroundColor = new Color(0.6f, 0.9f, 1f);
+        if (GUILayout.Button("创建快照", GUILayout.Height(28)))
+        {
+            CreateDeformSnapshot();
+        }
         EditorGUILayout.EndHorizontal();
         GUI.backgroundColor = Color.white;
 
@@ -451,6 +463,75 @@ public class LatticeModifierEditor : Editor
             }
         }
         GUI.backgroundColor = Color.white;
+    }
+
+    // ═══════════════════════════════════════════
+    //  扩展选择：选中点的相邻点（晶格拓扑上±1）
+    //  规则：只扩展到外表面的点，除非扩展源本身是内部点
+    // ═══════════════════════════════════════════
+    private bool IsOnSurface(int ix, int iy, int iz, int nx, int ny, int nz)
+    {
+        return ix == 0 || ix == nx - 1 ||
+               iy == 0 || iy == ny - 1 ||
+               iz == 0 || iz == nz - 1;
+    }
+
+    private void ExpandSelection()
+    {
+        if (lattice == null || !lattice.IsInitialized || selectedPoints.Count == 0) return;
+
+        int nx = lattice.PointCountX, ny = lattice.PointCountY, nz = lattice.PointCountZ;
+        var expanded = new HashSet<int>(selectedPoints);
+
+        // 判断选中的源点中是否包含内部点
+        bool hasInteriorSource = false;
+        foreach (int idx in selectedPoints)
+        {
+            lattice.GetPointIndex3D(idx, out int ix, out int iy, out int iz);
+            if (!IsOnSurface(ix, iy, iz, nx, ny, nz))
+            {
+                hasInteriorSource = true;
+                break;
+            }
+        }
+
+        foreach (int idx in selectedPoints)
+        {
+            lattice.GetPointIndex3D(idx, out int ix, out int iy, out int iz);
+            bool sourceIsInterior = !IsOnSurface(ix, iy, iz, nx, ny, nz);
+
+            // 6 个相邻方向
+            int[][] neighbors = new int[][]
+            {
+                new[] { ix - 1, iy, iz },
+                new[] { ix + 1, iy, iz },
+                new[] { ix, iy - 1, iz },
+                new[] { ix, iy + 1, iz },
+                new[] { ix, iy, iz - 1 },
+                new[] { ix, iy, iz + 1 },
+            };
+
+            foreach (var nb in neighbors)
+            {
+                int nix = nb[0], niy = nb[1], niz = nb[2];
+                if (nix < 0 || nix >= nx || niy < 0 || niy >= ny || niz < 0 || niz >= nz)
+                    continue;
+
+                // 如果源点是内部点，允许扩展到任何相邻点
+                // 如果源点是表面点，只扩展到表面点（排除内部点）
+                if (!sourceIsInterior && !hasInteriorSource)
+                {
+                    if (!IsOnSurface(nix, niy, niz, nx, ny, nz))
+                        continue;
+                }
+
+                expanded.Add(lattice.GetFlatIndex(nix, niy, niz));
+            }
+        }
+
+        selectedPoints = expanded;
+        s_activeSelectedPoints = selectedPoints;
+        SyncSelectionToHierarchy();
     }
 
     // ═══════════════════════════════════════════
@@ -491,8 +572,11 @@ public class LatticeModifierEditor : Editor
             if (isSelected) Handles.color = Color.white;
             else if (isCorner) Handles.color = new Color(1f, 0.3f, 0.3f, 0.9f);
             else Handles.color = new Color(1f, 0.9f, 0.2f, 0.8f);
+            // 设置选中控制点的显示大小
+            float drawSize = isSelected ? sz * 2.8f : sz;
+            float pickSize = isSelected ? sz * 2.2f : sz * 1.5f;
 
-            if (Handles.Button(worldPos, Quaternion.identity, sz, sz * 1.5f, Handles.SphereHandleCap))
+            if (Handles.Button(worldPos, Quaternion.identity, drawSize, pickSize, Handles.SphereHandleCap))
             {
                 if (e.control)
                 {
@@ -543,7 +627,8 @@ public class LatticeModifierEditor : Editor
                             Mathf.Min(s_dragStart.y, s_dragEnd.y),
                             Mathf.Abs(s_dragEnd.x - s_dragStart.x),
                             Mathf.Abs(s_dragEnd.y - s_dragStart.y));
-                        if (!e.control) selPts.Clear();
+                        bool isSubtract = e.alt; // Shift+Alt = 减选
+                        if (!e.control && !isSubtract) selPts.Clear();
                         Camera cam = sceneView.camera;
                         for (int i = 0; i < lat.controlPoints.Length; i++)
                         {
@@ -551,7 +636,12 @@ public class LatticeModifierEditor : Editor
                             Vector3 screenPos = cam.WorldToScreenPoint(worldPos);
                             screenPos.y = cam.pixelHeight - screenPos.y;
                             if (screenPos.z > 0 && selRect.Contains(new Vector2(screenPos.x, screenPos.y)))
-                                selPts.Add(i);
+                            {
+                                if (isSubtract)
+                                    selPts.Remove(i);
+                                else
+                                    selPts.Add(i);
+                            }
                         }
                         e.Use();
                         SyncSelectionToHierarchy();
@@ -707,6 +797,62 @@ public class LatticeModifierEditor : Editor
     {
         if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null) return;
         DrawLatticeAndHandles(lattice, selectedPoints, SceneView.lastActiveSceneView, true);
+    }
+
+    // ═══════════════════════════════════════════
+    //  创建变形快照（复制当前变形状态的模型对象）
+    // ═══════════════════════════════════════════
+    private void CreateDeformSnapshot()
+    {
+        lattice.ApplyDeformation();
+
+        var renderers = lattice.GetActiveRenderers();
+        if (renderers.Count == 0)
+        {
+            Debug.LogWarning("[LatticeModifier] 没有目标 Renderer，无法创建快照");
+            return;
+        }
+
+        var createdObjects = new System.Collections.Generic.List<GameObject>();
+
+        foreach (var rend in renderers)
+        {
+            if (rend == null) continue;
+
+            Mesh currentMesh = LatticeModifier.GetRendererMeshStatic(rend);
+            if (currentMesh == null) continue;
+
+            // 创建独立的 Mesh 副本，与原晶格变形 Mesh 完全无关
+            Mesh snapshotMesh = Object.Instantiate(currentMesh);
+            snapshotMesh.name = rend.name + "_Snapshot";
+
+            // 复制 GameObject
+            GameObject snapshot = Object.Instantiate(rend.gameObject);
+            snapshot.name = rend.name + "_Snapshot";
+            snapshot.transform.SetParent(rend.transform.parent, true);
+            snapshot.transform.position = rend.transform.position;
+            snapshot.transform.rotation = rend.transform.rotation;
+            snapshot.transform.localScale = rend.transform.localScale;
+
+            // 赋予独立的 Mesh 副本
+            if (snapshot.TryGetComponent<SkinnedMeshRenderer>(out var smr))
+                smr.sharedMesh = snapshotMesh;
+            else if (snapshot.TryGetComponent<MeshFilter>(out var mf))
+                mf.sharedMesh = snapshotMesh;
+
+            // 移除快照上的 LatticeModifier（如果有的话）
+            var latComp = snapshot.GetComponent<LatticeModifier>();
+            if (latComp != null) Object.DestroyImmediate(latComp);
+
+            Undo.RegisterCreatedObjectUndo(snapshot, "创建变形快照");
+            createdObjects.Add(snapshot);
+        }
+
+        if (createdObjects.Count > 0)
+        {
+            Selection.objects = createdObjects.ToArray();
+            Debug.Log($"[LatticeModifier] 已创建 {createdObjects.Count} 个变形快照");
+        }
     }
 
     // ═══════════════════════════════════════════

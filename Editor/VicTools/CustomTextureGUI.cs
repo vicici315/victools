@@ -200,6 +200,9 @@ public class CustomTextureGUI : ShaderGUI
         string path = EditorUtility.OpenFilePanel("加载材质参数存档", dir, "json");
         if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return;
 
+        bool loadTextures = EditorUtility.DisplayDialog("读取纹理",
+            "是否同时读取纹理参数？\n选择「否」将只读取数值参数。", "是", "否");
+
         string json = System.IO.File.ReadAllText(path);
         Undo.RecordObject(material, "加载材质预设");
 
@@ -230,6 +233,7 @@ public class CustomTextureGUI : ShaderGUI
                     if (!float.IsNaN(fv)) material.SetFloat(propName, fv);
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
+                    if (!loadTextures) break;
                     string texPath = ExtractTexPath(json, propName);
                     if (!string.IsNullOrEmpty(texPath))
                     {

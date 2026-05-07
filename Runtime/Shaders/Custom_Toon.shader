@@ -1,28 +1,41 @@
 ﻿// CustomToon 1.0 卡通材质第一版，单阶明暗，带亮部边缘光；优化高光算法；添加暗部边缘光控制；优化暗部边缘光效果
 // CustomToon 1.1 添加法线贴图支持
 // CustomToon 1.2 优化_DarkRimThreshold参数背部边缘光控制
+// CustomToon 1.3 添加GUI控制，添加自发光参数，添加明暗段数控制，高光算法优化
+// CustomToon 1.4 添加【明暗对比】参数；优化自身阴影过暗受环境光影响；添加【自身阴影】选项
 
 Shader "Custom/Toon"
 {
     Properties
     {
+        [Toggle(_RECEIVE_SHADOWS)] _ReceiveShadows("自身阴影", Float) = 0
         _Color("Color", Color) = (0.87,0.87,0.87,1)
         _MainTex("Main Texture", 2D) = "white" {}
         [Normal] _NormalMap("Normal Map", 2D) = "bump" {}
         _NormalScale("Normal Scale", Range(0, 2)) = 1.0
-        [HDR]
         _AmbientColor("Ambient Color", Color) = (0.4,0.4,0.4,1)
         [HDR]
         _SpecularColor("Specular Color", Color) = (0.9,0.9,0.9,1)
-        _Glossiness("Glossiness", Range(0, 52)) = 10
+        _Glossiness("Smoothness", Range(0, 52)) = 24
+        // [Header(Terminator Gradient)]
+        _ToonSteps("Toon Steps (明暗段数)", Range(1, 10)) = 1
+        _ToonSmooth("Toon Smooth (段间柔化)", Range(0, 0.5)) = 0.0
+        _ToonOffset("Toon Offset (明暗偏移)", Range(-1, 1)) = -0.4
+        _ToonCompression("Toon Compression (明暗压缩)", Range(0.1, 5)) = 3.7
+        _ToonContrast("Toon Contrast (明暗对比)", Range(0.001, 3)) = 1.25
         [HDR]
         _RimColor("Rim Color", Color) = (1,1,1,1)
         _RimAmount("Rim Amount", Range(0, 1)) = 0.7
         _RimThreshold("Rim Threshold", Range(0, 1)) = 0.3
         [HDR]
-        _DarkRimColor("Dark Rim Color", Color) = (0.25,0.25,0.74,0.4)
+        _DarkRimColor("Dark Rim Color", Color) = (0.25,0.35,0.74,0.5)
         _DarkRimAmount("Dark Rim Amount", Range(0, 1)) = 0.6
         _DarkRimThreshold("Dark Rim Threshold", Range(0.1, 1)) = 0.2
+        [Header(Emission)]
+        [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
+        [HDR] _EmissionColor("Emission Color", Color) = (1,1,1,1)
+        _EmissionMap("Emission Map", 2D) = "white" {}
+        _EmissionScale("Emission Scale", Range(0, 3)) = 1.0
     }
 
     SubShader
@@ -47,6 +60,8 @@ Shader "Custom/Toon"
             #pragma multi_compile _ _ADDITIONAL_LIGHTS_VERTEX _ADDITIONAL_LIGHTS
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
             #pragma multi_compile _ SHADOWS_SHADOWMASK
+            #pragma multi_compile_local _ _USEEMISSIONMAP
+            #pragma multi_compile_local _ _RECEIVE_SHADOWS
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -65,10 +80,18 @@ Shader "Custom/Toon"
                 float4 _DarkRimColor;
                 float _DarkRimAmount;
                 float _DarkRimThreshold;
+                float _ToonSteps;
+                float _ToonSmooth;
+                float _ToonOffset;
+                float _ToonCompression;
+                float _ToonContrast;
+                float4 _EmissionColor;
+                float _EmissionScale;
             CBUFFER_END
 
             TEXTURE2D(_MainTex);    SAMPLER(sampler_MainTex);
             TEXTURE2D(_NormalMap);  SAMPLER(sampler_NormalMap);
+            TEXTURE2D(_EmissionMap); SAMPLER(sampler_EmissionMap);
 
             struct Attributes
             {
@@ -123,21 +146,40 @@ Shader "Custom/Toon"
                 float3 lightDir = normalize(mainLight.direction);
 
                 // 卡通光照：阶梯化 NdotL
+                // _ToonOffset 偏移明暗分界线位置，_ToonCompression 压缩/扩展明暗范围
                 float NdotL = dot(lightDir, normal);
-                float shadow = mainLight.shadowAttenuation;
-                // 明暗交界保持硬切卡通感，投影阴影单独柔化
-                float toonLight = smoothstep(0, 0.01, NdotL);
-                // float softShadow = smoothstep(0.0, 0.15, shadow);
+                #ifdef _RECEIVE_SHADOWS
+                    float shadow = mainLight.shadowAttenuation;
+                #else
+                    float shadow = 1.0;
+                #endif
+                // 将 NdotL 从 [-1,1] 映射到 [0,1]，应用偏移和压缩
+                float halfLambert = saturate((NdotL * 0.5 + 0.5 + _ToonOffset) * _ToonCompression);
+                // 量化为离散阶梯
+                float stepped = floor(halfLambert * _ToonSteps) / _ToonSteps;
+                float nextStep = min(stepped + 1.0 / _ToonSteps, 1.0);
+                // 段间柔化：在阶梯边缘做 smoothstep 过渡
+                float edge = frac(halfLambert * _ToonSteps);
+                float toonLight = lerp(stepped, nextStep, smoothstep(0.5 - _ToonSmooth, 0.5 + _ToonSmooth, edge));
+                // 明暗对比：用 pow 曲线压暗中低段，值越大暗部越暗，亮部基本不变
+                toonLight = fastPow(toonLight, _ToonContrast);
                 float softShadow = shadow;
                 float lightIntensity = toonLight * softShadow;
                 float4 light = lightIntensity * float4(mainLight.color, 1);
 
-                // 高光：直接对 RdotV 做卡通硬切，避免 pow 高次幂精度问题
+                // 高光：卡通风格 smoothstep 硬切
                 float3 reflectDir = reflect(-lightDir, normal);
                 float RdotV = saturate(dot(reflectDir, viewDir));
-                // _Glossiness 控制高光大小：值越大高光越小越集中
-                float specThreshold = 1.0 - saturate(1.0 / max(_Glossiness, 0.01));
-                float specularIntensitySmooth = smoothstep(specThreshold - 0.01, specThreshold + 0.01, RdotV) * toonLight * softShadow;
+                // _Glossiness（光滑度）：值越高高光越小越锐利，值越低越大越模糊
+                // specSize：高光区域大小（光滑度越高区域越小）
+                float specSize = exp2(lerp(3.0, 8.0, saturate(_Glossiness / 52.0)));
+                float specPow = fastPow(RdotV, specSize);
+                // 过渡宽度：光滑度越高越锐利
+                float specEdge = lerp(0.3, 0.02, saturate(_Glossiness / 52.0));
+                float specularIntensitySmooth = smoothstep(0.5 - specEdge, 0.5 + specEdge, specPow) * toonLight * softShadow;
+                // 能量守恒：高光面积越大强度越低，面积越小强度越高
+                float energyNorm = (specSize + 2.0) / (2.0 * 3.14159);
+                specularIntensitySmooth *= saturate(energyNorm / 8.0);
                 float4 specular = specularIntensitySmooth * _SpecularColor;
 
                 // 亮部边缘光 (Rim)
@@ -155,7 +197,13 @@ Shader "Custom/Toon"
 
                 half4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, IN.uv);
 
-                float4 baseColor = (light + _AmbientColor + specular + rim) * _Color * texColor;
+                float4 baseColor = (light + _AmbientColor * (1.0 - lightIntensity) + specular + rim) * _Color * texColor;
+                // 自发光
+                #ifdef _USEEMISSIONMAP
+                    half3 emissionMap = SAMPLE_TEXTURE2D(_EmissionMap, sampler_EmissionMap, IN.uv).rgb;
+                    half3 emission = emissionMap * _EmissionColor.rgb * _EmissionScale;
+                    baseColor.rgb += emission;
+                #endif
                 // 暗部边缘光覆盖贴图，A 通道控制透明度
                 float darkRimAlpha = darkRimIntensity * _DarkRimColor.a;
                 return lerp(baseColor, float4(_DarkRimColor.rgb, 1), darkRimAlpha);
@@ -225,4 +273,6 @@ Shader "Custom/Toon"
             ENDHLSL
         }
     }
+
+    CustomEditor "CustomToonGUI"
 }

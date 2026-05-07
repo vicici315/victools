@@ -11,7 +11,7 @@ namespace VicTools
     public static class VicToolsConfig
     {
         /// VicTools 全局版本号
-        public const string Ver = "2.9.4";
+        public const string Ver = "2.9.5";
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
@@ -1837,7 +1837,8 @@ namespace VicTools
             menu.AddItem(new GUIContent("创建材质球/Texture（纯贴图颜色Alpha透明）"),              false, () => CreateMaterialFromShader("Custom/Texture"));
             menu.AddItem(new GUIContent("创建材质球/ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
             menu.AddItem(new GUIContent("创建材质球/FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）"), false, () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC"));
-            // menu.AddItem(new GUIContent("创建材质球/Toon"),                 false, () => CreateMaterialFromShader("Custom/Toon"));
+            menu.AddItem(new GUIContent("创建材质球/Custom_Hair（头发材质）"), false, () => CreateMaterialFromShader("Custom/Hair"));
+            menu.AddItem(new GUIContent("创建材质球/Custom_Toon（卡通材质）"), false, () => CreateMaterialFromShader("Custom/Toon"));
             menu.AddSeparator("创建材质球/");
             menu.AddItem(new GUIContent("创建材质球/Outline（模型描边）/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
             menu.AddItem(new GUIContent("创建材质球/Outline（模型描边）/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
@@ -1906,8 +1907,7 @@ namespace VicTools
                 string path = AssetDatabase.GUIDToAssetPath(guid);
                 Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
                 
-                if (material != null && material.shader != null && 
-                    material.shader.name == "Custom/PBR_Mobile")
+                if (material != null && material.shader != null && material.shader.name == "Custom/PBR_Mobile")
                 {
                     totalPBRMaterials++;
                     
