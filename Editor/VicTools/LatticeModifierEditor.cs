@@ -14,6 +14,8 @@
 //      Shift + 拖拽：框选添加控制点
 //      Shift + Alt + 拖拽：框选减去控制点
 //      Shift + Ctrl + 拖拽：框选追加（不清除已有选择）。
+// LatticeModifierEditor 2.7 优化控制点显示 // 内部控制点：蓝色
+
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
@@ -569,12 +571,17 @@ public class LatticeModifierEditor : Editor
             lat.GetPointIndex3D(i, out int pix, out int piy, out int piz);
             bool isCorner = (pix == 0 || pix == nx - 1) && (piy == 0 || piy == ny - 1) && (piz == 0 || piz == nz - 1);
 
+            bool isOnSurface = (pix == 0 || pix == nx - 1) ||
+                                (piy == 0 || piy == ny - 1) ||
+                                (piz == 0 || piz == nz - 1);
+
             if (isSelected) Handles.color = Color.white;
             else if (isCorner) Handles.color = new Color(1f, 0.3f, 0.3f, 0.9f);
-            else Handles.color = new Color(1f, 0.9f, 0.2f, 0.8f);
-            // 设置选中控制点的显示大小
-            float drawSize = isSelected ? sz * 2.8f : sz;
-            float pickSize = isSelected ? sz * 2.2f : sz * 1.5f;
+            else if (!isOnSurface) Handles.color = new Color(0.2f, 0.2f, 0.2f, 0.9f); // 内部控制点：蓝色
+            else Handles.color = new Color(0.95f, 0.65f, 0.2f, 0.8f);
+            // 设置控制点的显示大小：选中=2.8, 内部=1, 其他未选中=1.8
+            float drawSize = isSelected ? sz * 2.8f : (!isOnSurface && !isCorner) ? sz : sz * 1.8f;
+            float pickSize = isSelected ? sz * 2.2f : (!isOnSurface && !isCorner) ? sz * 1.5f : sz * 2.5f;
 
             if (Handles.Button(worldPos, Quaternion.identity, drawSize, pickSize, Handles.SphereHandleCap))
             {
