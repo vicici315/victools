@@ -1,4 +1,4 @@
-// CustomTextureGUI v1.2 添加存档/读档功能，路径结构与 Glass_carWindowGUI 一致（Library/VicTools/Texture/{ShaderName}/）
+﻿// CustomTextureGUI v1.2 添加存档/读档功能，路径结构与 Glass_carWindowGUI 一致（Library/VicTools/Texture/{ShaderName}/）
 // CustomTextureGUI v1.3 修复存读档排序参数bug
 
 using UnityEngine;
@@ -20,7 +20,7 @@ public class CustomTextureGUI : ShaderGUI
 
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
     {
-        mainTex    = FindProperty("_MainTex",      properties);
+        mainTex    = FindProperty("_BaseMap",      properties);
         color      = FindProperty("_Color",        properties);
         contrast   = FindProperty("_Contrast",     properties);
         brightness = FindProperty("_Brightness",   properties);
@@ -104,9 +104,9 @@ public class CustomTextureGUI : ShaderGUI
         }
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════════
     //  存档 / 读档 UI
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════════
     private void DrawPresetBar(Material material)
     {
         EditorGUILayout.Space(4);
@@ -225,11 +225,16 @@ public class CustomTextureGUI : ShaderGUI
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
                     if (!loadTextures) break;
-                    string texPath = ExtractTexPath(json, propName);
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTex = (propName == "_BaseMap" || propName == "_MainTex");
+                    if (!(isMainTex && material.GetTexture(propName) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(propName, tex);
+                        string texPath = ExtractTexPath(json, propName);
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(propName, tex);
+                        }
                     }
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");
@@ -362,11 +367,16 @@ public class CustomTextureGUI : ShaderGUI
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
                     if (!loadTextures) break;
-                    string texPath = ExtractTexPath(json, propName);
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTex = (propName == "_BaseMap" || propName == "_MainTex");
+                    if (!(isMainTex && material.GetTexture(propName) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(propName, tex);
+                        string texPath = ExtractTexPath(json, propName);
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(propName, tex);
+                        }
                     }
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");
@@ -386,7 +396,7 @@ public class CustomTextureGUI : ShaderGUI
         if (!string.IsNullOrEmpty(modeStr) && System.Enum.TryParse(modeStr, out RenderMode savedMode))
             SyncKeywordsOnly(material, savedMode);
 
-        // SyncKeywordsOnly 内 shader 重赋值会重置 renderQueue，需在其后再还原
+        // SyncKeywordsOnly 的 shader 重赋值会重置 renderQueue，需在其后再还原
         if (!float.IsNaN(rq)) material.renderQueue = (int)rq;
 
         EditorUtility.SetDirty(material);
@@ -476,9 +486,9 @@ public class CustomTextureGUI : ShaderGUI
         return ExtractFloatArray(block + "}", subKey);
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════════
     //  渲染模式
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════════
     private RenderMode GetRenderMode(Material material)
     {
         if (material.IsKeywordEnabled("_ALPHABLEND_ON")) return RenderMode.Transparent;

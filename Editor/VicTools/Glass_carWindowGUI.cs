@@ -708,25 +708,34 @@ public class Glass_carWindowGUI : ShaderGUI
                 // 纹理贴图本身：仅在用户选择加载纹理时还原
                 if (loadTextures)
                 {
-                    // 解析纹理路径
-                    string texPath = ExtractJsonStringValue(texJson, "path");
-                    
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTex = (propertyName == "_BaseMap" || propertyName == "_MainTex");
+                    if (isMainTex && material.GetTexture(propertyName) != null)
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null)
-                        {
-                            material.SetTexture(propertyName, tex);
-                        }
-                        else
-                        {
-                            missingTextures.Add($"  {propertyName}: {texPath}");
-                        }
+                        // 跳过主纹理替换，但仍读取 Tiling/Offset
                     }
                     else
                     {
-                        // 路径为空，清除纹理
-                        material.SetTexture(propertyName, null);
+                        // 解析纹理路径
+                        string texPath = ExtractJsonStringValue(texJson, "path");
+                    
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null)
+                            {
+                                material.SetTexture(propertyName, tex);
+                            }
+                            else
+                            {
+                                missingTextures.Add($"  {propertyName}: {texPath}");
+                            }
+                        }
+                        else
+                        {
+                            // 路径为空，清除纹理
+                            material.SetTexture(propertyName, null);
+                        }
                     }
                 }
                 

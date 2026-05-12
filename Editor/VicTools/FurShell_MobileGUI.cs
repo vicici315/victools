@@ -247,16 +247,20 @@ public class FurShell_MobileGUI : ShaderGUI
 
                 if (loadTex)
                 {
-                    // 解析纹理路径
-                    string texPath = ExtractJsonString(texJson, "path");
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTex = (key == "_BaseMap" || key == "_MainTex");
+                    if (!(isMainTex && material.GetTexture(key) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(key, tex);
-                    }
-                    else
-                    {
-                        material.SetTexture(key, null);
+                        string texPath = ExtractJsonString(texJson, "path");
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(key, tex);
+                        }
+                        else
+                        {
+                            material.SetTexture(key, null);
+                        }
                     }
                 }
 

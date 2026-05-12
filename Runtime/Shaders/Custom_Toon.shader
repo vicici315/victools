@@ -10,7 +10,7 @@ Shader "Custom/Toon"
     {
         [Toggle(_RECEIVE_SHADOWS)] _ReceiveShadows("自身阴影", Float) = 0
         _Color("Color", Color) = (0.87,0.87,0.87,1)
-        _MainTex("Main Texture", 2D) = "white" {}
+        [MainTexture] _BaseMap("Main Texture", 2D) = "white" {}
         [Normal] _NormalMap("Normal Map", 2D) = "bump" {}
         _NormalScale("Normal Scale", Range(0, 2)) = 1.0
         _AmbientColor("Ambient Color", Color) = (0.4,0.4,0.4,1)
@@ -68,7 +68,7 @@ Shader "Custom/Toon"
 
             CBUFFER_START(UnityPerMaterial)
                 float4 _Color;
-                float4 _MainTex_ST;
+                float4 _BaseMap_ST;
                 float4 _NormalMap_ST;
                 float  _NormalScale;
                 float4 _AmbientColor;
@@ -89,7 +89,7 @@ Shader "Custom/Toon"
                 float _EmissionScale;
             CBUFFER_END
 
-            TEXTURE2D(_MainTex);    SAMPLER(sampler_MainTex);
+            TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
             TEXTURE2D(_NormalMap);  SAMPLER(sampler_NormalMap);
             TEXTURE2D(_EmissionMap); SAMPLER(sampler_EmissionMap);
 
@@ -124,7 +124,7 @@ Shader "Custom/Toon"
                 OUT.tangentWS    = normInputs.tangentWS;
                 OUT.bitangentWS  = normInputs.bitangentWS;
                 OUT.viewDirWS    = GetWorldSpaceViewDir(posInputs.positionWS);
-                OUT.uv           = TRANSFORM_TEX(IN.uv, _MainTex);
+                OUT.uv           = TRANSFORM_TEX(IN.uv, _BaseMap);
                 return OUT;
             }
 			half fastPow(half x, half n) {
@@ -195,7 +195,7 @@ Shader "Custom/Toon"
                 darkRimIntensity = smoothstep(_DarkRimAmount - 0.01, _DarkRimAmount + 0.01, darkRimIntensity);
                 darkRimIntensity *= (1.0 - toonLight); // 确保只在暗部显示
 
-                half4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, IN.uv);
+                half4 texColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv);
 
                 float4 baseColor = (light + _AmbientColor * (1.0 - lightIntensity) + specular + rim) * _Color * texColor;
                 // 自发光

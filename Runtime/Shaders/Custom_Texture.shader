@@ -1,12 +1,12 @@
 // Texture 1.2 纯色透明材质（可用于2D云朵透贴）修给变体固定代码
-// Texture 1.3 不再依赖 DepthOnlyPass.hlsl，改为自己实现的轻量 pass，CBUFFER 用 _MainTex_ST 保持一致
+// Texture 1.3 不再依赖 DepthOnlyPass.hlsl，改为自己实现的轻量 pass，CBUFFER 用 _BaseMap_ST 保持一致
 
 Shader "Custom/Texture"
 {
     Properties
     {
         [Header(Texture Settings)]
-        [MainTexture] _MainTex ("Texture", 2D) = "white" {}
+        [MainTexture] _BaseMap ("Texture", 2D) = "white" {}
         [MainColor] _Color ("Color Tint", Color) = (1,1,1,1)
         _Contrast ("Contrast", Range(0.1, 3.0)) = 1.0
         _Brightness ("Brightness", Range(0.0, 2.0)) = 1.0
@@ -71,11 +71,11 @@ Shader "Custom/Texture"
                 float2 uv         : TEXCOORD0;
             };
 
-            TEXTURE2D(_MainTex);
-            SAMPLER(sampler_MainTex);
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
 
             CBUFFER_START(UnityPerMaterial)
-                float4 _MainTex_ST;
+                float4 _BaseMap_ST;
                 half4  _Color;
                 half   _Contrast;
                 half   _Brightness;
@@ -87,13 +87,13 @@ Shader "Custom/Texture"
                 Varyings output;
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
                 output.positionCS = vertexInput.positionCS;
-                output.uv = TRANSFORM_TEX(input.uv, _MainTex);
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
                 return output;
             }
 
             half4 frag(Varyings input) : SV_Target
             {
-                half4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
+                half4 texColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv);
                 half4 col = texColor * _Color;
 
                 // 对比度
@@ -131,10 +131,10 @@ Shader "Custom/Texture"
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-            TEXTURE2D(_MainTex); SAMPLER(sampler_MainTex);
+            TEXTURE2D(_BaseMap); SAMPLER(sampler_BaseMap);
 
             CBUFFER_START(UnityPerMaterial)
-                float4 _MainTex_ST;
+                float4 _BaseMap_ST;
                 half4  _Color;
                 half   _Contrast;
                 half   _Brightness;
@@ -148,14 +148,14 @@ Shader "Custom/Texture"
             {
                 Varyings output;
                 output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
-                output.uv = TRANSFORM_TEX(input.uv, _MainTex);
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
                 return output;
             }
 
             half DepthFrag(Varyings input) : SV_Target
             {
                 #ifdef _ALPHATEST_ON
-                    half alpha = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv).a * _Color.a;
+                    half alpha = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a * _Color.a;
                     clip(alpha - _Cutoff);
                 #endif
                 return input.positionCS.z;

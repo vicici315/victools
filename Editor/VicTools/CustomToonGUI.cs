@@ -18,8 +18,8 @@ public class CustomToonGUI : ShaderGUI
         // ── 基础颜色 ──
         EditorGUILayout.LabelField("基础颜色", EditorStyles.boldLabel);
         materialEditor.ShaderProperty(FindProperty("_Color", properties), "颜色");
-        materialEditor.TexturePropertySingleLine(new GUIContent("主贴图"), FindProperty("_MainTex", properties));
-        materialEditor.TextureScaleOffsetProperty(FindProperty("_MainTex", properties));
+        materialEditor.TexturePropertySingleLine(new GUIContent("主贴图"), FindProperty("_BaseMap", properties));
+        materialEditor.TextureScaleOffsetProperty(FindProperty("_BaseMap", properties));
         materialEditor.ShaderProperty(FindProperty("_AmbientColor", properties), "环境光颜色");
 
         // ── 法线 ──
@@ -185,11 +185,16 @@ public class CustomToonGUI : ShaderGUI
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
                     if (!loadTextures) break;
-                    string texPath = ExtractTexPath(json, propName);
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTexA = (propName == "_BaseMap" || propName == "_MainTex");
+                    if (!(isMainTexA && material.GetTexture(propName) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(propName, tex);
+                        string texPath = ExtractTexPath(json, propName);
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(propName, tex);
+                        }
                     }
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");
@@ -305,11 +310,16 @@ public class CustomToonGUI : ShaderGUI
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
                     if (!loadTextures) break;
-                    string texPath = ExtractTexPath(json, propName);
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTexB = (propName == "_BaseMap" || propName == "_MainTex");
+                    if (!(isMainTexB && material.GetTexture(propName) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(propName, tex);
+                        string texPath = ExtractTexPath(json, propName);
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(propName, tex);
+                        }
                     }
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");

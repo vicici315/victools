@@ -2,7 +2,7 @@ Shader "Custom/AddTrans"
 {
     Properties
     {
-        [MainTexture] _MainTex ("Texture", 2D) = "white" {}
+        [MainTexture] _BaseMap ("Texture", 2D) = "white" {}
         [HDR] _BaseColor("Base Color", Color) = (1, 1, 1, 1)
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend("Dst Blend", Float) = 1
@@ -40,12 +40,12 @@ Shader "Custom/AddTrans"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             
             // 纹理和采样器定义
-            TEXTURE2D(_MainTex);
-            SAMPLER(sampler_MainTex);
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
             
             // 材质属性
             CBUFFER_START(UnityPerMaterial)
-                float4 _MainTex_ST;
+                float4 _BaseMap_ST;
                 half4 _BaseColor;
                 // float _SrcBlend;
                 // float _DstBlend;
@@ -83,7 +83,7 @@ Shader "Custom/AddTrans"
                 
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
                 output.positionCS = vertexInput.positionCS;
-                output.uv = TRANSFORM_TEX(input.uv, _MainTex);
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
                 output.color = input.color;
                 
                 return output;
@@ -96,7 +96,7 @@ Shader "Custom/AddTrans"
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
                 
                 // 采样纹理
-                half4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
+                half4 texColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv);
                 
                 // 应用基础颜色和顶点颜色
                 half4 finalColor = texColor * _BaseColor * input.color;

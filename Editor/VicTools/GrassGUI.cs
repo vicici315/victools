@@ -315,7 +315,7 @@ public class GrassGUI : ShaderGUI
 
     private void DrawBlade()
     {
-        GUILayout.Label("3 ▌草叶形状 (Blade)", EditorStyles.boldLabel);
+        GUILayout.Label("3 ▌草叶形态 (Blade)", EditorStyles.boldLabel);
         m_MaterialEditor.RangeProperty(bladeWidth, "宽度");
         m_MaterialEditor.RangeProperty(bladeBottomWidth, "底部宽度");
         m_MaterialEditor.RangeProperty(bladeWidthRandom, "宽度随机");
@@ -364,11 +364,11 @@ public class GrassGUI : ShaderGUI
                     {
                         Material m = obj as Material;
                         if (m != null) m.SetFloat("_Cull", 2); // Cull Back
-                        //m.SetFloat("_Cull", billboardOn ? 2 : 0); // 2=Back, 0=Off — 三元表达式，公告板开启时设为 2，否则设为 0
+                        //m.SetFloat("_Cull", billboardOn ? 2 : 0); // 2=Back, 0=Off 三元表达式，公告板开启时设为 2，否则设为 0
                     }
                 }
             }
-            EditorGUILayout.HelpBox("透贴纹理会平展贴到每个草体上。UV使用草体高度映射，适用于1~2段草体。\n公告板模式：面片始终面向摄像机。", MessageType.Info);
+            EditorGUILayout.HelpBox("透贴纹理会平展贴到每个草体上。UV使用草体高度映射，适用 1~2段草体。\n公告板模式：面片始终面向摄像机。", MessageType.Info);
         }
     }
 
@@ -385,7 +385,7 @@ public class GrassGUI : ShaderGUI
         GUILayout.Label("5 ▌距离剔除 (Distance Culling)", EditorStyles.boldLabel);
         m_MaterialEditor.FloatProperty(grassFadeStart, "开始衰减距离");
         m_MaterialEditor.FloatProperty(grassFadeEnd, "完全剔除距离");
-        EditorGUILayout.HelpBox("摄像机距离 < 开始衰减 → 全密度\n开始衰减 ~ 完全剔除 → 线性降低细分\n> 完全剔除 → 不生成草叶（细分为0）", MessageType.Info);
+        EditorGUILayout.HelpBox("摄像机距离 < 开始衰减 → 全密度\n开始衰减 ~ 完全剔除 → 线性降低细分\n> 完全剔除 → 不生成草叶（细分=0）", MessageType.Info);
     }
 
     private void DrawRenderSettings()
@@ -417,9 +417,9 @@ public class GrassGUI : ShaderGUI
         m_MaterialEditor.DoubleSidedGIField();
     }
 
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════════
     //  存档 / 读档
-    // ═══════════════════════════════════════════
+    // ══════════════════════════════════════════════
     private string GetPresetFolder()
     {
         string folder = "Library/VicTools/Grass";

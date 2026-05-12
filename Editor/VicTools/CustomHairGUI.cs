@@ -166,11 +166,16 @@ public class CustomHairGUI : ShaderGUI
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
                     if (!loadTex) break;
-                    string texPath = ExtractTexPath(json, propName);
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTex1 = (propName == "_BaseMap" || propName == "_MainTex");
+                    if (!(isMainTex1 && material.GetTexture(propName) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(propName, tex);
+                        string texPath = ExtractTexPath(json, propName);
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(propName, tex);
+                        }
                     }
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");
@@ -279,11 +284,16 @@ public class CustomHairGUI : ShaderGUI
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
                     if (!loadTex) break;
-                    string texPath = ExtractTexPath(json, propName);
-                    if (!string.IsNullOrEmpty(texPath))
+                    // 主纹理已有时不替换
+                    bool isMainTex2 = (propName == "_BaseMap" || propName == "_MainTex");
+                    if (!(isMainTex2 && material.GetTexture(propName) != null))
                     {
-                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                        if (tex != null) material.SetTexture(propName, tex);
+                        string texPath = ExtractTexPath(json, propName);
+                        if (!string.IsNullOrEmpty(texPath))
+                        {
+                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                            if (tex != null) material.SetTexture(propName, tex);
+                        }
                     }
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");

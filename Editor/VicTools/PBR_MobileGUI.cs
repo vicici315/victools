@@ -758,10 +758,20 @@ public class PBR_MobileGUI : ShaderGUI
             if (valueStr.StartsWith("{"))
             {
                 // 纹理类型
-                if (!loadTex) continue;
-
                 string texJson = valueStr;
                 while (!texJson.Contains("}") && li + 1 < lines.Length) { li++; texJson += lines[li]; }
+
+                // Tiling/Offset 始终读取
+                float[] t = ExtractTexFloats(texJson, "tiling");
+                if (t != null && t.Length == 2) material.SetTextureScale(propertyName, new Vector2(t[0], t[1]));
+                float[] o = ExtractTexFloats(texJson, "offset");
+                if (o != null && o.Length == 2) material.SetTextureOffset(propertyName, new Vector2(o[0], o[1]));
+
+                if (!loadTex) continue;
+
+                // 主纹理已有时不替换
+                bool isMainTex = (propertyName == "_BaseMap" || propertyName == "_MainTex");
+                if (isMainTex && material.GetTexture(propertyName) != null) continue;
 
                 string texPath = ExtractTexString(texJson, "path");
                 if (!string.IsNullOrEmpty(texPath))
@@ -773,11 +783,6 @@ public class PBR_MobileGUI : ShaderGUI
                 {
                     material.SetTexture(propertyName, null);
                 }
-
-                float[] t = ExtractTexFloats(texJson, "tiling");
-                if (t != null && t.Length == 2) material.SetTextureScale(propertyName, new Vector2(t[0], t[1]));
-                float[] o = ExtractTexFloats(texJson, "offset");
-                if (o != null && o.Length == 2) material.SetTextureOffset(propertyName, new Vector2(o[0], o[1]));
             }
             else if (valueStr.StartsWith("["))
             {

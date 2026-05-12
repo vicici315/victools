@@ -4,6 +4,8 @@
 // 场景工具 v2.18 资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列
 // 场景工具 v2.19 修复丢失对象删除出现的Bug
 // 场景工具 v2.20 添加晶格对象选择按钮
+// 场景工具 v2.21 修复Gug：FindGameObjectByIdentifier 在查找场景对象时，如果保存的 InstanceID 与当前对象的 InstanceID 不匹配（domain reload、编辑器重启后 InstanceID 会变化），就会跳过该对象，即使名称和路径完全匹配。最终导致对象找不到，变成"未知对象"。
+    // 改为"InstanceID 优先匹配，名称/路径兜底"策略。当按名称/路径找到对象但 InstanceID 不同时，仍然返回该对象作为候选。加载后自动检测标识符变化并重新保存更新的 InstanceID，形成自愈。
 
 using System;
 using UnityEngine;
@@ -126,7 +128,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.20]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.21]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -2600,11 +2602,12 @@ public class ResourceBoxFileItem
             {
                 // 查找根对象
                 var rootObjects = currentScene.GetRootGameObjects();
+                GameObject nameMatch = null;
                 foreach (var rootObject in rootObjects)
                 {
                     if (rootObject.name == objectPath)
                     {
-                        // 如果有实例ID，验证是否匹配
+                        // 如果有实例ID，优先精确匹配
                         if (hasInstanceID && instanceID != -1)
                         {
                             if (rootObject.GetInstanceID() == instanceID)
@@ -2612,6 +2615,8 @@ public class ResourceBoxFileItem
                                 foundObject = rootObject;
                                 break;
                             }
+                            // 名称匹配但InstanceID不同，记录为候选（InstanceID可能因domain reload变化）
+                            if (nameMatch == null) nameMatch = rootObject;
                         }
                         else
                         {
@@ -2620,17 +2625,21 @@ public class ResourceBoxFileItem
                         }
                     }
                 }
+                // 如果精确匹配失败但有名称匹配的对象，使用名称匹配
+                if (foundObject == null && nameMatch != null)
+                    foundObject = nameMatch;
             }
             else if (identifierType == "SCENE")
             {
                 // 查找有层级路径的对象
                 var rootObjects = currentScene.GetRootGameObjects();
+                GameObject nameMatch = null;
                 foreach (var rootObject in rootObjects)
                 {
                     Transform foundTransform = rootObject.transform.Find(objectPath);
                     if (foundTransform != null)
                     {
-                        // 如果有实例ID，验证是否匹配
+                        // 如果有实例ID，优先精确匹配
                         if (hasInstanceID && instanceID != -1)
                         {
                             if (foundTransform.gameObject.GetInstanceID() == instanceID)
@@ -2638,6 +2647,7 @@ public class ResourceBoxFileItem
                                 foundObject = foundTransform.gameObject;
                                 break;
                             }
+                            if (nameMatch == null) nameMatch = foundTransform.gameObject;
                         }
                         else
                         {
@@ -2646,6 +2656,9 @@ public class ResourceBoxFileItem
                         }
                     }
                 }
+                // 如果精确匹配失败但有路径匹配的对象，使用路径匹配
+                if (foundObject == null && nameMatch != null)
+                    foundObject = nameMatch;
                 
                 // 如果直接路径查找失败，尝试通过完整路径匹配
                 if (foundObject == null)
@@ -2656,7 +2669,7 @@ public class ResourceBoxFileItem
                         string currentPath = GetGameObjectFullPath(obj);
                         if (currentPath == objectPath)
                         {
-                            // 如果有实例ID，验证是否匹配
+                            // 如果有实例ID，优先精确匹配
                             if (hasInstanceID && instanceID != -1)
                             {
                                 if (obj.GetInstanceID() == instanceID)
@@ -2664,6 +2677,7 @@ public class ResourceBoxFileItem
                                     foundObject = obj;
                                     break;
                                 }
+                                if (nameMatch == null) nameMatch = obj;
                             }
                             else
                             {
@@ -2672,6 +2686,8 @@ public class ResourceBoxFileItem
                             }
                         }
                     }
+                    if (foundObject == null && nameMatch != null)
+                        foundObject = nameMatch;
                 }
             }
             
