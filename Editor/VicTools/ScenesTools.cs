@@ -3,6 +3,8 @@
 // 场景工具 v2.17 添加【↓】快速统一赋予最后选中对象的材质按钮；添加模型一键落地按钮
 // 场景工具 v2.18 资源箱添加【按类型排序】按钮，对现有资源按类型排列，新增对象会自动按类型排列
 // 场景工具 v2.19 修复丢失对象删除出现的Bug
+// 场景工具 v2.20 添加晶格对象选择按钮
+
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -99,6 +101,7 @@ public class ResourceBoxFileItem
         private string _searchText = ""; // 搜索文本
         private Material _selectedMaterial; // 用于存储用户手动选择的材质
         private Texture2D _lightDirIcon; // lightDir.png图标
+        private Texture2D _SelectLattIcon; // lightDir.png图标
         private Texture2D _switchPBRMIcon; // lightDir.png图标
         private bool _setStatic = false;
         private bool _selPrefab = false;
@@ -123,7 +126,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.19]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.20]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -168,6 +171,7 @@ public class ResourceBoxFileItem
             // 加载lightDir图标 - 使用Unity包路径（兼容开发环境和打包发布）
             // 方法1：直接使用包路径（推荐，因为package.json中的name是固定的）
             string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
+            string selectLattIcon = "Packages/com.youdoo.victools/Editor/VicTools/icon_SelectLattIcon.png";
             string switchPBRMicon = "Packages/com.youdoo.victools/Editor/VicTools/switchPBRM.png";
             
             // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
@@ -182,6 +186,7 @@ public class ResourceBoxFileItem
             
             // 加载lightDir图标
             _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
+            _SelectLattIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(selectLattIcon);
             _switchPBRMIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(switchPBRMicon);
             
             // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
@@ -1187,6 +1192,235 @@ public class ResourceBoxFileItem
                 }
             }
             EditorGUILayout.EndHorizontal();
+            EditorGUILayout.BeginHorizontal();
+            if (_SelectLattIcon != null)
+            {
+                if (GUILayout.Button(new GUIContent(_SelectLattIcon, "选择晶格对象 / 模型对象（双向切换）\n\n• 选中模型 → 点击：选中对应的 Lattice_ 晶格对象\n• 选中晶格 → 点击：反向选中晶格控制的模型\n• Ctrl+点击：加选（不替换当前选择）"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    SelectAssociatedLattice();
+                }
+            }
+            EditorGUILayout.EndHorizontal();
+        }
+
+        /// 选择当前选中模型对象对应的晶格对象（Lattice_ 前缀）
+        /// 如果当前选中的已经是晶格对象，则反向选中它控制的模型对象
+        private void SelectAssociatedLattice()
+        {
+            // 捕获 Ctrl 键状态（按住 Ctrl 为加选模式）
+            bool additive = Event.current != null && Event.current.control;
+
+            var selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                Debug.LogWarning("[VicTools] 请先选中模型对象或晶格对象");
+                return;
+            }
+
+            // 检查当前选中的是否是晶格对象（带 Lattice_ 前缀且有 LatticeModifier 组件）
+            bool selectedIsLattice = false;
+            foreach (var go in selectedObjects)
+            {
+                if (go.name.StartsWith("Lattice_", StringComparison.Ordinal) && go.GetComponent("LatticeModifier") != null)
+                {
+                    selectedIsLattice = true;
+                    break;
+                }
+            }
+
+            if (selectedIsLattice)
+            {
+                // 反向：选中晶格控制的模型对象
+                SelectLatticeTargets(selectedObjects, additive);
+            }
+            else
+            {
+                // 正向：选中模型对应的晶格对象
+                SelectLatticeFromTargets(selectedObjects, additive);
+            }
+        }
+
+        /// 从晶格对象反向选中它控制的模型对象
+        private void SelectLatticeTargets(GameObject[] latticeGOs, bool additive)
+        {
+            var targetObjects = new List<GameObject>();
+
+            // 加选模式：保留当前已选中的对象
+            if (additive)
+            {
+                foreach (var obj in Selection.gameObjects)
+                    if (!targetObjects.Contains(obj))
+                        targetObjects.Add(obj);
+            }
+
+            foreach (var go in latticeGOs)
+            {
+                var comp = go.GetComponent("LatticeModifier");
+                if (comp == null) continue;
+
+                var type = comp.GetType();
+                var modeField = type.GetField("targetMode");
+                var rendField = type.GetField("targetRenderer");
+                var rootField = type.GetField("targetRoot");
+                var manualField = type.GetField("manualRenderers");
+
+                if (modeField == null) continue;
+                int mode = (int)modeField.GetValue(comp);
+
+                if (mode == 0) // SingleRenderer
+                {
+                    if (rendField != null)
+                    {
+                        var rend = rendField.GetValue(comp) as Renderer;
+                        if (rend != null && !targetObjects.Contains(rend.gameObject))
+                            targetObjects.Add(rend.gameObject);
+                    }
+                }
+                else // MultiRenderer
+                {
+                    if (rootField != null)
+                    {
+                        var root = rootField.GetValue(comp) as Transform;
+                        if (root != null && !targetObjects.Contains(root.gameObject))
+                            targetObjects.Add(root.gameObject);
+                    }
+
+                    if (manualField != null)
+                    {
+                        var manualList = manualField.GetValue(comp) as List<Renderer>;
+                        if (manualList != null)
+                        {
+                            foreach (var r in manualList)
+                            {
+                                if (r != null && !targetObjects.Contains(r.gameObject))
+                                    targetObjects.Add(r.gameObject);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (targetObjects.Count > 0)
+            {
+                Selection.objects = targetObjects.ToArray();
+                EditorGUIUtility.PingObject(targetObjects[0]);
+            }
+            else
+            {
+                Debug.LogWarning("[VicTools] 晶格对象未关联任何模型目标");
+            }
+        }
+
+        /// 从模型对象正向查找对应的晶格对象
+        private void SelectLatticeFromTargets(GameObject[] selectedObjects, bool additive)
+        {
+            var latticeObjects = new List<GameObject>();
+
+            // 加选模式：保留当前已选中的对象
+            if (additive)
+            {
+                foreach (var obj in Selection.gameObjects)
+                    if (!latticeObjects.Contains(obj))
+                        latticeObjects.Add(obj);
+            }
+
+            var allRoots = new List<GameObject>();
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (scene.isLoaded)
+                    allRoots.AddRange(scene.GetRootGameObjects());
+            }
+
+            // 收集所有带 Lattice_ 前缀的对象
+            var allLatticeGOs = new List<GameObject>();
+            foreach (var root in allRoots)
+            {
+                foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                {
+                    if (t.name.StartsWith("Lattice_", StringComparison.Ordinal))
+                        allLatticeGOs.Add(t.gameObject);
+                }
+            }
+
+            foreach (var go in selectedObjects)
+            {
+                // 方式1：按命名规则查找 Lattice_ + 对象名
+                string latticeName = "Lattice_" + go.name;
+                foreach (var latGO in allLatticeGOs)
+                {
+                    if (latGO.name == latticeName && !latticeObjects.Contains(latGO))
+                    {
+                        latticeObjects.Add(latGO);
+                        break;
+                    }
+                }
+
+                // 方式2：检查所有 Lattice_ 对象上的 LatticeModifier 组件的目标引用
+                if (!latticeObjects.Exists(l => l.name == latticeName))
+                {
+                    foreach (var latGO in allLatticeGOs)
+                    {
+                        var comp = latGO.GetComponent("LatticeModifier");
+                        if (comp == null) continue;
+
+                        // 通过反射检查 targetRenderer 和 targetRoot
+                        var type = comp.GetType();
+                        var rendField = type.GetField("targetRenderer");
+                        var rootField = type.GetField("targetRoot");
+                        var manualField = type.GetField("manualRenderers");
+
+                        if (rendField != null)
+                        {
+                            var rend = rendField.GetValue(comp) as Renderer;
+                            if (rend != null && rend.gameObject == go)
+                            {
+                                if (!latticeObjects.Contains(latGO))
+                                    latticeObjects.Add(latGO);
+                                continue;
+                            }
+                        }
+
+                        if (rootField != null)
+                        {
+                            var root = rootField.GetValue(comp) as Transform;
+                            if (root != null && root.gameObject == go)
+                            {
+                                if (!latticeObjects.Contains(latGO))
+                                    latticeObjects.Add(latGO);
+                                continue;
+                            }
+                        }
+
+                        if (manualField != null)
+                        {
+                            var manualList = manualField.GetValue(comp) as List<Renderer>;
+                            if (manualList != null)
+                            {
+                                foreach (var r in manualList)
+                                {
+                                    if (r != null && r.gameObject == go)
+                                    {
+                                        if (!latticeObjects.Contains(latGO))
+                                            latticeObjects.Add(latGO);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (latticeObjects.Count > 0)
+            {
+                Selection.objects = latticeObjects.ToArray();
+                EditorGUIUtility.PingObject(latticeObjects[0]);
+            }
+            else
+            {
+                Debug.LogWarning("[VicTools] 未找到对应的晶格对象（Lattice_ 前缀）");
+            }
         }
 
         /// 处理拖拽的对象

@@ -15,6 +15,7 @@
 //      Shift + Alt + 拖拽：框选减去控制点
 //      Shift + Ctrl + 拖拽：框选追加（不清除已有选择）。
 // LatticeModifierEditor 2.7 优化控制点显示 // 内部控制点：蓝色
+// LatticeModifierEditor 2.8 晶格体背面控制点压暗显示
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -39,11 +40,14 @@ public class LatticeModifierEditor : Editor
     private static Vector3 s_handleStartCenter;
     private static bool s_handleDragging;
 
+    private static bool s_suppressSelectionChanged;
+
     private static void SyncSelectionToHierarchy()
     {
         if (s_activeLattice == null) return;
         // 选中控制点时，保持焦点在晶格对象上（而非 CP 子物体），确保 Inspector 显示晶格面板
         Selection.activeGameObject = s_activeLattice.gameObject;
+        s_suppressSelectionChanged = false;
     }
 
     private void OnEnable()
@@ -54,6 +58,7 @@ public class LatticeModifierEditor : Editor
         EditorApplication.update += EditorUpdate;
         EditorApplication.playModeStateChanged += OnPlayModeChanged;
         Selection.selectionChanged += OnSelectionChanged;
+        Undo.undoRedoPerformed += OnUndoRedo;
         if (!s_registered)
         {
             SceneView.duringSceneGui += OnGlobalSceneGUIStatic;
@@ -64,6 +69,7 @@ public class LatticeModifierEditor : Editor
     private void OnDisable()
     {
         Tools.hidden = false;
+        Undo.undoRedoPerformed -= OnUndoRedo;
         EditorApplication.update -= EditorUpdate;
         EditorApplication.playModeStateChanged -= OnPlayModeChanged;
         Selection.selectionChanged -= OnSelectionChanged;
@@ -72,6 +78,9 @@ public class LatticeModifierEditor : Editor
     /// Hierarchy 中选中 CP 节点时，反查索引同步到 selectedPoints
     private void OnSelectionChanged()
     {
+        // 防止 SyncSelectionToHierarchy 触发的递归回调
+        if (s_suppressSelectionChanged) return;
+
         if (lattice == null || !lattice.HasControlPointTransforms) return;
 
         var newSel = new HashSet<int>();
@@ -96,6 +105,21 @@ public class LatticeModifierEditor : Editor
         foreach (int i in newSel) selectedPoints.Add(i);
         s_activeSelectedPoints = selectedPoints;
         SceneView.RepaintAll();
+    }
+
+    /// Undo/Redo 后自动恢复变形 Mesh（Undo 可能恢复 Renderer 的 sharedMesh 为 originalMesh）
+    private void OnUndoRedo()
+    {
+        if (lattice == null || !lattice.IsInitialized) return;
+
+        // 延迟一帧执行，确保 Undo 序列化完成
+        EditorApplication.delayCall += () =>
+        {
+            if (lattice == null || !lattice.IsInitialized) return;
+            lattice.MarkDirty();
+            lattice.ApplyDeformation();
+            SceneView.RepaintAll();
+        };
     }
 
     private void OnPlayModeChanged(PlayModeStateChange state)
@@ -387,6 +411,22 @@ public class LatticeModifierEditor : Editor
             SceneView.RepaintAll();
         }
 
+        GUI.backgroundColor = new Color(0.8f, 1f, 0.5f);
+        if (GUILayout.Button(new GUIContent("刷新源Mesh",
+            "重新读取目标对象的源 Mesh 顶点数据并重建变形管线。\n\n" +
+            "适用场景：\n" +
+            "• 外部工具修改了模型顶点后，同步最新顶点到晶格\n" +
+            "• 手动替换了 Renderer 上的 Mesh 后，让晶格识别新源\n" +
+            "• 变形显示异常时，强制重建变形副本\n\n" +
+            "注意：当前控制点变形会保留，仅刷新源顶点数据。"),
+            GUILayout.Height(28), GUILayout.Width(80)))
+        {
+            Undo.RecordObject(lattice, "刷新源 Mesh");
+            lattice.RefreshSourceMesh();
+            EditorUtility.SetDirty(lattice);
+            SceneView.RepaintAll();
+        }
+
         GUI.backgroundColor = new Color(0.6f, 1f, 0.6f);
         GUI.enabled = selectedPoints.Count > 0;
         if (GUILayout.Button("扩展选择", GUILayout.Height(28), GUILayout.Width(70)))
@@ -543,6 +583,10 @@ public class LatticeModifierEditor : Editor
     {
         if (lat == null || !lat.IsInitialized || lat.controlPoints == null) return;
 
+        // 段数被修改后 controlPoints 数组长度与当前 PointCount 不匹配，跳过绘制避免越界
+        int expectedTotal = lat.PointCountX * lat.PointCountY * lat.PointCountZ;
+        if (lat.controlPoints.Length != expectedTotal) return;
+
         // 有控制点被选中时隐藏 Unity 内置 Transform Handle，避免出现两个移动工具
         Tools.hidden = selPts != null && selPts.Count > 0;
 
@@ -562,6 +606,9 @@ public class LatticeModifierEditor : Editor
             if (iz < nz - 1) Handles.DrawLine(p, t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix, iy, iz + 1)]));
         }
 
+        // 相机方向，用于判断控制点是否在晶格体背面
+        Vector3 camForward = sceneView.camera.transform.forward;
+
         for (int i = 0; i < lat.controlPoints.Length; i++)
         {
             Vector3 worldPos = t.TransformPoint(lat.controlPoints[i]);
@@ -575,10 +622,28 @@ public class LatticeModifierEditor : Editor
                                 (piy == 0 || piy == ny - 1) ||
                                 (piz == 0 || piz == nz - 1);
 
-            if (isSelected) Handles.color = Color.white;
-            else if (isCorner) Handles.color = new Color(1f, 0.3f, 0.3f, 0.9f);
-            else if (!isOnSurface) Handles.color = new Color(0.2f, 0.2f, 0.2f, 0.9f); // 内部控制点：蓝色
-            else Handles.color = new Color(0.95f, 0.65f, 0.2f, 0.8f);
+            // 基于控制点所在面的法线判断是否为背面
+            // 一个控制点可能属于多个面（边缘/角点），只要有任一面朝向相机就不算背面
+            bool isBackFacing = false;
+            if (isOnSurface)
+            {
+                bool anyFaceFront = false;
+                // 检查该点所在的每个面的法线
+                if (pix == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.left), camForward) < 0) anyFaceFront = true; }
+                if (pix == nx - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.right), camForward) < 0) anyFaceFront = true; }
+                if (piy == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.down), camForward) < 0) anyFaceFront = true; }
+                if (piy == ny - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.up), camForward) < 0) anyFaceFront = true; }
+                if (piz == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.back), camForward) < 0) anyFaceFront = true; }
+                if (piz == nz - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.forward), camForward) < 0) anyFaceFront = true; }
+                isBackFacing = !anyFaceFront;
+            }
+
+            float backDim = isBackFacing ? 0.4f : 1f;
+
+            if (isSelected) Handles.color = isBackFacing ? new Color(0.7f, 0.7f, 0.7f, 0.9f) : Color.white;
+            else if (isCorner) Handles.color = new Color(1f * backDim, 0.3f * backDim, 0.3f * backDim, 0.9f);
+            else if (!isOnSurface) Handles.color = new Color(0.2f * backDim, 0.2f * backDim, 0.2f * backDim, 0.9f);
+            else Handles.color = new Color(0.95f * backDim, 0.65f * backDim, 0.2f * backDim, 0.8f);
             // 设置控制点的显示大小：选中=2.8, 内部=1, 其他未选中=1.8
             float drawSize = isSelected ? sz * 2.8f : (!isOnSurface && !isCorner) ? sz : sz * 1.8f;
             float pickSize = isSelected ? sz * 2.2f : (!isOnSurface && !isCorner) ? sz * 1.5f : sz * 2.5f;

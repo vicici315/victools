@@ -42,7 +42,6 @@ vertexOutput tessVert(vertexInput v)
     return o;
 }
 
-//“TessellationUniform”在“Grass.shader”文件中的“UnityPerMaterial” CBUFFER 中被声明。
 TessellationFactors patchConstantFunction(InputPatch<vertexInput, 3> patch)
 {
     TessellationFactors f;
@@ -78,10 +77,8 @@ vertexOutput domain(TessellationFactors factors, OutputPatch<vertexInput, 3> pat
     MY_DOMAIN_PROGRAM_INTERPOLATE(tangent)
     MY_DOMAIN_PROGRAM_INTERPOLATE(uv)
 
-    // 归一化插值后的法线和切线方向，防止矩阵退化导致草根部拉扯
     v.normal = normalize(v.normal);
     v.tangent.xyz = normalize(v.tangent.xyz);
-    // tangent.w 是副法线符号（+1/-1），不应被插值，取第一个顶点的值
     v.tangent.w = patch[0].tangent.w;
 
     return tessVert(v);

@@ -1,5 +1,7 @@
 // FurShell_MobileGUI 1.1 - 毛发shader的GUI控制脚本
 // 1.1 添加Tiling/Offset控制，优化按钮风格
+// 2.0 添加预设列表菜单
+
 using UnityEngine;
 using UnityEditor;
 using System.IO;
@@ -121,9 +123,9 @@ public class FurShell_MobileGUI : ShaderGUI
         
         // 添加读档按钮
         GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f); // 绿色背景
-        if (GUILayout.Button("读档", GUILayout.Width(50)))
+        if (GUILayout.Button("读档 ▾", GUILayout.Width(55)))
         {
-            EditorApplication.delayCall += LoadParameters;
+            ShowLoadDropdown();
         }
         
         // 添加重置按钮
@@ -132,8 +134,207 @@ public class FurShell_MobileGUI : ShaderGUI
         {
             EditorApplication.delayCall += ResetParameters;
         }
+        
+        // 预设下拉菜单
+        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
+        if (GUILayout.Button("预设 ▾", GUILayout.Width(55)))
+        {
+            ShowPresetDropdown();
+        }
         GUI.backgroundColor = Color.white;
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void ShowLoadDropdown()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = SAVE_FOLDER + shaderName;
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void ShowPresetDropdown()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Packages/com.youdoo.victools/Runtime/Shaders/" + shaderName;
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无预设存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void LoadPresetFile(string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null) return;
+
+        string json = System.IO.File.ReadAllText(filePath);
+        bool hasTexData = json.Contains("\"path\":");
+        bool loadTex = hasTexData && EditorUtility.DisplayDialog("读取纹理",
+            "存档中包含纹理引用，是否同时读取？", "是", "否，仅参数");
+
+        Undo.RecordObject(material, "Load Fur Preset");
+
+        var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
+        for (int li = 0; li < lines.Length; li++)
+        {
+            string line = lines[li].Trim().TrimEnd(',');
+            if (!line.Contains(":")) continue;
+
+            int colonIdx = line.IndexOf(':');
+            if (colonIdx < 0) continue;
+
+            string key = line.Substring(0, colonIdx).Trim().Trim('"');
+            string value = line.Substring(colonIdx + 1).Trim();
+
+            if (value.StartsWith("{"))
+            {
+                // 纹理类型
+                string texJson = value;
+                while (!texJson.Contains("}") && li + 1 < lines.Length) { li++; texJson += lines[li]; }
+
+                if (!material.HasProperty(key)) continue;
+
+                if (loadTex)
+                {
+                    // 解析纹理路径
+                    string texPath = ExtractJsonString(texJson, "path");
+                    if (!string.IsNullOrEmpty(texPath))
+                    {
+                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                        if (tex != null) material.SetTexture(key, tex);
+                    }
+                    else
+                    {
+                        material.SetTexture(key, null);
+                    }
+                }
+
+                // Tiling/Offset 始终读取
+                float[] tiling = ExtractJsonFloatArray(texJson, "tiling");
+                float[] offset = ExtractJsonFloatArray(texJson, "offset");
+                if (tiling != null && tiling.Length >= 2) material.SetTextureScale(key, new Vector2(tiling[0], tiling[1]));
+                if (offset != null && offset.Length >= 2) material.SetTextureOffset(key, new Vector2(offset[0], offset[1]));
+            }
+            else if (value.StartsWith("["))
+            {
+                value = value.Trim('[', ']');
+                string[] values = value.Split(',');
+
+                // 兼容旧格式 _BaseMap_Scale / _BaseMap_Offset
+                if (key == "_BaseMap_Scale" && values.Length >= 2)
+                    material.SetTextureScale("_BaseMap", new Vector2(float.Parse(values[0].Trim()), float.Parse(values[1].Trim())));
+                else if (key == "_BaseMap_Offset" && values.Length >= 2)
+                    material.SetTextureOffset("_BaseMap", new Vector2(float.Parse(values[0].Trim()), float.Parse(values[1].Trim())));
+                else if (key == "_NoiseMap_Scale" && values.Length >= 2)
+                    material.SetTextureScale("_NoiseMap", new Vector2(float.Parse(values[0].Trim()), float.Parse(values[1].Trim())));
+                else if (key == "_NoiseMap_Offset" && values.Length >= 2)
+                    material.SetTextureOffset("_NoiseMap", new Vector2(float.Parse(values[0].Trim()), float.Parse(values[1].Trim())));
+                else if (values.Length == 4 && material.HasProperty(key))
+                {
+                    Vector4 vec = new Vector4(
+                        float.Parse(values[0].Trim()), float.Parse(values[1].Trim()),
+                        float.Parse(values[2].Trim()), float.Parse(values[3].Trim()));
+                    Shader shader = material.shader;
+                    int propIndex = shader.FindPropertyIndex(key);
+                    if (propIndex >= 0)
+                    {
+                        var propType = shader.GetPropertyType(propIndex);
+                        if (propType == UnityEngine.Rendering.ShaderPropertyType.Color)
+                            material.SetColor(key, new Color(vec.x, vec.y, vec.z, vec.w));
+                        else
+                            material.SetVector(key, vec);
+                    }
+                }
+            }
+            else
+            {
+                if (material.HasProperty(key) && float.TryParse(value, out float floatValue))
+                    material.SetFloat(key, floatValue);
+            }
+        }
+
+        UpdateShaderKeywords(material);
+        material.DisableKeyword("_USETOUCH");
+        material.DisableKeyword("_USEWINDCONE");
+        EditorUtility.SetDirty(material);
+        m_MaterialEditor?.Repaint();
+        SceneView.RepaintAll();
+    }
+
+    private static string ExtractJsonString(string json, string key)
+    {
+        string pattern = "\"" + key + "\": \"";
+        int start = json.IndexOf(pattern);
+        if (start < 0) return null;
+        start += pattern.Length;
+        int end = json.IndexOf('"', start);
+        return end < 0 ? null : json.Substring(start, end - start);
+    }
+
+    private static float[] ExtractJsonFloatArray(string json, string key)
+    {
+        string pattern = "\"" + key + "\": [";
+        int start = json.IndexOf(pattern);
+        if (start < 0) return null;
+        start += pattern.Length;
+        int end = json.IndexOf(']', start);
+        if (end < 0) return null;
+        string[] parts = json.Substring(start, end - start).Split(',');
+        float[] result = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++)
+            if (!float.TryParse(parts[i].Trim(), out result[i])) return null;
+        return result;
     }
 
     private void DrawRenderSettings()
@@ -141,7 +342,8 @@ public class FurShell_MobileGUI : ShaderGUI
         EditorGUILayout.LabelField("渲染设置", EditorStyles.boldLabel);
         
         if (useDistanceAtten != null)
-            m_MaterialEditor.ShaderProperty(useDistanceAtten, "使用距离衰减");
+            m_MaterialEditor.ShaderProperty(useDistanceAtten, new GUIContent("使用距离衰减",
+                "启用光源距离衰减。关闭时光照强度不随距离变化（默认关闭）。\n团结引擎中该值可能异常，关闭可避免渲染错误。"));
         if (useVerShadow != null)
             m_MaterialEditor.ShaderProperty(useVerShadow, "使用顶点阴影");
         if (useSelfShadow != null)
@@ -448,7 +650,7 @@ public class FurShell_MobileGUI : ShaderGUI
         EditorGUILayout.LabelField("高级设置", EditorStyles.boldLabel);
         
         if (faceViewProdThresh != null)
-            m_MaterialEditor.ShaderProperty(faceViewProdThresh, "方向阈值");
+            m_MaterialEditor.ShaderProperty(faceViewProdThresh, "剔除阈值");
     }
 
     // 存档功能 - 使用文件选择对话框
@@ -510,22 +712,32 @@ public class FurShell_MobileGUI : ShaderGUI
         AppendFloat(sb, "_NoiseBendStrength", noiseBendStrength, material, false);
         if (material.HasProperty("_BaseMap"))
         {
+            Texture baseTex = material.GetTexture("_BaseMap");
+            string baseTexPath = baseTex != null ? AssetDatabase.GetAssetPath(baseTex).Replace("\\", "/") : "";
             Vector2 scale = material.GetTextureScale("_BaseMap");
             Vector2 offset = material.GetTextureOffset("_BaseMap");
             sb.AppendLine(",");
-            sb.Append($"  \"_BaseMap_Scale\": [{scale.x}, {scale.y}],");
-            sb.AppendLine();
-            sb.Append($"  \"_BaseMap_Offset\": [{offset.x}, {offset.y}]");
+            sb.Append($"  \"_BaseMap\": {{\"path\": \"{baseTexPath}\", \"tiling\": [{scale.x}, {scale.y}], \"offset\": [{offset.x}, {offset.y}]}}");
+        }
+        
+        if (material.HasProperty("_FurMap"))
+        {
+            Texture furTex = material.GetTexture("_FurMap");
+            string furTexPath = furTex != null ? AssetDatabase.GetAssetPath(furTex).Replace("\\", "/") : "";
+            Vector2 scale = material.GetTextureScale("_FurMap");
+            Vector2 offset = material.GetTextureOffset("_FurMap");
+            sb.AppendLine(",");
+            sb.Append($"  \"_FurMap\": {{\"path\": \"{furTexPath}\", \"tiling\": [{scale.x}, {scale.y}], \"offset\": [{offset.x}, {offset.y}]}}");
         }
         
         if (material.HasProperty("_NoiseMap"))
         {
+            Texture noiseTex = material.GetTexture("_NoiseMap");
+            string noiseTexPath = noiseTex != null ? AssetDatabase.GetAssetPath(noiseTex).Replace("\\", "/") : "";
             Vector2 scale = material.GetTextureScale("_NoiseMap");
             Vector2 offset = material.GetTextureOffset("_NoiseMap");
             sb.AppendLine(",");
-            sb.Append($"  \"_NoiseMap_Scale\": [{scale.x}, {scale.y}],");
-            sb.AppendLine();
-            sb.Append($"  \"_NoiseMap_Offset\": [{offset.x}, {offset.y}]");
+            sb.Append($"  \"_NoiseMap\": {{\"path\": \"{noiseTexPath}\", \"tiling\": [{scale.x}, {scale.y}], \"offset\": [{offset.x}, {offset.y}]}}");
         }
         
         sb.AppendLine();
@@ -533,9 +745,6 @@ public class FurShell_MobileGUI : ShaderGUI
         
         // 保存到文件
         File.WriteAllText(presetPath, sb.ToString());
-        
-        Debug.Log($"毛发材质参数已保存到: {presetPath}");
-        EditorUtility.DisplayDialog("存档成功", $"参数已保存到:\n{presetPath}", "确定");
     }
 
     // 读档功能 - 使用文件选择对话框
@@ -688,9 +897,6 @@ public class FurShell_MobileGUI : ShaderGUI
         
         // 刷新场景视图
         SceneView.RepaintAll();
-        
-        Debug.Log($"毛发材质参数已从 {presetPath} 加载");
-        // EditorUtility.DisplayDialog("读档成功", "参数已恢复", "确定");
     }
     
     // 更新shader keywords

@@ -1,0 +1,22 @@
+{
+  "_BaseMap": {"path": "Assets/Test/Hair/Gril_Hair_01_D.tga", "tiling": [1, 1], "offset": [0, 0]},
+  "_Color": [0.5490196, 0.462745, 0.531908, 1],
+  "_Cutoff": 0.542,
+  "_TransCutoff": 0.17,
+  "_ShadowCutoff": 0.202,
+  "_ShadowBiasScale": 0.001,
+  "_NormalMap": {"path": "Assets/Test/Hair/Gril_Hair_01_N.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_NormalScale": 0.8,
+  "_UseAnisoSpec": 1,
+  "_ShiftMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/shiftMap.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_SpecRamp": {"path": "Packages/com.youdoo.victools/Runtime/Testures/rampHair.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_SpecRampRow": 0.66,
+  "_HairDirRotate": 0,
+  "_SpecIntensity": 0.27,
+  "_SpecPower": 1.098,
+  "_SpecShift": 0.24,
+  "_AmbientColor": [0.9245283, 0.7059764, 0.4752076, 1],
+  "_RimPower": 6.49,
+  "_RimIntensity": 0.281,
+  "_Cull": 2
+}

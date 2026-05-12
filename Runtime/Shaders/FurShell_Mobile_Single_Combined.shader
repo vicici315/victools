@@ -17,7 +17,7 @@ Shader "Custom/FurShell_Mobile_SingleC"
         _BaseMap("Base Map", 2D) = "white" {}
         _FurMap("Fur Map", 2D) = "white" {}
         _NoiseMap("Noise Map (Curl Bend)", 2D) = "gray" {}
-        _NoiseBendStrength("Noise Bend Strength", Range(0.0, 5.0)) = 0.3
+        _NoiseBendStrength("Noise Bend Strength", Range(0.0, 15.0)) = 0.3
 //        _NormalMap("Fur Map", 2D) = "white" {}
         [IntRange] _ShellAmount("Shell Amount", Range(1, 20)) = 8
         _FurLength("Fur Length", Range(0.0, 0.2)) = 0.004

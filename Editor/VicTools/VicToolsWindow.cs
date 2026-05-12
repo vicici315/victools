@@ -10,8 +10,15 @@ namespace VicTools
     /// VicTools 全局配置和常量
     public static class VicToolsConfig
     {
-        /// VicTools 全局版本号
-        public const string Ver = "2.9.5";
+        /// VicTools 全局版本号 - 从 package.json 动态读取
+        public static string Ver
+        {
+            get
+            {
+                var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(VicToolsConfig).Assembly);
+                return packageInfo != null ? packageInfo.version : "unknown";
+            }
+        }
 
         /// 性能分析器窗口标签名（包含版本号）
         public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
@@ -1644,7 +1651,7 @@ namespace VicTools
                 EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal");
             });
             menu.AddSeparator("");
-            menu.AddItem(new GUIContent("创建 晶格控制器"), false, CreateLatticeController);
+            menu.AddItem(new GUIContent("创建 晶格变形控制器"), false, CreateLatticeController);
             // menu.AddSeparator("");
             menu.AddItem(new GUIContent("创建 混合变形控制"), false, CreateBlendShapeAni);
             menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制"), false, CreateEmissionFlicker);
@@ -1831,7 +1838,7 @@ namespace VicTools
             menu.AddSeparator("创建材质球/");   // 二级菜单分割线
             menu.AddItem(new GUIContent("创建材质球/AddTrans（透明叠加，可模拟灯光照射）"),            false, () => CreateMaterialFromShader("Custom/AddTrans"));
             menu.AddItem(new GUIContent("创建材质球/Glass_carWindow（玻璃材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_carWindow"));
-            menu.AddItem(new GUIContent("创建材质球/Glass_MobileNew（折射效果水材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_MobileNew"));
+            menu.AddItem(new GUIContent("创建材质球/Glass_MobileNew（折射效果水、果冻材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_MobileNew"));
             menu.AddItem(new GUIContent("创建材质球/Tree_Trans（植被树叶透明飘动材质）"),           false, () => CreateMaterialFromShader("Custom/Tree_Trans"));
             menu.AddItem(new GUIContent("创建材质球/Grass（草地材质）"),                false, () => CreateMaterialFromShader("Custom/Grass"));
             menu.AddItem(new GUIContent("创建材质球/Texture（纯贴图颜色Alpha透明）"),              false, () => CreateMaterialFromShader("Custom/Texture"));

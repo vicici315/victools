@@ -1,6 +1,8 @@
 ﻿// SmoothMeshNormal_1.1 添加快捷选择描边模型按钮，快速获取Meshes路径按钮
 // SmoothMeshNormal_1.2 添加<覆盖>选项，支持生成平滑网格直接覆盖原有Mesh
 // SmoothMeshNormal_1.3 添加<选择父对象>按钮，优化模型列表"选择"按钮只选中相应对象
+// SmoothMeshNormal_1.4 添加<创建描边模型>按钮，自动克隆 _OL 描边对象并生成平滑网格，添加描边材质预置接口
+// SmoothMeshNormal_1.5 添加<统一法线>按钮，将选中对象的 Mesh 法线重新计算为统一平滑法线
 
 using System;
 using System.Collections;
@@ -38,6 +40,30 @@ public class SmoothedNormalsUtility : EditorWindow
 		set { EditorPrefs.SetBool("SmoothedNormals_Overwrite", value); }
 	}
 
+	// 描边材质球，通过 EditorPrefs 持久化存储材质资产 GUID
+	private Material mOutlineMaterial
+	{
+		get
+		{
+			string guid = EditorPrefs.GetString("SmoothedNormals_OutlineMaterialGUID", "");
+			if (string.IsNullOrEmpty(guid)) return null;
+			string path = AssetDatabase.GUIDToAssetPath(guid);
+			if (string.IsNullOrEmpty(path)) return null;
+			return AssetDatabase.LoadAssetAtPath<Material>(path);
+		}
+		set
+		{
+			if (value == null)
+				EditorPrefs.SetString("SmoothedNormals_OutlineMaterialGUID", "");
+			else
+			{
+				string path = AssetDatabase.GetAssetPath(value);
+				string guid = AssetDatabase.AssetPathToGUID(path);
+				EditorPrefs.SetString("SmoothedNormals_OutlineMaterialGUID", guid);
+			}
+		}
+	}
+
 	private Vector2 mScroll;
 
 	[MenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal", false, 2000)]
@@ -48,7 +74,7 @@ public class SmoothedNormalsUtility : EditorWindow
 
 	private static SmoothedNormalsUtility GetWindow()
 	{
-		var window = GetWindow<SmoothedNormalsUtility>(true, "平滑网格法线 1.3", true);
+		var window = GetWindow<SmoothedNormalsUtility>(true, "平滑网格法线 1.5", true);
 		window.minSize = new Vector2(400f, 400f);
 		window.maxSize = new Vector2(400f, 5000f);
 		return window;
@@ -82,6 +108,7 @@ public class SmoothedNormalsUtility : EditorWindow
 			GUI.backgroundColor = Color.cyan;
 			foreach (var sm in mMeshes.Values)
 			{
+				if (sm == null || sm.mesh == null) continue;
 				GUILayout.Space(2);
 				GUILayout.BeginHorizontal();
 				var label = sm.mesh.name;
@@ -130,6 +157,41 @@ public class SmoothedNormalsUtility : EditorWindow
 			GUILayout.FlexibleSpace();
 
 			GUILayout.BeginHorizontal();
+			GUILayout.Space(20);
+			GUI.backgroundColor = new Color(0.6f, 1f, 0.6f);
+			if (GUILayout.Button(new GUIContent("创建描边模型", "为选中对象克隆 _OL 描边子对象并生成平滑网格"), GUILayout.Width(115), GUILayout.Height(25)))
+			{
+				string matInfo = mOutlineMaterial != null
+					? $"描边材质：{mOutlineMaterial.name}"
+					: "⚠️ 未指定描边材质，创建后需手动赋材质";
+				if (EditorUtility.DisplayDialog("创建平滑描边模型",
+					"将为选中对象创建 _OL 描边子模型：\n\n" +
+					"• 克隆网格对象并添加 _OL 后缀\n" +
+					"• 自动生成平滑法线网格\n" +
+					"• 关闭阴影投射\n" +
+					$"• {matInfo}\n\n" +
+					"已存在 _OL 对象的将被跳过。",
+					"确认创建", "取消"))
+				{
+					CreateOutlineModels();
+				}
+			}
+			// GUI.backgroundColor = Color.white;
+			// 描边材质球拖入接口
+			EditorGUIUtility.labelWidth = 58;
+			Material newMat = (Material)EditorGUILayout.ObjectField("描边材质", mOutlineMaterial, typeof(Material), false, GUILayout.Width(230), GUILayout.Height(25));
+			if (newMat != mOutlineMaterial)
+				mOutlineMaterial = newMat;
+			EditorGUIUtility.labelWidth = 0;
+			// 赋予材质按钮
+			GUI.backgroundColor = Color.green;
+			if (GUILayout.Button(new GUIContent("←", "将描边材质赋予当前选中的模型"), GUILayout.Width(25), GUILayout.Height(25)))
+			{
+				ApplyOutlineMaterialToSelection();
+			}
+			GUI.backgroundColor = Color.white;
+			GUILayout.EndHorizontal();
+			GUILayout.BeginHorizontal();
 			mOverwrite = GUILayout.Toggle(mOverwrite, new GUIContent("覆盖","生成平滑网格直接覆盖原Mesh"), GUILayout.Width(45));
 			if (GUILayout.Button(mMeshes.Count == 1 ? "生成平滑网格" : "批量生成平滑网格", GUILayout.Height(30)))
 			{
@@ -166,6 +228,19 @@ public class SmoothedNormalsUtility : EditorWindow
 					EditorUtility.ClearProgressBar();
 				}
 			}
+			if (GUILayout.Button(new GUIContent("统一法线",
+				"将选中对象的 Mesh 法线重新计算为统一平滑法线。\n\n" +
+				"原理：相同位置的顶点共享同一个平均法线方向，\n" +
+				"消除硬边，使整个模型表面法线连续平滑。\n\n" +
+				"适用场景：\n" +
+				"• 修复导入模型的法线接缝/硬边问题\n" +
+				"• 让描边 Shader 沿统一法线方向膨胀，避免断裂\n" +
+				"• 需要全局平滑光照效果的模型\n\n" +
+				"注意：勾选「覆盖」时直接修改原 Mesh，不可撤销。"),
+				GUILayout.Height(30)))
+			{
+				UnifyMeshNormals();
+			}
 			GUI.backgroundColor = Color.cyan;
 			if (GUILayout.Button(new GUIContent("选择父对象","选择父级对象"), GUILayout.Height(30), GUILayout.Width(80)))
 			{
@@ -182,6 +257,333 @@ public class SmoothedNormalsUtility : EditorWindow
 		{
 			EditorGUILayout.HelpBox("请在场景或Project中选择 Mesh / 模型 / MeshFilter / SkinnedMeshRenderer，以生成平滑法线版本的网格。", MessageType.Info);
 			GUILayout.FlexibleSpace();
+		}
+	}
+
+	// 统一法线：将选中对象的 Mesh 法线重新计算为统一平滑法线
+	// 覆盖模式有效，不依赖后缀名筛选
+	private void UnifyMeshNormals()
+	{
+		if (mMeshes == null || mMeshes.Count == 0) return;
+
+		var confirmMsg = mMeshes.Count == 1
+			? $"确认为 [{mMeshes.Values.First().Name}] 统一法线？"
+			: $"确认批量统一 {mMeshes.Count} 个网格的法线？";
+		if (mOverwrite)
+			confirmMsg += "\n\n⚠️ 已开启「覆盖」模式，将直接修改原始 Mesh 法线，此操作不可撤销。";
+
+		if (!EditorUtility.DisplayDialog("统一法线", confirmMsg, "确认", "取消"))
+			return;
+
+		try
+		{
+			float progress = 0;
+			float total = mMeshes.Count;
+			foreach (var sm in mMeshes.Values)
+			{
+				if (sm == null || sm.mesh == null) continue;
+
+				EditorUtility.DisplayProgressBar("请稍候", "正在统一法线：" + sm.Name, progress / total);
+				progress++;
+
+				Mesh mesh = sm.mesh;
+
+				if (mOverwrite)
+				{
+					// 覆盖模式：直接重算原 Mesh 的法线
+					RecalculateUnifiedNormals(mesh);
+					string srcPath = AssetDatabase.GetAssetPath(mesh);
+					if (!string.IsNullOrEmpty(srcPath))
+					{
+						EditorUtility.SetDirty(mesh);
+					}
+				}
+				else
+				{
+					// 非覆盖模式：创建新 Mesh 副本
+					Mesh newMesh = Object.Instantiate(mesh);
+					newMesh.name = mesh.name + "_Unified";
+					RecalculateUnifiedNormals(newMesh);
+
+					string savePath = "Assets/" + mFilePath + "/";
+					if (!Directory.Exists(Application.dataPath + "/" + mFilePath))
+						Directory.CreateDirectory(Application.dataPath + "/" + mFilePath);
+					string assetPath = savePath + newMesh.name + ".asset";
+
+					Mesh existing = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
+					if (existing != null)
+					{
+						EditorUtility.CopySerialized(newMesh, existing);
+						Object.DestroyImmediate(newMesh);
+						newMesh = existing;
+					}
+					else
+					{
+						AssetDatabase.CreateAsset(newMesh, assetPath);
+					}
+
+					// 赋值回关联对象
+					if (sm.associatedObjects != null)
+					{
+						Undo.RecordObjects(sm.associatedObjects, "统一法线");
+						foreach (var o in sm.associatedObjects)
+						{
+							if (o is SkinnedMeshRenderer smr)
+								smr.sharedMesh = newMesh;
+							else if (o is MeshFilter mf)
+								mf.sharedMesh = newMesh;
+							EditorUtility.SetDirty(o);
+						}
+					}
+				}
+			}
+
+			AssetDatabase.SaveAssets();
+			ShowNotification(new GUIContent($"已统一 {mMeshes.Count} 个网格的法线"));
+
+			// 如果目标对象上有 LatticeModifier，触发 Rebuild 同步法线到变形 Mesh
+			RefreshLatticeModifiers();
+		}
+		finally
+		{
+			EditorUtility.ClearProgressBar();
+		}
+	}
+
+	// 刷新场景中关联的 LatticeModifier，使其重建变形 Mesh 以同步最新法线
+	private void RefreshLatticeModifiers()
+	{
+		foreach (Object obj in Selection.objects)
+		{
+			if (!(obj is GameObject go)) continue;
+			// 检查自身及父级是否有 LatticeModifier
+			var lattices = go.GetComponentsInParent<LatticeModifier>(true);
+			foreach (var lat in lattices)
+			{
+				if (lat != null && lat.IsInitialized)
+				{
+					lat.RebuildDeformMeshes();
+					lat.MarkDirty();
+					lat.ApplyDeformation();
+				}
+			}
+			// 也检查同级的 LatticeModifier（晶格可能挂在同级对象上）
+			if (go.transform.parent != null)
+			{
+				var siblingLattices = go.transform.parent.GetComponentsInChildren<LatticeModifier>(true);
+				foreach (var lat in siblingLattices)
+				{
+					if (lat != null && lat.IsInitialized)
+					{
+						lat.RebuildDeformMeshes();
+						lat.MarkDirty();
+						lat.ApplyDeformation();
+					}
+				}
+			}
+		}
+	}
+
+	// 重新计算统一法线：相同位置的顶点共享同一个平均法线
+	private static void RecalculateUnifiedNormals(Mesh mesh)
+	{
+		Vector3[] vertices = mesh.vertices;
+		Vector3[] normals = mesh.normals;
+
+		if (normals == null || normals.Length != vertices.Length)
+		{
+			mesh.RecalculateNormals();
+			normals = mesh.normals;
+		}
+
+		// 按顶点位置聚合法线
+		var normalHash = new Dictionary<Vector3, Vector3>();
+		for (int i = 0; i < vertices.Length; i++)
+		{
+			if (!normalHash.ContainsKey(vertices[i]))
+				normalHash[vertices[i]] = normals[i];
+			else
+				normalHash[vertices[i]] = (normalHash[vertices[i]] + normals[i]).normalized;
+		}
+
+		// 写回统一法线
+		for (int i = 0; i < vertices.Length; i++)
+		{
+			normals[i] = normalHash[vertices[i]];
+		}
+
+		mesh.normals = normals;
+	}
+
+	// 将描边材质赋予当前选中的模型对象
+	private void ApplyOutlineMaterialToSelection()
+	{
+		if (mOutlineMaterial == null)
+		{
+			ShowNotification(new GUIContent("请先指定描边材质"));
+			return;
+		}
+
+		int count = 0;
+		foreach (Object obj in Selection.objects)
+		{
+			if (!(obj is GameObject go)) continue;
+			var renderers = go.GetComponentsInChildren<Renderer>(true);
+			foreach (var r in renderers)
+			{
+				Undo.RecordObject(r, "赋予描边材质");
+				r.sharedMaterials = new Material[] { mOutlineMaterial };
+				EditorUtility.SetDirty(r);
+				count++;
+			}
+		}
+
+		if (count > 0)
+			ShowNotification(new GUIContent($"已为 {count} 个渲染器赋予描边材质"));
+		else
+			ShowNotification(new GUIContent("未找到可赋材质的渲染器"));
+	}
+
+	// 为选中对象创建 _OL 描边子模型：克隆网格渲染器对象，添加 _OL 后缀，并自动执行平滑网格处理
+	private void CreateOutlineModels()
+	{
+		var createdObjects = new List<GameObject>();
+
+		foreach (Object obj in Selection.objects)
+		{
+			if (!(obj is GameObject go)) continue;
+
+			// 收集该对象下所有带网格的子对象（含自身）
+			var renderers = go.GetComponentsInChildren<Transform>(true);
+			foreach (Transform t in renderers)
+			{
+				// 跳过已经是 _OL 的对象
+				if (t.name.EndsWith("_OL", StringComparison.OrdinalIgnoreCase))
+					continue;
+
+				// 检查是否有 MeshRenderer/SkinnedMeshRenderer
+				Mesh mesh = null;
+				MeshFilter mf = t.GetComponent<MeshFilter>();
+				SkinnedMeshRenderer smr = t.GetComponent<SkinnedMeshRenderer>();
+				if (mf == null && smr == null) continue;
+				mesh = mf != null ? mf.sharedMesh : smr.sharedMesh;
+				if (mesh == null) continue;
+
+				// 检查同级是否已存在对应的 _OL 对象
+				string olName = t.name + "_OL";
+				Transform existingOL = null;
+				if (t.parent != null)
+					existingOL = t.parent.Find(olName);
+				else
+				{
+					// 根对象情况，在同层级查找
+					var scene = t.gameObject.scene;
+					foreach (var root in scene.GetRootGameObjects())
+					{
+						if (root.name == olName)
+						{
+							existingOL = root.transform;
+							break;
+						}
+					}
+				}
+
+				if (existingOL != null) continue; // 已存在则跳过
+
+				// 克隆对象
+				GameObject clone = Object.Instantiate(t.gameObject, t.parent);
+				clone.name = olName;
+				clone.transform.SetSiblingIndex(t.GetSiblingIndex() + 1);
+				clone.transform.localPosition = t.localPosition;
+				clone.transform.localRotation = t.localRotation;
+				clone.transform.localScale = t.localScale;
+				Undo.RegisterCreatedObjectUndo(clone, "创建描边模型 " + olName);
+
+				// 移除克隆对象上不需要的子对象（只保留渲染相关组件）
+				// 移除所有子物体，描边模型只需要自身网格
+				for (int i = clone.transform.childCount - 1; i >= 0; i--)
+					Object.DestroyImmediate(clone.transform.GetChild(i).gameObject);
+
+				// 清理克隆对象上的脚本组件，只保留 Transform 和渲染相关组件
+				var components = clone.GetComponents<Component>();
+				for (int i = components.Length - 1; i >= 0; i--)
+				{
+					var comp = components[i];
+					if (comp == null) continue;
+					if (comp is Transform) continue;
+					if (comp is MeshFilter) continue;
+					if (comp is MeshRenderer) continue;
+					if (comp is SkinnedMeshRenderer) continue;
+					Object.DestroyImmediate(comp);
+				}
+
+				// 描边模型不需要投射阴影
+				var renderer = clone.GetComponent<Renderer>();
+				if (renderer != null)
+				{
+					renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+					// 赋予描边材质球
+					if (mOutlineMaterial != null)
+						renderer.sharedMaterials = new Material[] { mOutlineMaterial };
+				}
+
+				// 对克隆的 Mesh 执行平滑网格处理
+				Mesh cloneMesh = null;
+				MeshFilter cloneMF = clone.GetComponent<MeshFilter>();
+				SkinnedMeshRenderer cloneSMR = clone.GetComponent<SkinnedMeshRenderer>();
+				if (cloneMF != null)
+					cloneMesh = cloneMF.sharedMesh;
+				else if (cloneSMR != null)
+					cloneMesh = cloneSMR.sharedMesh;
+
+				if (cloneMesh != null)
+				{
+					// 创建新 Mesh 副本并执行平滑法线
+					Mesh smoothed = CreateSmoothedNormalsMesh(cloneMesh, saveChannel, true);
+					if (smoothed != null)
+					{
+						smoothed.name = cloneMesh.name + "_OL";
+
+						// 保存为资产
+						string savePath = "Assets/" + mFilePath + "/";
+						if (!Directory.Exists(Application.dataPath + "/" + mFilePath))
+							Directory.CreateDirectory(Application.dataPath + "/" + mFilePath);
+						string assetPath = savePath + smoothed.name + ".asset";
+
+						// 检查是否已存在同名资产
+						Mesh existing = AssetDatabase.LoadAssetAtPath<Mesh>(assetPath);
+						if (existing != null)
+						{
+							EditorUtility.CopySerialized(smoothed, existing);
+							smoothed = existing;
+						}
+						else
+						{
+							AssetDatabase.CreateAsset(smoothed, assetPath);
+						}
+
+						// 赋值回克隆对象
+						if (cloneMF != null)
+							cloneMF.sharedMesh = smoothed;
+						else if (cloneSMR != null)
+							cloneSMR.sharedMesh = smoothed;
+					}
+				}
+
+				createdObjects.Add(clone);
+			}
+		}
+
+		if (createdObjects.Count > 0)
+		{
+			AssetDatabase.SaveAssets();
+			AssetDatabase.Refresh();
+			Selection.objects = createdObjects.ToArray();
+			ShowNotification(new GUIContent($"已创建 {createdObjects.Count} 个描边模型"));
+		}
+		else
+		{
+			ShowNotification(new GUIContent("未创建新描边模型（可能已存在 _OL 对象）"));
 		}
 	}
 

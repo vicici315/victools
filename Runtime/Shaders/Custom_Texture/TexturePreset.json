@@ -1,0 +1,15 @@
+{
+  "__renderQueue": 3000,
+  "__renderMode": "Transparent",
+  "_MainTex": {"path": "Assets/GameMain/UI/UISprites/ButtonBar_1.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_Color": [1, 1, 1, 1],
+  "_Contrast": 1.57,
+  "_Brightness": 0.88,
+  "_UseAlphaClip": 0,
+  "_Cutoff": 0.575,
+  "_UseAlphaBlend": 1,
+  "_Cull": 2,
+  "_SrcBlend": 5,
+  "_DstBlend": 1,
+  "_ZWrite": 0
+}

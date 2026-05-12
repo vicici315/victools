@@ -44,6 +44,7 @@ Shader "Custom/Glass_carWindow"
         [Header(Render Settings)]
         // [Space(5)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
+        [Toggle] _ZWrite ("ZWrite", Float) = 0
     }
 
     SubShader
@@ -62,7 +63,7 @@ Shader "Custom/Glass_carWindow"
             
             // 使用预乘Alpha混合，让高光以叠加方式显示
             Blend One OneMinusSrcAlpha
-            ZWrite Off
+            ZWrite [_ZWrite]
             Cull[_Cull]
             
             HLSLPROGRAM

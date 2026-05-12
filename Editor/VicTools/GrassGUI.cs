@@ -12,12 +12,14 @@ public class GrassGUI : ShaderGUI
     private MaterialProperty tessellation;
     private MaterialProperty topColor;
     private MaterialProperty bottomColor;
+    private MaterialProperty gradientOffset;
     private MaterialProperty colorBias;
     private MaterialProperty baseMap;
     private MaterialProperty alphaCutoff;
     private MaterialProperty bladeMinHeight;
     private MaterialProperty translucentGain;
     private MaterialProperty bladeWidth;
+    private MaterialProperty bladeBottomWidth;
     private MaterialProperty bladeWidthRandom;
     private MaterialProperty bladeMinWidth;
     private MaterialProperty bladeHeight;
@@ -30,6 +32,13 @@ public class GrassGUI : ShaderGUI
     private MaterialProperty windDistortionMap;
     private MaterialProperty windFrequency;
     private MaterialProperty windStrength;
+    private MaterialProperty bladeOverlayTex;
+    private MaterialProperty bladeOverlayIntensity;
+    private MaterialProperty bladeOverlayAlphaClip;
+    private MaterialProperty useBillboard;
+    private MaterialProperty useBladeOverlay;
+    private MaterialProperty grassFadeStart;
+    private MaterialProperty grassFadeEnd;
 
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
     {
@@ -47,6 +56,8 @@ public class GrassGUI : ShaderGUI
             DrawBlade();
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
             DrawWind();
+        using (new GUILayout.VerticalScope(EditorStyles.helpBox))
+            DrawDistanceCulling();
 
         DrawRenderSettings();
     }
@@ -56,12 +67,14 @@ public class GrassGUI : ShaderGUI
         tessellation = FindProperty("_TessellationUniform", m_Properties);
         topColor = FindProperty("_TopColor", m_Properties);
         bottomColor = FindProperty("_BottomColor", m_Properties);
+        gradientOffset = FindProperty("_GradientOffset", m_Properties);
         colorBias = FindProperty("_ColorBias", m_Properties);
         baseMap = FindProperty("_BaseMap", m_Properties);
         alphaCutoff = FindProperty("_AlphaCutoff", m_Properties);
         bladeMinHeight = FindProperty("_BladeMinHeight", m_Properties);
-        translucentGain = FindProperty("_TranslucentGain", m_Properties);
+        translucentGain = FindProperty("_ShadowScale", m_Properties);
         bladeWidth = FindProperty("_BladeWidth", m_Properties);
+        bladeBottomWidth = FindProperty("_BladeBottomWidth", m_Properties);
         bladeWidthRandom = FindProperty("_BladeWidthRandom", m_Properties);
         bladeMinWidth = FindProperty("_BladeMinWidth", m_Properties);
         bladeHeight = FindProperty("_BladeHeight", m_Properties);
@@ -74,6 +87,13 @@ public class GrassGUI : ShaderGUI
         windDistortionMap = FindProperty("_WindDistortionMap", m_Properties);
         windFrequency = FindProperty("_WindFrequency", m_Properties);
         windStrength = FindProperty("_WindStrength", m_Properties);
+        bladeOverlayTex = FindProperty("_BladeOverlayTex", m_Properties);
+        bladeOverlayIntensity = FindProperty("_BladeOverlayIntensity", m_Properties);
+        bladeOverlayAlphaClip = FindProperty("_BladeOverlayAlphaClip", m_Properties);
+        useBillboard = FindProperty("_UseBillboard", m_Properties);
+        useBladeOverlay = FindProperty("_UseBladeOverlay", m_Properties);
+        grassFadeStart = FindProperty("_GrassFadeStart", m_Properties);
+        grassFadeEnd = FindProperty("_GrassFadeEnd", m_Properties);
     }
 
     private void DrawGlobalSettings()
@@ -86,11 +106,153 @@ public class GrassGUI : ShaderGUI
             EditorApplication.delayCall += SavePreset;
 
         GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f);
-        if (GUILayout.Button("读档", GUILayout.Width(50)))
-            EditorApplication.delayCall += LoadPreset;
+        if (GUILayout.Button("读档 ▾", GUILayout.Width(55)))
+            ShowLoadDropdown();
+
+        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
+        if (GUILayout.Button("预设 ▾", GUILayout.Width(55)))
+            ShowPresetDropdown();
 
         GUI.backgroundColor = Color.white;
         EditorGUILayout.EndHorizontal();
+    }
+
+    private void ShowLoadDropdown()
+    {
+        Material mat = m_MaterialEditor.target as Material;
+        if (mat == null || mat.shader == null) return;
+
+        string shaderName = mat.shader.name.Replace("/", "_");
+        string folderPath = "Library/VicTools/Grass";
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void ShowPresetDropdown()
+    {
+        Material mat = m_MaterialEditor.target as Material;
+        if (mat == null || mat.shader == null) return;
+
+        string shaderName = mat.shader.name.Replace("/", "_");
+        string folderPath = "Packages/com.youdoo.victools/Runtime/Shaders/" + shaderName;
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无预设存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void LoadPresetFile(string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+
+        string json = System.IO.File.ReadAllText(filePath);
+        bool hasTexData = json.Contains("\"path\":");
+        bool loadTex = hasTexData && EditorUtility.DisplayDialog("读取纹理",
+            "预设中包含纹理引用，是否同时读取？", "是", "否，仅参数");
+
+        Material mat = m_MaterialEditor.target as Material;
+        if (mat == null) return;
+
+        Undo.RecordObject(mat, "Load Grass Preset");
+        var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
+
+        for (int li = 0; li < lines.Length; li++)
+        {
+            string line = lines[li].Trim().TrimEnd(',');
+            int colon = line.IndexOf(':');
+            if (colon < 0) continue;
+
+            string propName = line.Substring(0, colon).Trim().Trim('"');
+            string val = line.Substring(colon + 1).Trim();
+            if (!mat.HasProperty(propName)) continue;
+
+            if (val.StartsWith("{"))
+            {
+                if (!loadTex) continue;
+                string texJson = val;
+                while (!texJson.Contains("}") && li + 1 < lines.Length) { li++; texJson += lines[li]; }
+
+                string texPath = ExtractString(texJson, "path");
+                if (!string.IsNullOrEmpty(texPath))
+                {
+                    var tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                    if (tex != null) mat.SetTexture(propName, tex);
+                }
+                else mat.SetTexture(propName, null);
+
+                float[] t = ExtractFloats(texJson, "tiling");
+                if (t != null && t.Length == 2) mat.SetTextureScale(propName, new Vector2(t[0], t[1]));
+                float[] o = ExtractFloats(texJson, "offset");
+                if (o != null && o.Length == 2) mat.SetTextureOffset(propName, new Vector2(o[0], o[1]));
+            }
+            else if (val.StartsWith("["))
+            {
+                string[] parts = val.Trim('[', ']').Split(',');
+                if (parts.Length == 4)
+                {
+                    float[] v = new float[4];
+                    for (int i = 0; i < 4; i++) float.TryParse(parts[i].Trim(), out v[i]);
+                    mat.SetColor(propName, new Color(v[0], v[1], v[2], v[3]));
+                }
+            }
+            else
+            {
+                if (float.TryParse(val, out float f)) mat.SetFloat(propName, f);
+            }
+        }
+
+        EditorUtility.SetDirty(mat);
+        if (mat.HasProperty("_UseBladeOverlay"))
+        {
+            if (mat.GetFloat("_UseBladeOverlay") > 0.5f)
+                mat.EnableKeyword("_BLADE_OVERLAY_ON");
+            else
+                mat.DisableKeyword("_BLADE_OVERLAY_ON");
+        }
+        m_MaterialEditor?.Repaint();
+        SceneView.RepaintAll();
     }
 
     private void DrawTessellation()
@@ -105,6 +267,22 @@ public class GrassGUI : ShaderGUI
         GUILayout.Label("2 ▌着色 (Shading)", EditorStyles.boldLabel);
         m_MaterialEditor.ColorProperty(topColor, "顶部颜色");
         m_MaterialEditor.ColorProperty(bottomColor, "底部颜色（与贴图混合）");
+        m_MaterialEditor.RangeProperty(gradientOffset, "渐变偏移（负=底色多, 正=顶色多）");
+
+        GUI.backgroundColor = new Color(0.65f, 0.75f, 1.0f);
+        if (GUILayout.Button("换色（对调顶部/底部颜色）", GUILayout.Height(22)))
+        {
+            Material mat = m_MaterialEditor.target as Material;
+            if (mat != null)
+            {
+                Undo.RecordObject(mat, "Swap Top/Bottom Color");
+                Color tmp = topColor.colorValue;
+                topColor.colorValue = bottomColor.colorValue;
+                bottomColor.colorValue = tmp;
+                EditorUtility.SetDirty(mat);
+            }
+        }
+        GUI.backgroundColor = Color.white;
         m_MaterialEditor.RangeProperty(colorBias, "颜色倾向（0=纯色, 1=贴图）");
         m_MaterialEditor.TexturePropertySingleLine(new GUIContent("草地颜色贴图 (RGB=颜色, A=长宽比)"), baseMap);
 
@@ -131,7 +309,7 @@ public class GrassGUI : ShaderGUI
 
         m_MaterialEditor.RangeProperty(alphaCutoff, "Alpha 剔除阈值");
         m_MaterialEditor.ShaderProperty(bladeMinHeight, "最小高度剔除");
-        m_MaterialEditor.RangeProperty(translucentGain, "半透明增益");
+        m_MaterialEditor.RangeProperty(translucentGain, "阴影强度");
         EditorGUILayout.HelpBox("Alpha < 剔除阈值 → 不生成草叶\nAlpha 越大 → 草越高越窄\n计算高度 < 最小高度 → 也不生成", MessageType.Info);
     }
 
@@ -139,6 +317,7 @@ public class GrassGUI : ShaderGUI
     {
         GUILayout.Label("3 ▌草叶形状 (Blade)", EditorStyles.boldLabel);
         m_MaterialEditor.RangeProperty(bladeWidth, "宽度");
+        m_MaterialEditor.RangeProperty(bladeBottomWidth, "底部宽度");
         m_MaterialEditor.RangeProperty(bladeWidthRandom, "宽度随机");
         m_MaterialEditor.RangeProperty(bladeMinWidth, "最小宽度");
         m_MaterialEditor.FloatProperty(bladeHeight, "高度");
@@ -148,6 +327,49 @@ public class GrassGUI : ShaderGUI
         m_MaterialEditor.RangeProperty(bladeSegments, "草体段数（1~3，3段有尖角）");
         m_MaterialEditor.RangeProperty(bendRotationRandom, "朝向随机");
         m_MaterialEditor.RangeProperty(bladeRootSink, "根部下沉");
+
+        EditorGUILayout.Space(4);
+        GUILayout.Label("草体透贴", EditorStyles.miniBoldLabel);
+
+        EditorGUI.BeginChangeCheck();
+        bool overlayOn = useBladeOverlay.floatValue > 0.5f;
+        overlayOn = EditorGUILayout.Toggle("使用草体贴图", overlayOn);
+        if (EditorGUI.EndChangeCheck())
+        {
+            useBladeOverlay.floatValue = overlayOn ? 1.0f : 0.0f;
+            foreach (var obj in m_MaterialEditor.targets)
+            {
+                Material m = obj as Material;
+                if (m == null) continue;
+                if (overlayOn)
+                    m.EnableKeyword("_BLADE_OVERLAY_ON");
+                else
+                    m.DisableKeyword("_BLADE_OVERLAY_ON");
+            }
+        }
+
+        if (overlayOn)
+        {
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("透贴纹理 (RGB=颜色, A=透明度)"), bladeOverlayTex);
+            m_MaterialEditor.RangeProperty(bladeOverlayIntensity, "纹理强度");
+            m_MaterialEditor.RangeProperty(bladeOverlayAlphaClip, "Alpha Clip 阈值");
+
+            EditorGUI.BeginChangeCheck();
+            m_MaterialEditor.ShaderProperty(useBillboard, "使用公告板");
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (useBillboard.floatValue > 0.5f)
+                {
+                    foreach (var obj in m_MaterialEditor.targets)
+                    {
+                        Material m = obj as Material;
+                        if (m != null) m.SetFloat("_Cull", 2); // Cull Back
+                        //m.SetFloat("_Cull", billboardOn ? 2 : 0); // 2=Back, 0=Off — 三元表达式，公告板开启时设为 2，否则设为 0
+                    }
+                }
+            }
+            EditorGUILayout.HelpBox("透贴纹理会平展贴到每个草体上。UV使用草体高度映射，适用于1~2段草体。\n公告板模式：面片始终面向摄像机。", MessageType.Info);
+        }
     }
 
     private void DrawWind()
@@ -158,10 +380,38 @@ public class GrassGUI : ShaderGUI
         m_MaterialEditor.FloatProperty(windStrength, "风力强度");
     }
 
+    private void DrawDistanceCulling()
+    {
+        GUILayout.Label("5 ▌距离剔除 (Distance Culling)", EditorStyles.boldLabel);
+        m_MaterialEditor.FloatProperty(grassFadeStart, "开始衰减距离");
+        m_MaterialEditor.FloatProperty(grassFadeEnd, "完全剔除距离");
+        EditorGUILayout.HelpBox("摄像机距离 < 开始衰减 → 全密度\n开始衰减 ~ 完全剔除 → 线性降低细分\n> 完全剔除 → 不生成草叶（细分为0）", MessageType.Info);
+    }
+
     private void DrawRenderSettings()
     {
         EditorGUILayout.Space(5);
-        GUILayout.Label("5 ▌渲染设置", EditorStyles.boldLabel);
+        GUILayout.Label("6 ▌渲染设置", EditorStyles.boldLabel);
+
+        // 单双面渲染选项
+        Material mat = m_MaterialEditor.target as Material;
+        if (mat != null)
+        {
+            EditorGUI.BeginChangeCheck();
+            float cullVal = mat.GetFloat("_Cull");
+            int cullInt = (int)cullVal;
+            string[] cullOptions = { "双面 (Off)", "正面剔除 (Front)", "背面剔除 (Back)" };
+            cullInt = EditorGUILayout.Popup("面渲染模式", cullInt, cullOptions);
+            if (EditorGUI.EndChangeCheck())
+            {
+                foreach (var obj in m_MaterialEditor.targets)
+                {
+                    Material m = obj as Material;
+                    if (m != null) m.SetFloat("_Cull", cullInt);
+                }
+            }
+        }
+
         m_MaterialEditor.RenderQueueField();
         m_MaterialEditor.EnableInstancingField();
         m_MaterialEditor.DoubleSidedGIField();
@@ -294,6 +544,16 @@ public class GrassGUI : ShaderGUI
         }
 
         EditorUtility.SetDirty(mat);
+
+        // 读档后同步 keyword 状态
+        if (mat.HasProperty("_UseBladeOverlay"))
+        {
+            if (mat.GetFloat("_UseBladeOverlay") > 0.5f)
+                mat.EnableKeyword("_BLADE_OVERLAY_ON");
+            else
+                mat.DisableKeyword("_BLADE_OVERLAY_ON");
+        }
+
         m_MaterialEditor?.Repaint();
         SceneView.RepaintAll();
         Debug.Log($"草地材质参数已加载: {path}");

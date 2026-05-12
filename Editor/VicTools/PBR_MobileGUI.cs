@@ -202,9 +202,9 @@ public class PBR_MobileGUI : ShaderGUI
         
         // 添加读档按钮
         GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f); // 绿色背景
-        if (GUILayout.Button(new GUIContent("读档", "从文件加载材质参数\n支持批量应用到多个选中的材质"), GUILayout.Width(50)))
+        if (GUILayout.Button(new GUIContent("读档 ▾", "从文件加载材质参数\n支持批量应用到多个选中的材质"), GUILayout.Width(55)))
         {
-            EditorApplication.delayCall += LoadMaterialParameters;
+            ShowLoadDropdown();
         }
         
         // 添加重置按钮
@@ -212,6 +212,13 @@ public class PBR_MobileGUI : ShaderGUI
         if (GUILayout.Button(new GUIContent("重置参数", "重置材质参数为Default存档或Shader默认值"), GUILayout.Width(60)))
         {
             EditorApplication.delayCall += ResetMaterialParameters;
+        }
+        
+        // 预设下拉菜单
+        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
+        if (GUILayout.Button("预设 ▾", GUILayout.Width(55)))
+        {
+            ShowPresetDropdown();
         }
         
         // 添加统一阴影按钮
@@ -462,6 +469,94 @@ public class PBR_MobileGUI : ShaderGUI
         
         return folderPath + "/" + presetName + ".json";
     }
+
+    /// 显示读档下拉菜单
+    private void ShowLoadDropdown()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Library/VicTools/PBRM/" + shaderName;
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                Material mat = material; // 捕获材质引用
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadMaterialParametersToMaterial(mat, filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    /// 显示预设下拉菜单
+    private void ShowPresetDropdown()
+    {
+        Material material = m_MaterialEditor.target as Material;
+        if (material == null || material.shader == null) return;
+
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Packages/com.youdoo.victools/Runtime/Shaders/" + shaderName;
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无预设存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                Material mat = material; // 捕获材质引用
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadMaterialParametersToMaterial(mat, filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    /// 从预设文件加载（带纹理提示）
+    private void LoadPresetFile(string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+        // 从 Selection 获取材质，避免 delayCall 后 m_MaterialEditor 失效
+        Material material = null;
+        if (m_MaterialEditor != null)
+            material = m_MaterialEditor.target as Material;
+        if (material == null)
+        {
+            // fallback: 从 Selection 获取
+            if (Selection.activeObject is Material selMat)
+                material = selMat;
+        }
+        if (material == null) return;
+        LoadMaterialParametersToMaterial(material, filePath);
+    }
     
     /// 存档材质参数（排除纹理）
     private void SaveMaterialParameters()
@@ -515,8 +610,7 @@ public class PBR_MobileGUI : ShaderGUI
             
             if (!material.HasProperty(propertyName)) continue;
             
-            // 排除纹理和基础颜色
-            if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
+            // 排除基础颜色
             if (propertyName == "_BaseColor") continue;
             
             if (!first) sb.AppendLine(",");
@@ -539,6 +633,14 @@ public class PBR_MobileGUI : ShaderGUI
                 case ShaderUtil.ShaderPropertyType.Float:
                 case ShaderUtil.ShaderPropertyType.Range:
                     sb.Append(material.GetFloat(propertyName).ToString("G9"));
+                    break;
+
+                case ShaderUtil.ShaderPropertyType.TexEnv:
+                    var tex = material.GetTexture(propertyName);
+                    string texPath = tex != null ? AssetDatabase.GetAssetPath(tex).Replace("\\", "/") : "";
+                    var tiling = material.GetTextureScale(propertyName);
+                    var offset = material.GetTextureOffset(propertyName);
+                    sb.Append($"{{\"path\": \"{texPath}\", \"tiling\": [{tiling.x}, {tiling.y}], \"offset\": [{offset.x}, {offset.y}]}}");
                     break;
             }
         }
@@ -630,59 +732,81 @@ public class PBR_MobileGUI : ShaderGUI
         
         // 读取JSON
         string json = System.IO.File.ReadAllText(filePath);
+
+        // 检测是否包含纹理数据，提示用户是否读取
+        bool hasTexData = json.Contains("\"path\":");
+        bool loadTex = hasTexData && EditorUtility.DisplayDialog("读取纹理",
+            "存档中包含纹理引用，是否同时读取？", "是", "否，仅参数");
         
         // 使用简单的JSON解析
         var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
         
-        foreach (var line in lines)
+        for (int li = 0; li < lines.Length; li++)
         {
-            if (line.Contains(":"))
+            string trimmed = lines[li].Trim().TrimEnd(',');
+            int colonIndex = trimmed.IndexOf(':');
+            if (colonIndex < 0) continue;
+
+            string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
+            string valueStr = trimmed.Substring(colonIndex + 1).Trim();
+
+            if (!material.HasProperty(propertyName)) continue;
+
+            // 排除基础颜色
+            if (propertyName == "_BaseColor") continue;
+
+            if (valueStr.StartsWith("{"))
             {
-                // 简单解析 "propertyName": value
-                string trimmed = line.Trim().TrimEnd(',');
-                int colonIndex = trimmed.IndexOf(':');
-                if (colonIndex < 0) continue;
-                
-                string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
-                string valueStr = trimmed.Substring(colonIndex + 1).Trim();
-                
-                if (!material.HasProperty(propertyName)) continue;
-                
-                // 排除基础颜色
-                if (propertyName == "_BaseColor") continue;
-                
-                // 判断值类型
-                if (valueStr.StartsWith("["))
+                // 纹理类型
+                if (!loadTex) continue;
+
+                string texJson = valueStr;
+                while (!texJson.Contains("}") && li + 1 < lines.Length) { li++; texJson += lines[li]; }
+
+                string texPath = ExtractTexString(texJson, "path");
+                if (!string.IsNullOrEmpty(texPath))
                 {
-                    // 数组类型（Color或Vector）
-                    valueStr = valueStr.Trim('[', ']');
-                    string[] parts = valueStr.Split(',');
-                    if (parts.Length == 4)
-                    {
-                        float[] values = new float[4];
-                        for (int i = 0; i < 4; i++)
-                        {
-                            float.TryParse(parts[i].Trim(), out values[i]);
-                        }
-                        
-                        // 尝试设置为Color或Vector
-                        try
-                        {
-                            material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
-                        }
-                        catch
-                        {
-                            material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
-                        }
-                    }
+                    var tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                    if (tex != null) material.SetTexture(propertyName, tex);
                 }
                 else
                 {
-                    // Float类型
-                    if (float.TryParse(valueStr, out float floatValue))
+                    material.SetTexture(propertyName, null);
+                }
+
+                float[] t = ExtractTexFloats(texJson, "tiling");
+                if (t != null && t.Length == 2) material.SetTextureScale(propertyName, new Vector2(t[0], t[1]));
+                float[] o = ExtractTexFloats(texJson, "offset");
+                if (o != null && o.Length == 2) material.SetTextureOffset(propertyName, new Vector2(o[0], o[1]));
+            }
+            else if (valueStr.StartsWith("["))
+            {
+                // 数组类型（Color或Vector）
+                string[] parts = valueStr.Trim('[', ']').Split(',');
+                if (parts.Length == 4)
+                {
+                    float[] values = new float[4];
+                    for (int i = 0; i < 4; i++)
                     {
-                        material.SetFloat(propertyName, floatValue);
+                        float.TryParse(parts[i].Trim(), out values[i]);
                     }
+                    
+                    try
+                    {
+                        material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
+                    }
+                    catch
+                    {
+                        material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                    }
+                }
+            }
+            else
+            {
+                // Float类型
+                if (float.TryParse(valueStr, out float floatValue))
+                {
+                    material.SetFloat(propertyName, floatValue);
                 }
             }
         }
@@ -692,6 +816,29 @@ public class PBR_MobileGUI : ShaderGUI
         
         // 按属性值精确同步关键字，避免重赋 shader 导致关键字被重置
         SyncMaterialKeywords(material);
+    }
+
+    private static string ExtractTexString(string json, string key)
+    {
+        int idx = json.IndexOf("\"" + key + "\":");
+        if (idx < 0) return null;
+        int s = json.IndexOf('"', idx + key.Length + 3);
+        if (s < 0) return null;
+        int e = json.IndexOf('"', s + 1);
+        return e > s ? json.Substring(s + 1, e - s - 1) : null;
+    }
+
+    private static float[] ExtractTexFloats(string json, string key)
+    {
+        int idx = json.IndexOf("\"" + key + "\":");
+        if (idx < 0) return null;
+        int s = json.IndexOf('[', idx);
+        int e = json.IndexOf(']', s);
+        if (s < 0 || e < 0) return null;
+        string[] parts = json.Substring(s + 1, e - s - 1).Split(',');
+        float[] r = new float[parts.Length];
+        for (int i = 0; i < parts.Length; i++) float.TryParse(parts[i].Trim(), out r[i]);
+        return r;
     }
     
     /// 按属性值精确同步 shader 关键字（两个 shader 共用，仅同步各自实际声明的关键字）

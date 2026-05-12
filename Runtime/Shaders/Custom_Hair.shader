@@ -3,6 +3,8 @@
 // 双 Pass：Pass1 不透明主体（完整光照）+ Pass2 半透明边缘（简化光照）
 // Custom_Hair 1.2 性能优化：Pass2 简化光照，减少纹理采样和 normalize 调用，头发进入阴影区域保留微小高光
 // Custom_Hair 2.0 使用Ramp贴图作为头发高光渐变的控制（略微提高性能）
+// Custom_Hair 2.1 添加【各向异性高光】选项控制是否计算高光
+
 Shader "Custom/Hair"
 {
     Properties
@@ -19,10 +21,10 @@ Shader "Custom/Hair"
         [Normal] _NormalMap("Normal Map", 2D) = "bump" {}
         _NormalScale("Normal Scale", Range(0, 2)) = 0.8
 
-        [Header(Anisotropic Specular)]
+        [Toggle(_USE_ANISO_SPEC)] _UseAnisoSpec("各向异性高光", Float) = 1
         _ShiftMap("Shift Map (R通道)", 2D) = "gray" {}
         _SpecRamp("Specular Ramp (横向渐变)", 2D) = "white" {}
-        _SpecRampRow("Ramp Row Select (渐变行选择)", Range(0, 1)) = 0.5
+        _SpecRampRow("Ramp Row Select (渐变行选择)", Range(0.06, 0.9)) = 0.5
         _HairDirRotate("Hair Dir Rotate", Range(-180, 180)) = -13
         _SpecIntensity("Specular Intensity", Range(0, 3)) = 0.25
         _SpecPower("Specular Sharpness", Range(1, 2)) = 1.2
@@ -87,7 +89,8 @@ Shader "Custom/Hair"
             #pragma fragment fragOpaque
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
-
+            //会生成 两个变体：无关键词（默认情况） 启用 _SHADOWS_SOFT，这是 最常用、最安全 的写法！
+            #pragma multi_compile_local _ _USE_ANISO_SPEC
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             struct Attributes
@@ -160,18 +163,19 @@ Shader "Custom/Hair"
                 // 漫反射
                 half3 diffuse = tex.rgb * mainLight.color * (NdotL * shadow);
 
-                // 各向异性高光：用 Ramp 贴图控制渐变
-                half3 T1 = ShiftT(T, N, _SpecShift + shiftTex);
-                half TdotH = dot(T1, H);
-                // cosTH 在高光峰值(T⊥H)时=0，远离时趋向1
-                // 用 1 - pow(|cosTH|, 1/power) 映射：只有峰值附近 UV 才接近 1
-                half absCos = abs(TdotH);
-                half specUV = 1.0 - exp2((1.0 / max(_SpecPower, 1.0)) * log2(max(absCos, 0.001)));
-                half3 specRamp = SAMPLE_TEXTURE2D(_SpecRamp, sampler_SpecRamp, half2(specUV, _SpecRampRow)).rgb;
-                // 遮罩：NdotL 压制背光面，NdotV 压制掠射角（发丝末端）
-                half specMask = saturate(dot(N, L)) * saturate(dot(N, V) * 3.0);
-                half specShadow = max(shadow, 0.12);
-                half3 specular = _AmbientColor.rgb * specRamp * _SpecIntensity * specShadow * specMask;
+                // 各向异性高光
+                #ifdef _USE_ANISO_SPEC
+                    half3 T1 = ShiftT(T, N, _SpecShift + shiftTex);
+                    half TdotH = dot(T1, H);
+                    half absCos = abs(TdotH);
+                    half specUV = 1.0 - exp2((1.0 / max(_SpecPower, 1.0)) * log2(max(absCos, 0.001)));
+                    half3 specRamp = SAMPLE_TEXTURE2D(_SpecRamp, sampler_SpecRamp, half2(specUV, _SpecRampRow)).rgb;
+                    half specMask = saturate(dot(N, L)) * saturate(dot(N, V) * 3.0);
+                    half specShadow = max(shadow, 0.12);
+                    half3 specular = _AmbientColor.rgb * specRamp * _SpecIntensity * specShadow * specMask;
+                #else
+                    half3 specular = half3(0, 0, 0);
+                #endif
 
                 // 环境光（阴影区域补偿）
                 half lightFactor = NdotL * shadow;
@@ -202,6 +206,7 @@ Shader "Custom/Hair"
             #pragma fragment fragTrans
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
+            #pragma multi_compile_local _ _USE_ANISO_SPEC
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
@@ -262,13 +267,17 @@ Shader "Custom/Hair"
                 // 漫反射
                 half3 diffuse = tex.rgb * mainLight.color * (NdotL * shadow);
 
-                // 高光（Ramp 采样，简化版）
-                half TdotH = dot(T, H);
-                half absCos = abs(TdotH);
-                half specUV = 1.0 - exp2((1.0 / max(_SpecPower * 0.5, 1.0)) * log2(max(absCos, 0.001)));
-                half3 specRamp = SAMPLE_TEXTURE2D(_SpecRamp, sampler_SpecRamp, half2(specUV, _SpecRampRow)).rgb;
-                half specMask = saturate(dot(N, L)) * saturate(dot(N, V) * 3.0);
-                half3 specular = specRamp * _SpecIntensity * max(shadow, 0.2) * specMask;
+                // 高光
+                #ifdef _USE_ANISO_SPEC
+                    half TdotH = dot(T, H);
+                    half absCos = abs(TdotH);
+                    half specUV = 1.0 - exp2((1.0 / max(_SpecPower * 0.5, 1.0)) * log2(max(absCos, 0.001)));
+                    half3 specRamp = SAMPLE_TEXTURE2D(_SpecRamp, sampler_SpecRamp, half2(specUV, _SpecRampRow)).rgb;
+                    half specMask = saturate(dot(N, L)) * saturate(dot(N, V) * 3.0);
+                    half3 specular = specRamp * _SpecIntensity * max(shadow, 0.2) * specMask;
+                #else
+                    half3 specular = half3(0, 0, 0);
+                #endif
 
                 // 环境光
                 half3 ambient = _AmbientColor.rgb * tex.rgb * (1.0 - NdotL * shadow);

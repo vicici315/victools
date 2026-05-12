@@ -9,6 +9,34 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.9.6
+
+- OutlineZOffset1.3 优化轮廓描边算法。
+
+  ![image-20260512104841829](./README.assets/image-20260512104841829.png)
+
+- Custom_Hair 2.1 添加【各向异性高光】选项控制是否计算高光。
+
+- SmoothMeshNormal_1.4 添加<创建描边模型>按钮，自动克隆 _OL 描边对象并生成平滑网格，添加描边材质预置接口。
+
+  ![image-20260509145733710](./README.assets/image-20260509145733710.png)
+
+- 【场景工具 v2.20】添加晶格对象快速选择按钮，按住Ctrl点击可以同时选中物体与晶格对象。
+
+  ![image-20260511155342859](./README.assets/image-20260511155342859.png)
+
+- LatticeModifier 2.11 修复 Undo 操作可能导致 Renderer 上的 Mesh 引用被恢复为 originalMesh 或 null。
+
+- Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系。
+
+  ![image-20260512105012778](./README.assets/image-20260512105012778.png)
+
+- Grass 1.7 添加草体透贴纹理参数（支持公告板），UV使用两段草体高度平展，适用于1~2段草体，添加剔除方式选项。
+
+  ![image-20260512105312233](./README.assets/image-20260512105312233.png)
+
+
+
 ### 版本 2.9.5
 
 - [Material] 菜单添加新材质【Custom_Toon（卡通材质）、Custom_Hair（头发材质）】。
@@ -17,7 +45,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260507110351071](./README.assets/image-20260507110351071.png)
 
-- CustomHair 1.0(头发材质) 双层各向异性高光。
+- CustomHair 2.0(头发材质) 改进使用Ramp渐变贴图作为头发高光渐变的控制（略微提高性能）。
 
   ![image-20260507110543705](./README.assets/image-20260507110543705.png)
 

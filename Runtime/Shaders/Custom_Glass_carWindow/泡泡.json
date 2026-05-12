@@ -1,0 +1,23 @@
+{
+  "_BaseColor": [0.6462264, 1, 0.9601471, 0],
+  "_Transparency": 0.749,
+  "_Smoothness": 1,
+  "_SpecularStrength": 0.87,
+  "_UseNormalMap": 1,
+  "_BumpMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/noise nm.png", "tiling": [4, 2], "offset": [0.55, 0]},
+  "_BumpScale": 0.137,
+  "_UseReflection": 1,
+  "_SphericalReflectionMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/HDR_reflaction10.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_ReflectionScale": 6,
+  "_ReflectionOffset": 0.5,
+  "_ReflectionBlur": 6,
+  "_FresnelPower": 1,
+  "_FresnelBias": 0.047,
+  "_FresnelScale": 0.82,
+  "_UseFresnelRamp": 1,
+  "_FresnelRampTexture": {"path": "Packages/com.youdoo.victools/Runtime/Testures/ramp.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_FresnelRampRow": 0.75,
+  "_FresnelRampIntensity": 0.74,
+  "_Cull": 2,
+  "_ZWrite": 1
+}

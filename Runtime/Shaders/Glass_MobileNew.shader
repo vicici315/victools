@@ -4,6 +4,10 @@
 // Glass_MobileNew.v2.3 添加顶点颜色R通道作为顶点位移蒙版，约束水流起始位置的偏移
 // Glass_MobileNew.v2.4 修复法线控制顶点位移跳动问题
 // Glass_MobileNew.v2.5 优化场景模糊：_SceneBlurStrength 为 0 时跳过 9 点采样，直接单次采样
+// Glass_MobileNew.v2.6 基础颜色Alpha控制颜色与场景色占比，添加基础光照模型（实现果冻效果）
+// Glass_MobileNew.v2.7 添加接受阴影（传入 shadowCoord，支持软阴影）
+// Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系
+
 Shader "Custom/Glass_MobileNew"
 {
     Properties
@@ -11,12 +15,16 @@ Shader "Custom/Glass_MobileNew"
         [Header(Glass Properties)]
         // [Space(5)]
         [MainColor]_BaseColor ("Base Color", Color) = (1,1,1,0.5)
+        [MainTexture]_BaseMap ("Base Map", 2D) = "white" {}
         _Transparency ("Global Transparency", Range(0, 1)) = 0.98
         
         // [Header(Specular)]
         _Smoothness ("Smoothness", Range(0.01, 1)) = 0.88
-        _SpecularStrength ("Specular Strength", Range(0, 1)) = 0.8
+        _SpecularStrength ("Specular Strength", Range(0, 3)) = 0.8
         _SceneBlurStrength ("Scene Blur Strength", Range(0, 1)) = 1
+        [Header(Base Lighting)]
+        _BaseLightStrength ("Base Light Strength", Range(0, 2)) = 0.5
+        _ShadowStrength ("Shadow Strength", Range(0, 1)) = 0.39
         
         // [Header(Distortion)]
         [Toggle(_USENORMALMAP)] _UseNormalMap ("Use Normal Map", Float) = 0
@@ -25,7 +33,8 @@ Shader "Custom/Glass_MobileNew"
         // 顶点变形：用法线贴图的 RG 通道驱动顶点沿法线方向偏移
         // Normal Map 的 Offset XY 同时作为 UV 游走速度（值为0时不做动画）
         [Toggle(_USEVERTEXDEFORM)] _UseVertexDeform ("Vertex Deform", Float) = 0
-        _VertexDeformStrength ("Deform Strength", Range(0, 1.5)) = 0.2
+        _VertexDeformStrength ("Deform Strength", Range(0, 1.0)) = 0.02
+        [Toggle(_DEFORM_USE_UV)] _DeformUseUV ("Deform Use UV (Skinned)", Float) = 0
         
         // [Header(Refraction)]
         [Toggle(_USEREFRACTION)] _UseRefraction ("Use Refraction", Float) = 1
@@ -42,8 +51,15 @@ Shader "Custom/Glass_MobileNew"
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.072
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.2
         
+        
         [Header(Render Settings)]
+        [KeywordEnum(Transparent, Opaque)] _RenderMode ("Render Mode", Float) = 0
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
+        
+        // Hidden properties controlled by GUI
+        [HideInInspector] _SrcBlend ("Src Blend", Float) = 1   // One
+        [HideInInspector] _DstBlend ("Dst Blend", Float) = 10  // OneMinusSrcAlpha
+        [HideInInspector] _ZWrite ("ZWrite", Float) = 0        // Off
     }
 
     SubShader
@@ -52,19 +68,19 @@ Shader "Custom/Glass_MobileNew"
         {
             "RenderPipeline"="UniversalPipeline"
             "RenderType"="Transparent"
-            "Queue"="Transparent+10"  // 使用更高的队列值确保正确排序
-            "IgnoreProjector"="True"   // 忽略投影器，避免阴影投射
+            "Queue"="Transparent+10"
+            "IgnoreProjector"="True"
             "DisableBatching"="False"
         }
 
-        // 主渲染Pass（只保留基本功能）
+        // 主渲染Pass
         Pass
         {
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
             
-            Blend One OneMinusSrcAlpha  // 标准透明混合模式
-            ZWrite Off  // 透明对象不写入深度
+            Blend [_SrcBlend] [_DstBlend]
+            ZWrite [_ZWrite]
             Cull [_Cull]
             ZTest LEqual
 
@@ -73,15 +89,17 @@ Shader "Custom/Glass_MobileNew"
             #pragma fragment frag
             
             // URP关键多编译指令（简化版）
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS
-            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
+            #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE _MAIN_LIGHT_SHADOWS_SCREEN
+            #pragma multi_compile _ _SHADOWS_SOFT
             #pragma multi_compile_fog
             
             // 基础功能开关（按性能影响排序）
+            #pragma shader_feature_local _RENDERMODE_TRANSPARENT _RENDERMODE_OPAQUE
             #pragma shader_feature_local _USENORMALMAP
             #pragma shader_feature_local _USEREFRACTION
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _USEVERTEXDEFORM
+            #pragma multi_compile_local _ _DEFORM_USE_UV
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -131,6 +149,8 @@ Shader "Custom/Glass_MobileNew"
             }
             
             // 纹理声明应该始终存在，不要放在条件编译中
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
             TEXTURE2D(_BumpMap);
             SAMPLER(sampler_BumpMap);
             TEXTURE2D(_SphericalReflectionMap);
@@ -173,6 +193,7 @@ Shader "Custom/Glass_MobileNew"
             {
                 float4 positionCS : SV_POSITION;
                 float2 uv : TEXCOORD0;
+                float2 baseMapUV : TEXCOORD9;
                 float3 normalWS : TEXCOORD1;
                 float3 viewDirWS : TEXCOORD2;
                 float4 screenPos : TEXCOORD3;
@@ -180,7 +201,8 @@ Shader "Custom/Glass_MobileNew"
                 float3 bitangentWS : TEXCOORD5;
                 float fogFactor : TEXCOORD6;
                 float3 positionWS : TEXCOORD7;
-                float4 objectCenterScreenPos : TEXCOORD8; // 物体中心裁剪空间坐标，用于径向扭曲
+                float4 objectCenterScreenPos : TEXCOORD8;
+                float4 shadowCoord : TEXCOORD10;
             };
 
             CBUFFER_START(UnityPerMaterial)
@@ -196,7 +218,9 @@ Shader "Custom/Glass_MobileNew"
                 half _FresnelPower;
                 half _FresnelBias;
                 half _FresnelScale;
+                half _BaseLightStrength;
                 half _ShadowStrength;
+                float4 _BaseMap_ST;
                 float4 _BumpMap_ST;
                 half _VertexDeformStrength;
             CBUFFER_END
@@ -225,8 +249,9 @@ Shader "Custom/Glass_MobileNew"
                 // 高光受菲涅尔影响（边缘更亮）
                 half fresnelBoost = lerp(0.5, 0.8, fresnel);
                 
-                // 玻璃材质的高光
-                return lightColor * specular * shadowAttenuation * fresnelBoost;
+                // 玻璃材质的高光（阴影处保留 10% 高光，避免完全消失）
+                half shadowSpec = lerp(0.061, 1.0, shadowAttenuation);
+                return lightColor * specular * shadowSpec * fresnelBoost;
             }
 
             // 计算菲涅尔效果（与Glass_carWindow.shader保持一致）
@@ -246,22 +271,24 @@ Shader "Custom/Glass_MobileNew"
                     // 计算游走速度（Offset.xy）
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
 
-                    // 用世界空间 XZ 坐标替代 UV 采样，解决 UV 接缝处顶点断裂问题
-                    // 相同世界位置的顶点无论 UV 如何都采样到相同值
-                    float3 worldPosForDeform = TransformObjectToWorld(IN.positionOS.xyz);
-                    float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
-                    // Offset.xy 作为流动速度，同时控制 UV 滚动和顶点抖动频率
-                    // 速度越大，UV 滚动越快，顶点抖动频率也越高
-                    float scrollSpeed = length(deformScrollSpeed);
-                    if (scrollSpeed > 0.0001)
-                        deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+                    float2 deformUV;
+                    #ifdef _DEFORM_USE_UV
+                        // UV 模式：使用模型 UV 坐标采样，蒙皮动画时稳定不跳动
+                        // 完全忽略时间滚动，采样位置绝对固定
+                        deformUV = IN.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                    #else
+                        // 世界坐标模式：用世界空间 XZ 坐标采样，解决 UV 接缝断裂
+                        float3 worldPosForDeform = TransformObjectToWorld(IN.positionOS.xyz);
+                        deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
+                        // Offset.xy 作为流动速度
+                        float scrollSpeed = length(deformScrollSpeed);
+                        if (scrollSpeed > 0.0001)
+                            deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+                    #endif
 
                     float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
                     float3 normalTS = UnpackNormal(normalTex);
-                    // 用 normalTS.z（切线空间法线 Z 分量）作为高度值
-                    // normalTS.z 范围 [0,1]，平坦区域接近 1，凹凸区域偏离 1
-                    // (1 - normalTS.z) 将平坦区域映射为 0，凹凸越强值越大，天然连续无跳变
-                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * IN.vertexColor.r;
+                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
                     IN.positionOS.xyz += normalize(IN.normalOS) * deformAmount;
                 #endif
 
@@ -272,6 +299,7 @@ Shader "Custom/Glass_MobileNew"
                 OUT.positionWS = vertexInput.positionWS;
                 OUT.screenPos = ComputeScreenPos(OUT.positionCS);
                 OUT.uv = TRANSFORM_TEX(IN.uv, _BumpMap);
+                OUT.baseMapUV = TRANSFORM_TEX(IN.uv, _BaseMap);
                 
                 // 在顶点阶段计算物体中心的屏幕坐标，保证透视除法与 screenPos 一致
                 float3 objectCenterWS = TransformObjectToWorld(float3(0, 0, 0));
@@ -283,15 +311,30 @@ Shader "Custom/Glass_MobileNew"
                 OUT.bitangentWS = normalInput.bitangentWS;
                 OUT.viewDirWS = GetCameraPositionWS() - vertexInput.positionWS;
                 OUT.fogFactor = ComputeFogFactor(vertexInput.positionCS.z);
+                OUT.shadowCoord = TransformWorldToShadowCoord(vertexInput.positionWS);
                 
                 return OUT;
             }
 
-            half4 frag(Varyings IN) : SV_Target
+            half4 frag(Varyings IN, half facing : VFACE) : SV_Target
             {
                 float3 normalWS = normalize(IN.normalWS);
+                // 背面片元翻转法线，避免背面高光异常
+                normalWS *= (facing > 0) ? 1.0 : -1.0;
                 float3 viewDirWS = normalize(IN.viewDirWS);
                 float2 screenUV = IN.screenPos.xy / IN.screenPos.w;
+
+                // 光照计算（优化版）
+                Light mainLight = GetMainLight(IN.shadowCoord);
+                // 优化：预计算光照强度，避免重复计算
+                half3 lightColor = mainLight.color * mainLight.distanceAttenuation;
+                half shadowAttenuation = lerp(1.0 - _ShadowStrength, 1.0, mainLight.shadowAttenuation);
+                half shadowAttenuationE = lerp(1, shadowAttenuation, _BaseColor.a);
+                
+                // 采样主纹理，用全局透明度控制主纹理与基础颜色的占比
+                // _Transparency=1 偏向基础颜色，_Transparency=0 偏向主纹理
+                half4 baseMapColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.baseMapUV);
+                half4 baseColor = half4(lerp(_BaseColor.rgb, baseMapColor.rgb*_BaseColor.rgb, _Transparency), _BaseColor.a);
                 
                 // 法线贴图采样（可选）
                 half3 normalTS = half3(0, 0, 1); // 默认法线
@@ -346,27 +389,38 @@ Shader "Custom/Glass_MobileNew"
                 // _Smoothness: 0 = 粗糙（最大模糊），1 = 光滑（无模糊）
                 // _SceneBlurStrength 或 _Smoothness 任一为极值时，直接单次采样跳过 9 点模糊
                 half3 sceneColor;
-                float blurAmount = (1.0 - _Smoothness) * _SceneBlurStrength * 6.0;
-                if (blurAmount < 0.01)
-                {
-                    sceneColor = SampleSceneColor(finalScreenUV).rgb;
-                }
-                else
-                {
-                    sceneColor = SampleSceneColorBlurred(finalScreenUV, blurAmount);
-                }
+                #ifdef _RENDERMODE_OPAQUE
+                    // 不透明模式不采样场景颜色，直接使用基础颜色
+                    sceneColor = baseColor.rgb;
+                #else
+                    float blurAmount = (1.0 - _Smoothness) * _SceneBlurStrength * 6.0;
+                    if (blurAmount < 0.01)
+                    {
+                        sceneColor = SampleSceneColor(finalScreenUV).rgb;
+                    }
+                    else
+                    {
+                        sceneColor = SampleSceneColorBlurred(finalScreenUV, blurAmount);
+                    }
+                #endif
                 
-                // 光照计算（优化版）
-                Light mainLight = GetMainLight();
+                // 高光计算：使用 NdotV 抑制掠射角/背面观察时的异常高亮
+                half NdotV = saturate(dot(normalWS, viewDirWS));
+                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) * NdotV * _SpecularStrength;
                 
-                // 优化：预计算光照强度，避免重复计算
-                half3 lightColor = mainLight.color * mainLight.distanceAttenuation;
-                half shadowAttenuation = mainLight.shadowAttenuation;
-                
-                half3 specular = FastSpecular(normalWS, mainLight.direction, viewDirWS, lightColor, shadowAttenuation, fresnel) * (fresnel+0.12) * _SpecularStrength;
+                // 基础光照模型：NdotL 漫反射，受法线贴图和菲涅尔影响
+                // 基础光照模型：NdotL 漫反射，菲涅尔边缘衰减避免边缘过亮
+                half NdotL = saturate(dot(normalWS, mainLight.direction));
+                half3 baseLighting = lightColor * NdotL * shadowAttenuation * _BaseLightStrength * (1.0 - fresnel);
                 
                 // 优化：直接计算最终玻璃基础颜色
-                half3 glassBaseColor = lerp(_BaseColor.rgb * sceneColor, sceneColor, fresnel*0.8);
+                // baseColor.a 控制基础颜色与场景颜色的占比：a=1 偏向基础颜色，a=0 偏向场景颜色
+                half3 tintedScene = lerp(sceneColor * baseColor.rgb, baseColor.rgb * shadowAttenuationE, baseColor.a);
+                // 基础光照叠加到固有色上
+                half3 litBaseColor = tintedScene + baseLighting * baseColor.rgb;
+                // 菲涅尔边缘混合：边缘处过渡到 sceneColor，不叠加额外光照
+                half3 edgeColor = sceneColor;
+                half3 glassBaseColor = lerp(litBaseColor, edgeColor, fresnel * 0.8);
                 
                 // 反射计算（优化版）
                 half3 reflectionColor = half3(0, 0, 0);
@@ -397,7 +451,11 @@ Shader "Custom/Glass_MobileNew"
                 half baseAlpha = lerp(_Transparency, 1, fresnel);
                 half finalAlpha = saturate(baseAlpha + specularLuminance) * _Transparency;
                 
-                return half4(finalColor, finalAlpha);
+                #ifdef _RENDERMODE_OPAQUE
+                    return half4(finalColor, 1);
+                #else
+                    return half4(finalColor, finalAlpha);
+                #endif
             }
             ENDHLSL
         }
@@ -418,6 +476,7 @@ Shader "Custom/Glass_MobileNew"
             #pragma fragment frag
 
             #pragma shader_feature_local _USEVERTEXDEFORM
+            #pragma multi_compile_local _ _DEFORM_USE_UV
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
@@ -428,6 +487,21 @@ Shader "Custom/Glass_MobileNew"
             SAMPLER(sampler_BumpMap);
 
             CBUFFER_START(UnityPerMaterial)
+                half4 _BaseColor;
+                half _Transparency;
+                half _Smoothness;
+                half _SpecularStrength;
+                half _SceneBlurStrength;
+                half _BumpScale;
+                half _RefractionStrength;
+                half _ReflectionScale;
+                half _ReflectionBlur;
+                half _FresnelPower;
+                half _FresnelBias;
+                half _FresnelScale;
+                half _BaseLightStrength;
+                half _ShadowStrength;
+                float4 _BaseMap_ST;
                 float4 _BumpMap_ST;
                 half _VertexDeformStrength;
             CBUFFER_END
@@ -456,14 +530,19 @@ Shader "Custom/Glass_MobileNew"
                 // ── 与 ForwardLit Pass 相同的顶点位移 ──
                 #ifdef _USEVERTEXDEFORM
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
-                    float3 worldPosForDeform = TransformObjectToWorld(input.positionOS.xyz);
-                    float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
-                    float scrollSpeed = length(deformScrollSpeed);
-                    if (scrollSpeed > 0.0001)
-                        deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+                    float2 deformUV;
+                    #ifdef _DEFORM_USE_UV
+                        deformUV = input.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                    #else
+                        float3 worldPosForDeform = TransformObjectToWorld(input.positionOS.xyz);
+                        deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
+                        float scrollSpeed = length(deformScrollSpeed);
+                        if (scrollSpeed > 0.0001)
+                            deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+                    #endif
                     float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
                     float3 normalTS = UnpackNormal(normalTex);
-                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * input.vertexColor.r;
+                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * input.vertexColor.r;
                     input.positionOS.xyz += normalize(input.normalOS) * deformAmount;
                 #endif
 

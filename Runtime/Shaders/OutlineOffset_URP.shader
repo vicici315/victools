@@ -1,4 +1,6 @@
-// OutlineZOffset1.1 HLSL版本，去除不需要pass
+// OutlineZOffset1.2 HLSL版本，优化描边深度偏移算法
+// OutlineZOffset1.3 优化轮廓描边算法
+
 Shader "Custom/Outline/OutlineZOffset"
 {
     Properties
@@ -13,8 +15,7 @@ Shader "Custom/Outline/OutlineZOffset"
         [KeywordEnum(Object,World,View,Clip)]_OutlineSpace ("Space", int) = 0
         _outline_color("outline color", Color) = (0.0, 0.0, 0.0, 0.0)
         _OutlineWidth("Width", Range(0, 0.2)) = 0.02
-        _OutlineOffsetFactor ("Offset Factor", float) = 50
-        _OutlineOffsetUnits ("Offset Units", float) = 1
+        _OutlineZOffset("Z Offset", Range(0, 4)) = 1
     }
     SubShader
     {
@@ -23,7 +24,6 @@ Shader "Custom/Outline/OutlineZOffset"
         Pass
         {
             Cull Front
-            Offset [_OutlineOffsetFactor],[_OutlineOffsetUnits]
 
             HLSLPROGRAM
             #pragma vertex vert
@@ -38,8 +38,7 @@ Shader "Custom/Outline/OutlineZOffset"
             CBUFFER_START(UnityPerMaterial)
                 float _OutlineWidth;
                 float4 _outline_color;
-                float _OutlineOffsetFactor;
-                float _OutlineOffsetUnits;
+                float _OutlineZOffset;
             CBUFFER_END
 
             float3 UnpackNormalRG(float2 packedNormal)
@@ -93,6 +92,11 @@ Shader "Custom/Outline/OutlineZOffset"
                 positionOS.xyz += normalOS * _OutlineWidth;
                 positionCS = TransformObjectToHClip(positionOS.xyz);
             #endif
+
+                // 在 Clip Space 中将描边顶点的 Z 向近平面偏移，避免被相邻模型遮挡
+                // 除以 far plane 归一化，使参数在 0~100 范围内线性可控，不会过于敏感
+                positionCS.z -= _OutlineZOffset / _ProjectionParams.z * positionCS.w;
+
                 return positionCS;
             }
 

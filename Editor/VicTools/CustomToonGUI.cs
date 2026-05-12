@@ -77,14 +77,131 @@ public class CustomToonGUI : ShaderGUI
         GUI.backgroundColor = new Color(0.5f, 0.9f, 0.6f);
         bool doSave = GUILayout.Button("存档", GUILayout.Height(22));
         GUI.backgroundColor = new Color(0.5f, 0.75f, 1f);
-        bool doLoad = GUILayout.Button("读档", GUILayout.Height(22));
+        bool doLoad = GUILayout.Button("读档 ▾", GUILayout.Height(22));
+        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
+        bool doPreset = GUILayout.Button("预设 ▾", GUILayout.Height(22));
         GUI.backgroundColor = Color.white;
         EditorGUILayout.EndHorizontal();
         EditorGUILayout.Space(4);
 
-        // 在布局结束后再执行弹窗操作，避免 EndLayoutGroup 错误
         if (doSave) { SavePreset(material); GUIUtility.ExitGUI(); }
-        if (doLoad) { LoadPreset(material); GUIUtility.ExitGUI(); }
+        if (doLoad) { ShowLoadDropdown(material); }
+        if (doPreset) { ShowPresetDropdown(material); }
+    }
+
+    private void ShowLoadDropdown(Material material)
+    {
+        string dir = GetPresetDir(material);
+        string[] files = System.IO.Directory.GetFiles(dir, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                Material mat = material;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(mat, filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void ShowPresetDropdown(Material material)
+    {
+        string shaderName = material.shader.name.Replace("/", "_");
+        string folderPath = "Packages/com.youdoo.victools/Runtime/Shaders/" + shaderName;
+
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
+        {
+            menu.AddDisabledItem(new GUIContent("（无预设存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                Material mat = material;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(mat, filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void LoadPresetFile(Material material, string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+
+        string json = System.IO.File.ReadAllText(filePath);
+        bool hasTexData = json.Contains("\"path\":");
+        bool loadTextures = hasTexData && EditorUtility.DisplayDialog("读取纹理",
+            "存档中包含纹理引用，是否同时读取？", "是", "否，仅参数");
+
+        Undo.RecordObject(material, "加载 Toon 材质预设");
+
+        Shader shader = material.shader;
+        int count = ShaderUtil.GetPropertyCount(shader);
+
+        for (int i = 0; i < count; i++)
+        {
+            string propName = ShaderUtil.GetPropertyName(shader, i);
+            var propType = ShaderUtil.GetPropertyType(shader, i);
+            if (!material.HasProperty(propName)) continue;
+
+            switch (propType)
+            {
+                case ShaderUtil.ShaderPropertyType.Color:
+                    float[] ca = ExtractFloatArray(json, propName);
+                    if (ca != null && ca.Length >= 4)
+                        material.SetColor(propName, new Color(ca[0], ca[1], ca[2], ca[3]));
+                    break;
+                case ShaderUtil.ShaderPropertyType.Vector:
+                    float[] va = ExtractFloatArray(json, propName);
+                    if (va != null && va.Length >= 4)
+                        material.SetVector(propName, new Vector4(va[0], va[1], va[2], va[3]));
+                    break;
+                case ShaderUtil.ShaderPropertyType.Float:
+                case ShaderUtil.ShaderPropertyType.Range:
+                    float fv = ExtractFloat(json, propName, float.NaN);
+                    if (!float.IsNaN(fv)) material.SetFloat(propName, fv);
+                    break;
+                case ShaderUtil.ShaderPropertyType.TexEnv:
+                    if (!loadTextures) break;
+                    string texPath = ExtractTexPath(json, propName);
+                    if (!string.IsNullOrEmpty(texPath))
+                    {
+                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                        if (tex != null) material.SetTexture(propName, tex);
+                    }
+                    float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
+                    float[] offset = ExtractSubFloatArray(json, propName, "offset");
+                    if (tiling != null && tiling.Length >= 2)
+                        material.SetTextureScale(propName, new Vector2(tiling[0], tiling[1]));
+                    if (offset != null && offset.Length >= 2)
+                        material.SetTextureOffset(propName, new Vector2(offset[0], offset[1]));
+                    break;
+            }
+        }
+
+        EditorUtility.SetDirty(material);
     }
 
     private string GetPresetDir(Material material)
