@@ -27,6 +27,8 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - LatticeModifier 2.11 修复 Undo 操作可能导致 Renderer 上的 Mesh 引用被恢复为 originalMesh 或 null。
 
+  LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序
+
 - Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系。
 
   ![image-20260512105012778](./README.assets/image-20260512105012778.png)

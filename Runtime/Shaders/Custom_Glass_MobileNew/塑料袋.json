@@ -3,7 +3,7 @@
   "_BaseMap": {"path": "Assets/Art/ActorResource/Monster/SmallRobot_01/Textures/T_SmallRobot_01_D.tga", "tiling": [1, 1], "offset": [0, 0]},
   "_Transparency": 0.937,
   "_Smoothness": 0.358,
-  "_SpecularStrength": 1.03,
+  "_SpecularStrength": 0.65,
   "_SceneBlurStrength": 1,
   "_BaseLightStrength": 1.77,
   "_ShadowStrength": 0.39,

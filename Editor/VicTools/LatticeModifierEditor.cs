@@ -16,6 +16,7 @@
 //      Shift + Ctrl + 拖拽：框选追加（不清除已有选择）。
 // LatticeModifierEditor 2.7 优化控制点显示 // 内部控制点：蓝色
 // LatticeModifierEditor 2.8 晶格体背面控制点压暗显示
+// LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -606,11 +607,38 @@ public class LatticeModifierEditor : Editor
             if (iz < nz - 1) Handles.DrawLine(p, t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix, iy, iz + 1)]));
         }
 
-        // 相机方向，用于判断控制点是否在晶格体背面
-        Vector3 camForward = sceneView.camera.transform.forward;
+        // 相机信息，用于判断控制点是否在晶格体背面（支持透视/正交）
+        Camera cam = sceneView.camera;
+        Vector3 camPos = cam.transform.position;
+        Vector3 camForward = cam.transform.forward;
+        bool isOrtho = cam.orthographic;
 
-        for (int i = 0; i < lat.controlPoints.Length; i++)
+        // ── 按深度排序：从远到近绘制，近处控制点覆盖远处（实现遮挡效果） ──
+        int totalPts = lat.controlPoints.Length;
+        // 构建索引+深度数组，按深度从远到近排序
+        var depthOrder = new int[totalPts];
+        var depths = new float[totalPts];
+        for (int i = 0; i < totalPts; i++)
         {
+            depthOrder[i] = i;
+            Vector3 wp = t.TransformPoint(lat.controlPoints[i]);
+            // 深度 = 在相机前方向上的投影距离（正交）或到相机距离（透视）
+            depths[i] = isOrtho
+                ? Vector3.Dot(wp - camPos, camForward)
+                : (wp - camPos).sqrMagnitude;
+        }
+        // 从远到近排序（深度大的先绘制，深度小的后绘制覆盖）
+        System.Array.Sort(depths, depthOrder);
+        // Sort 默认升序（近→远），需要反转为远→近
+        System.Array.Reverse(depthOrder);
+
+        // ── 点击检测：找到屏幕上最近的控制点 ──
+        int clickedIndex = -1;
+        float closestClickDepth = float.MaxValue;
+
+        for (int order = 0; order < totalPts; order++)
+        {
+            int i = depthOrder[order];
             Vector3 worldPos = t.TransformPoint(lat.controlPoints[i]);
             float sz = HandleUtility.GetHandleSize(worldPos) * 0.05f;
 
@@ -622,6 +650,9 @@ public class LatticeModifierEditor : Editor
                                 (piy == 0 || piy == ny - 1) ||
                                 (piz == 0 || piz == nz - 1);
 
+            // 透视模式下使用逐点视线方向，正交模式下使用统一相机朝向
+            Vector3 viewDir = isOrtho ? camForward : (worldPos - camPos).normalized;
+
             // 基于控制点所在面的法线判断是否为背面
             // 一个控制点可能属于多个面（边缘/角点），只要有任一面朝向相机就不算背面
             bool isBackFacing = false;
@@ -629,12 +660,12 @@ public class LatticeModifierEditor : Editor
             {
                 bool anyFaceFront = false;
                 // 检查该点所在的每个面的法线
-                if (pix == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.left), camForward) < 0) anyFaceFront = true; }
-                if (pix == nx - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.right), camForward) < 0) anyFaceFront = true; }
-                if (piy == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.down), camForward) < 0) anyFaceFront = true; }
-                if (piy == ny - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.up), camForward) < 0) anyFaceFront = true; }
-                if (piz == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.back), camForward) < 0) anyFaceFront = true; }
-                if (piz == nz - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.forward), camForward) < 0) anyFaceFront = true; }
+                if (pix == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.left), viewDir) < 0) anyFaceFront = true; }
+                if (pix == nx - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.right), viewDir) < 0) anyFaceFront = true; }
+                if (piy == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.down), viewDir) < 0) anyFaceFront = true; }
+                if (piy == ny - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.up), viewDir) < 0) anyFaceFront = true; }
+                if (piz == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.back), viewDir) < 0) anyFaceFront = true; }
+                if (piz == nz - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.forward), viewDir) < 0) anyFaceFront = true; }
                 isBackFacing = !anyFaceFront;
             }
 
@@ -650,19 +681,33 @@ public class LatticeModifierEditor : Editor
 
             if (Handles.Button(worldPos, Quaternion.identity, drawSize, pickSize, Handles.SphereHandleCap))
             {
-                if (e.control)
+                // 记录点击，但只响应最近的（深度最小的）
+                float d = isOrtho
+                    ? Vector3.Dot(worldPos - camPos, camForward)
+                    : (worldPos - camPos).sqrMagnitude;
+                if (d < closestClickDepth)
                 {
-                    if (selPts.Contains(i)) selPts.Remove(i);
-                    else selPts.Add(i);
+                    closestClickDepth = d;
+                    clickedIndex = i;
                 }
-                else
-                {
-                    selPts.Clear();
-                    selPts.Add(i);
-                }
-                SyncSelectionToHierarchy();
-                sceneView.Repaint();
             }
+        }
+
+        // 处理点击结果（只响应最前面的控制点）
+        if (clickedIndex >= 0)
+        {
+            if (e.control)
+            {
+                if (selPts.Contains(clickedIndex)) selPts.Remove(clickedIndex);
+                else selPts.Add(clickedIndex);
+            }
+            else
+            {
+                selPts.Clear();
+                selPts.Add(clickedIndex);
+            }
+            SyncSelectionToHierarchy();
+            sceneView.Repaint();
         }
 
         // ── Shift+拖拽框选 ──
@@ -701,12 +746,12 @@ public class LatticeModifierEditor : Editor
                             Mathf.Abs(s_dragEnd.y - s_dragStart.y));
                         bool isSubtract = e.alt; // Shift+Alt = 减选
                         if (!e.control && !isSubtract) selPts.Clear();
-                        Camera cam = sceneView.camera;
+                        Camera selCam = sceneView.camera;
                         for (int i = 0; i < lat.controlPoints.Length; i++)
                         {
                             Vector3 worldPos = t.TransformPoint(lat.controlPoints[i]);
-                            Vector3 screenPos = cam.WorldToScreenPoint(worldPos);
-                            screenPos.y = cam.pixelHeight - screenPos.y;
+                            Vector3 screenPos = selCam.WorldToScreenPoint(worldPos);
+                            screenPos.y = selCam.pixelHeight - screenPos.y;
                             if (screenPos.z > 0 && selRect.Contains(new Vector2(screenPos.x, screenPos.y)))
                             {
                                 if (isSubtract)

@@ -74,6 +74,7 @@ namespace VicTools
 "【场景工具 v2.20】添加晶格对象快速选择按钮。",
 "【场景工具 v2.21】修复Gug：FindGameObjectByIdentifier 在查找场景对象时，如果保存的 InstanceID 与当前对象的 InstanceID 不匹配（domain reload、编辑器重启后 InstanceID 会变化）。",
 "LatticeModifier 2.11 修复 Undo 操作可能导致 Renderer 上的 Mesh 引用被恢复为 originalMesh 或 null。",
+"LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序。",
 "Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系。",
 "Grass 1.7 添加草体透贴纹理参数，UV使用两段草体高度平展，适用于1~2段草体，添加剔除方式选项。",
 "材质GUI脚本优化“读档 ▾”为菜单模式，所有材质GUI添加“预设 ▾”菜单列；统一所有Shader的主材质关键字名称，在读取纹理时保留现有主贴图。",

@@ -1955,15 +1955,8 @@ public class ResourceBoxFileItem
                 Debug.Log($"已清除材质 {materialToAdd.name} 的DontSaveInEditor标志");
             }
 
-            // 将材质添加到资源箱
-            _resourceBox.Add(materialToAdd);
-            
-            // 计算并保存displayName到字典
-            var parentName = GetTopLevelParentName(materialToAdd);
-            var displayName = !string.IsNullOrEmpty(parentName) 
-                ? $"<{materialToAdd.GetType().Name}> [{parentName}]← {materialToAdd.name}" 
-                : $"<{materialToAdd.GetType().Name}> {materialToAdd.name}";
-            _resourceBoxDisplayNames[materialToAdd] = displayName;
+            // 将材质按类型排序添加到资源箱
+            InsertToResourceBoxByType(materialToAdd);
             
             // 强制重绘窗口
             if (Parent)
