@@ -6,6 +6,7 @@
 // 场景工具 v2.20 添加晶格对象选择按钮
 // 场景工具 v2.21 修复Gug：FindGameObjectByIdentifier 在查找场景对象时，如果保存的 InstanceID 与当前对象的 InstanceID 不匹配（domain reload、编辑器重启后 InstanceID 会变化），就会跳过该对象，即使名称和路径完全匹配。最终导致对象找不到，变成"未知对象"。
     // 改为"InstanceID 优先匹配，名称/路径兜底"策略。当按名称/路径找到对象但 InstanceID 不同时，仍然返回该对象作为候选。加载后自动检测标识符变化并重新保存更新的 InstanceID，形成自愈。
+// 场景工具 v2.21 资源箱列表高亮显示打开的场景
 
 using System;
 using UnityEngine;
@@ -821,6 +822,9 @@ public class ResourceBoxFileItem
 
                 EditorGUILayout.BeginVertical(EditorStyles.textArea, GUILayout.ExpandWidth(true));
 
+                // 获取当前打开场景的路径，用于高亮匹配的 SceneAsset
+                string currentScenePath = SceneManager.GetActiveScene().path;
+
                 for (int i = 0; i < _resourceBox.Count; i++)
                 {
                     EditorGUILayout.BeginHorizontal();
@@ -867,6 +871,13 @@ public class ResourceBoxFileItem
                     {
                         rightAlignedLabel2.normal.textColor = Color.yellow;
                         rightAlignedLabel2.hover.textColor = Color.cyan;
+                    }
+                    // 如果是当前打开的场景，蓝色高亮
+                    else if (!isObjectNull && obj is SceneAsset &&
+                             AssetDatabase.GetAssetPath(obj) == currentScenePath)
+                    {
+                        rightAlignedLabel2.normal.textColor = new Color(0.6f, 0.4f, 1f);
+                        rightAlignedLabel2.hover.textColor = new Color(0.8f, 0.6f, 1f);
                     }
                     // 如果对象不存在，设置为灰色
                     else if (isObjectNull)
@@ -930,7 +941,8 @@ public class ResourceBoxFileItem
                             // 如果是SceneAsset类型，添加打开按钮
                             if (obj is SceneAsset)
                             {
-                                GUI.backgroundColor = Color.black;
+                                bool isCurrentScene = AssetDatabase.GetAssetPath(obj) == currentScenePath;
+                                GUI.backgroundColor = isCurrentScene ? Color.gray : Color.black;
                                 // 打开场景按钮
                                 if (GUILayout.Button("□", GUILayout.Width(20), GUILayout.ExpandWidth(false)))
                                 {
