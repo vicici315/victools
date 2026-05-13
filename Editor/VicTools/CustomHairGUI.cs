@@ -8,10 +8,22 @@ public class CustomHairGUI : ShaderGUI
     {
         Material material = materialEditor.target as Material;
 
-        DrawPresetBar(material);
+        // ── 基础（标题 + 存档/读档/预设按钮同行） ──
+        EditorGUILayout.BeginHorizontal();
+        EditorGUILayout.LabelField("基础", EditorStyles.boldLabel, GUILayout.Width(40));
+        GUILayout.FlexibleSpace();
+        GUI.backgroundColor = new Color(0.5f, 0.9f, 0.6f);
+        bool doSave = GUILayout.Button("存档", GUILayout.Height(18), GUILayout.Width(50));
+        GUI.backgroundColor = new Color(0.5f, 0.75f, 1f);
+        bool doLoad = GUILayout.Button("读档 ▾", GUILayout.Height(18), GUILayout.Width(55));
+        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
+        bool doPreset = GUILayout.Button("预设 ▾", GUILayout.Height(18), GUILayout.Width(55));
+        GUI.backgroundColor = Color.white;
+        EditorGUILayout.EndHorizontal();
 
-        // ── 基础 ──
-        EditorGUILayout.LabelField("基础", EditorStyles.boldLabel);
+        if (doSave) { SavePreset(material); GUIUtility.ExitGUI(); }
+        if (doLoad) { ShowLoadDropdown(material); }
+        if (doPreset) { ShowPresetDropdown(material); }
         materialEditor.TexturePropertySingleLine(new GUIContent("Albedo"), FindProperty("_BaseMap", properties));
         materialEditor.TextureScaleOffsetProperty(FindProperty("_BaseMap", properties));
         materialEditor.ShaderProperty(FindProperty("_Color", properties), "颜色");
@@ -33,10 +45,12 @@ public class CustomHairGUI : ShaderGUI
         if (material.IsKeywordEnabled("_USE_ANISO_SPEC"))
         {
             materialEditor.TexturePropertySingleLine(new GUIContent("Shift Map (R通道)"), FindProperty("_ShiftMap", properties));
+            materialEditor.ShaderProperty(FindProperty("_ShiftDensity", properties), "拉丝密度");
             materialEditor.TexturePropertySingleLine(new GUIContent("Specular Ramp (横向渐变)"), FindProperty("_SpecRamp", properties));
             materialEditor.ShaderProperty(FindProperty("_SpecRampRow", properties), "渐变行选择");
-            materialEditor.ShaderProperty(FindProperty("_HairDirRotate", properties), "方向旋转");
+            EditorGUILayout.Space(4);
             materialEditor.ShaderProperty(FindProperty("_SpecIntensity", properties), "高光强度");
+            materialEditor.ShaderProperty(FindProperty("_HairDirRotate", properties), "方向旋转");
             materialEditor.ShaderProperty(FindProperty("_SpecPower", properties), "高光锐度");
             materialEditor.ShaderProperty(FindProperty("_SpecShift", properties), "高光偏移");
         }
@@ -55,24 +69,6 @@ public class CustomHairGUI : ShaderGUI
     }
 
     // ═══════════════════════════════════════════
-    private void DrawPresetBar(Material material)
-    {
-        EditorGUILayout.Space(4);
-        EditorGUILayout.BeginHorizontal();
-        GUI.backgroundColor = new Color(0.5f, 0.9f, 0.6f);
-        bool doSave = GUILayout.Button("存档", GUILayout.Height(22));
-        GUI.backgroundColor = new Color(0.5f, 0.75f, 1f);
-        bool doLoad = GUILayout.Button("读档 ▾", GUILayout.Height(22));
-        GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
-        bool doPreset = GUILayout.Button("预设 ▾", GUILayout.Height(22));
-        GUI.backgroundColor = Color.white;
-        EditorGUILayout.EndHorizontal();
-        EditorGUILayout.Space(4);
-
-        if (doSave) { SavePreset(material); GUIUtility.ExitGUI(); }
-        if (doLoad) { ShowLoadDropdown(material); }
-        if (doPreset) { ShowPresetDropdown(material); }
-    }
 
     private void ShowLoadDropdown(Material material)
     {

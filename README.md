@@ -11,6 +11,8 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ### 版本 2.9.6
 
+- [Material] 菜单添加 +Ctrl 键时更换材质。
+
 - OutlineZOffset1.3 优化轮廓描边算法。
 
   ![image-20260512104841829](./README.assets/image-20260512104841829.png)

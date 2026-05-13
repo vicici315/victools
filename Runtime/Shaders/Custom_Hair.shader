@@ -4,6 +4,7 @@
 // Custom_Hair 1.2 性能优化：Pass2 简化光照，减少纹理采样和 normalize 调用，头发进入阴影区域保留微小高光
 // Custom_Hair 2.0 使用Ramp贴图作为头发高光渐变的控制（略微提高性能）
 // Custom_Hair 2.1 添加【各向异性高光】选项控制是否计算高光
+// Custom_Hair 2.2 添加【拉丝密度】参数，优化UI界面
 
 Shader "Custom/Hair"
 {
@@ -23,6 +24,7 @@ Shader "Custom/Hair"
 
         [Toggle(_USE_ANISO_SPEC)] _UseAnisoSpec("各向异性高光", Float) = 1
         _ShiftMap("Shift Map (R通道)", 2D) = "gray" {}
+        _ShiftDensity("Shift Density (拉丝密度)", Range(0.1, 10)) = 1
         _SpecRamp("Specular Ramp (横向渐变)", 2D) = "white" {}
         _SpecRampRow("Ramp Row Select (渐变行选择)", Range(0.06, 0.9)) = 0.5
         _HairDirRotate("Hair Dir Rotate", Range(-180, 180)) = -13
@@ -48,6 +50,7 @@ Shader "Custom/Hair"
         half   _ShadowCutoff;
         half   _ShadowBiasScale;
         half   _NormalScale;
+        half   _ShiftDensity;
         half   _HairDirRotate;
         half   _SpecRampRow;
         half   _SpecIntensity;
@@ -140,8 +143,8 @@ Shader "Custom/Hair"
                 half3x3 TBN = half3x3(normalize(IN.tangentWS), normalize(IN.bitangentWS), normalize(IN.normalWS));
                 half3 N = normalize(mul(normalTS, TBN));
 
-                // Shift Map
-                half shiftTex = SAMPLE_TEXTURE2D(_ShiftMap, sampler_ShiftMap, IN.uv).r - 0.5;
+                // Shift Map（使用拉丝密度缩放 U 轴）
+                half shiftTex = SAMPLE_TEXTURE2D(_ShiftMap, sampler_ShiftMap, half2(IN.uv.x * _ShiftDensity, IN.uv.y)).r - 0.5;
 
                 // 发丝方向：bitangent + 旋转微调
                 half3 hairBase = normalize(IN.bitangentWS);

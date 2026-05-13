@@ -3,6 +3,7 @@ using UnityEditor;
 using System.Collections.Generic;
 using System.Linq;
 using System;
+using System.Runtime.InteropServices;
 using Vic.Runtime;
 
 namespace VicTools
@@ -611,6 +612,12 @@ namespace VicTools
     /// VicTools 主窗口 - 优化版本
     public class VicToolsWindow : EditorWindow
     {
+        // Windows API：实时查询键盘按键状态（用于 GenericMenu 回调中检测修饰键）
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
+        private const int VK_CONTROL = 0x11;
+        private static bool IsCtrlHeldNow => (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+
         private SubWindow[] _windows;
         public SubWindow CurrentWindow;
         
@@ -1437,7 +1444,7 @@ namespace VicTools
                 ShowToolsDropdown();
             }
             GUI.backgroundColor = Color.green;
-            if (GUILayout.Button(new GUIContent("Material", "创建材质"), GUILayout.Width(56), GUILayout.Height(14)))
+            if (GUILayout.Button(new GUIContent("Material", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(56), GUILayout.Height(14)))
             {
                 ShowMaterialDropdown();
             }
@@ -1651,11 +1658,11 @@ namespace VicTools
                 EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal");
             });
             menu.AddSeparator("");
-            menu.AddItem(new GUIContent("创建 晶格变形控制器"), false, CreateLatticeController);
+            menu.AddItem(new GUIContent("创建 晶格变形控制器（Lattice）"), false, CreateLatticeController);
             // menu.AddSeparator("");
-            menu.AddItem(new GUIContent("创建 混合变形控制"), false, CreateBlendShapeAni);
-            menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制"), false, CreateEmissionFlicker);
-            menu.AddItem(new GUIContent("创建 旋转动画控制脚步"), false, CreateRotationController);
+            menu.AddItem(new GUIContent("创建 混合变形控制（BlendShape）"), false, CreateBlendShapeAni);
+            menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制（EmissionFlicker）"), false, CreateEmissionFlicker);
+            menu.AddItem(new GUIContent("创建 旋转动画控制脚步（RotationController）"), false, CreateRotationController);
             menu.ShowAsContext();
         }
 
@@ -1832,7 +1839,7 @@ namespace VicTools
         private void ShowMaterialDropdown()
         {
             GenericMenu menu = new GenericMenu();
-            // ── 创建材质球 ──
+            // ── 创建材质球（Ctrl+点击菜单项 = 直接替换选中对象材质的 Shader） ──
             menu.AddItem(new GUIContent("创建材质球/PBR_Mobile（自定义PBR主材质）"),           false, () => CreateMaterialFromShader("Custom/PBR_Mobile"));
             menu.AddItem(new GUIContent("创建材质球/PBR_Mobile_Trans（自定义PBR主材质透明版）"),     false, () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans"));
             menu.AddSeparator("创建材质球/");   // 二级菜单分割线
@@ -1853,12 +1860,36 @@ namespace VicTools
             menu.ShowAsContext();
         }
 
-        private static void CreateMaterialFromShader(string shaderName)
+        private static void CreateMaterialFromShader(string shaderName, bool ctrlHeld = false)
         {
             Shader shader = Shader.Find(shaderName);
             if (shader == null)
             {
                 EditorUtility.DisplayDialog("找不到 Shader", $"未找到 Shader：{shaderName}\n请确认已正确导入。", "确定");
+                return;
+            }
+
+            // Ctrl+点击：直接将选中对象的材质球 Shader 替换为目标 Shader（不创建新材质）
+            var renderers = Selection.gameObjects
+                .Select(go => go.GetComponent<Renderer>())
+                .Where(r => r != null)
+                .ToArray();
+
+            // 使用 Windows API 实时检测 Ctrl 键状态（GenericMenu 回调中 Event.current 已失效）
+            if (IsCtrlHeldNow && renderers.Length > 0)
+            {
+                int changedCount = 0;
+                foreach (var renderer in renderers)
+                {
+                    if (renderer.sharedMaterial == null) continue;
+                    Undo.RecordObject(renderer.sharedMaterial, "Change Shader");
+                    renderer.sharedMaterial.shader = shader;
+                    if (shaderName == "Custom/ShadowReceiver")
+                        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    EditorUtility.SetDirty(renderer.sharedMaterial);
+                    changedCount++;
+                }
+                Debug.Log($"[CreateMaterial] Ctrl+点击：已将 {changedCount} 个对象的材质 Shader 替换为 {shaderName}");
                 return;
             }
 
@@ -1873,11 +1904,6 @@ namespace VicTools
             AssetDatabase.SaveAssets();
 
             // 尝试将材质赋予场景中选中的对象
-            var renderers = Selection.gameObjects
-                .Select(go => go.GetComponent<Renderer>())
-                .Where(r => r != null)
-                .ToArray();
-
             if (renderers.Length > 0)
             {
                 foreach (var renderer in renderers)
