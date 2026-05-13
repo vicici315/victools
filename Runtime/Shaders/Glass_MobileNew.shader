@@ -7,6 +7,7 @@
 // Glass_MobileNew.v2.6 基础颜色Alpha控制颜色与场景色占比，添加基础光照模型（实现果冻效果）
 // Glass_MobileNew.v2.7 添加接受阴影（传入 shadowCoord，支持软阴影）
 // Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系
+// Glass_MobileNew.v2.9 修复 UV 采样模式接缝破面和蒙皮抖动：改为纯法线膨胀（顶点色R × 强度），不采样贴图，彻底消除接缝差异
 
 Shader "Custom/Glass_MobileNew"
 {
@@ -271,24 +272,24 @@ Shader "Custom/Glass_MobileNew"
                     // 计算游走速度（Offset.xy）
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
 
-                    float2 deformUV;
+                    float deformAmount;
                     #ifdef _DEFORM_USE_UV
-                        // UV 模式：使用模型 UV 坐标采样，蒙皮动画时稳定不跳动
-                        // 完全忽略时间滚动，采样位置绝对固定
-                        deformUV = IN.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                        // 蒙皮稳定模式：不采样贴图，直接用顶点色 R × 强度做均匀法线膨胀
+                        // 避免任何采样差异导致的接缝破面和蒙皮抖动
+                        deformAmount = _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
                     #else
-                        // 世界坐标模式：用世界空间 XZ 坐标采样，解决 UV 接缝断裂
+                        // 世界坐标模式：用世界空间 XZ 坐标采样法线贴图，支持流动动画
                         float3 worldPosForDeform = TransformObjectToWorld(IN.positionOS.xyz);
-                        deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
-                        // Offset.xy 作为流动速度
+                        float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
                         float scrollSpeed = length(deformScrollSpeed);
                         if (scrollSpeed > 0.0001)
                             deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+
+                        float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
+                        float3 normalTS = UnpackNormal(normalTex);
+                        deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
                     #endif
 
-                    float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
-                    float3 normalTS = UnpackNormal(normalTex);
-                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
                     IN.positionOS.xyz += normalize(IN.normalOS) * deformAmount;
                 #endif
 
@@ -530,19 +531,19 @@ Shader "Custom/Glass_MobileNew"
                 // ── 与 ForwardLit Pass 相同的顶点位移 ──
                 #ifdef _USEVERTEXDEFORM
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
-                    float2 deformUV;
+                    float deformAmount;
                     #ifdef _DEFORM_USE_UV
-                        deformUV = input.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                        deformAmount = _VertexDeformStrength * _BumpScale * input.vertexColor.r;
                     #else
                         float3 worldPosForDeform = TransformObjectToWorld(input.positionOS.xyz);
-                        deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
+                        float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
                         float scrollSpeed = length(deformScrollSpeed);
                         if (scrollSpeed > 0.0001)
                             deformUV += deformScrollSpeed * (_Time.y * scrollSpeed);
+                        float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
+                        float3 normalTS = UnpackNormal(normalTex);
+                        deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * input.vertexColor.r;
                     #endif
-                    float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
-                    float3 normalTS = UnpackNormal(normalTex);
-                    float deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * input.vertexColor.r;
                     input.positionOS.xyz += normalize(input.normalOS) * deformAmount;
                 #endif
 
