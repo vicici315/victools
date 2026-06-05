@@ -75,9 +75,9 @@ public class CustomParticleGUI : ShaderGUI
         }
 
         GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f);
-        if (GUILayout.Button("读档", GUILayout.Width(50)))
+        if (GUILayout.Button("读档 ▾", GUILayout.Width(60)))
         {
-            EditorApplication.delayCall += LoadMaterialParameters;
+            ShowLoadDropdown();
         }
 
         GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f);
@@ -286,36 +286,61 @@ public class CustomParticleGUI : ShaderGUI
         Debug.Log($"材质参数已保存到: {filePath}");
     }
 
-    private void LoadMaterialParameters()
+    private void ShowLoadDropdown()
     {
         Material material = m_MaterialEditor.target as Material;
         if (material == null || material.shader == null) return;
 
         string shaderName = material.shader.name.Replace("/", "_");
-        string defaultPath = "Library/VicTools/CustomParticle/" + shaderName;
+        string folderPath = "Library/VicTools/CustomParticle/" + shaderName;
 
-        if (!System.IO.Directory.Exists(defaultPath))
+        if (!System.IO.Directory.Exists(folderPath))
+            System.IO.Directory.CreateDirectory(folderPath);
+
+        string[] files = System.IO.Directory.GetFiles(folderPath, "*.json");
+        GenericMenu menu = new GenericMenu();
+
+        if (files.Length == 0)
         {
-            System.IO.Directory.CreateDirectory(defaultPath);
+            menu.AddDisabledItem(new GUIContent("（无存档）"));
+        }
+        else
+        {
+            foreach (string file in files)
+            {
+                string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
+                string filePath = file;
+                menu.AddItem(new GUIContent(fileName), false, () =>
+                {
+                    EditorApplication.delayCall += () => LoadPresetFile(filePath);
+                });
+            }
+        }
+        menu.ShowAsContext();
+    }
+
+    private void LoadPresetFile(string filePath)
+    {
+        if (!System.IO.File.Exists(filePath)) return;
+
+        string json = System.IO.File.ReadAllText(filePath);
+        bool hasTexData = json.Contains("\"path\":");
+
+        bool loadTextures = true;
+        if (hasTexData)
+        {
+            int choice = EditorUtility.DisplayDialogComplex(
+                "读档选项",
+                "是否同时读取纹理参数？",
+                "读取全部（含纹理）",   // 0
+                "取消",                 // 1
+                "仅读取数值参数");      // 2
+
+            if (choice == 1) return;
+            loadTextures = (choice == 0);
         }
 
-        string presetPath = EditorUtility.OpenFilePanel(
-            "加载材质参数存档", defaultPath, "json");
-
-        if (string.IsNullOrEmpty(presetPath)) return;
-
-        // 弹出选项：是否同时读取纹理
-        int choice = EditorUtility.DisplayDialogComplex(
-            "读档选项",
-            "是否同时读取纹理参数？",
-            "读取全部（含纹理）",   // 0
-            "取消",                 // 1
-            "仅读取数值参数");      // 2
-
-        if (choice == 1) return; // 取消
-
-        bool loadTextures = (choice == 0);
-        LoadMaterialParametersFromFile(presetPath, loadTextures);
+        LoadMaterialParametersFromFile(filePath, loadTextures);
     }
 
     private void LoadMaterialParametersFromFile(string filePath, bool loadTextures = true)

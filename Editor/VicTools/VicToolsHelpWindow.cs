@@ -66,6 +66,16 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.9.7",
+"- Custom_Snow 1.1 优化雪地闪烁表现，陡峭斜面剔除：法线Y分量越小说明越陡峭，剔除闪光避免拉线。",
+"  Custom_Snow 1.2 使用_SparkleTex G通道噪波增强镜头转动时随机闪烁效果，添加【蒙版纹理密度】值，完善GUI参数说明。",
+"  整合雪地交互方案，实现脚本自动化创建操作，自动挂载交互所需脚本。",
+"- 场景工具 v2.22 修复资源箱对象异常丢失，添加 ResourceBoxBuildPreprocessor — 打包前确保资源箱数据已保存。",
+"- 场景工具 v2.23 防止打包后产生灰色重复对象，又不会在刷新时误删已有的正常记录。",
+"- FurShell 1.7 修复“使用圆锥风力”选项开关控制无效问题。",
+"- WindConeController2.0 优化控制参数，修复targetFurRenderer相关参数控制实时生效。",
+"- Grass 2.0 添加草地交互系统，添加草地控制器脚本。",
+// "- ResetPositionVolume 1.0 新脚本，用于重置指定对象运行时的位置。",
                 "■ v2.9.6",
 "- [Material] 菜单添加 +Ctrl 键时更换材质。",
 "- OutlineZOffset1.3 优化轮廓描边算法。",

@@ -1,3 +1,9 @@
+// WindConeController2.0 优化控制参数，修复targetFurRenderer相关参数控制实时生效
+/// 圆锥形风力控制器 v2.0 (2026.05.27)
+/// - 精简参数：移除positionOffset/customDirection/独立平滑速度/检测间隔/动画速度控制/Gizmo颜色等
+/// - 统一smoothSpeed控制过渡，方向固定forward，动画暂停=0/恢复=原始速度
+/// - 修复：targetFurRenderer实时生效、affectAll关闭后残留清除、空目标不影响子物体
+
 using UnityEngine;
 
 #if UNITY_EDITOR
@@ -15,15 +21,6 @@ public class WindConeController : MonoBehaviour
     [Tooltip("启用圆锥形风力影响")]
     public bool enableWindCone = true;
     
-    [Tooltip("圆锥中心位置偏移（相对于吹风机位置）")]
-    public Vector3 positionOffset = Vector3.zero;
-    
-    [Tooltip("圆锥方向（使用物体的前向方向）")]
-    public bool useForwardDirection = true;
-    
-    [Tooltip("自定义圆锥方向（当useForwardDirection为false时使用）")]
-    public Vector3 customDirection = Vector3.forward;
-    
     [Tooltip("圆锥角度（度）")]
     [Range(0.0f, 90.0f)]
     public float coneAngle = 30.0f;
@@ -31,67 +28,31 @@ public class WindConeController : MonoBehaviour
     [Tooltip("圆锥范围")]
     public float coneRange = 5.0f;
     
-    [Tooltip("圆锥强度倍增")]
+    [Tooltip("圆锥风力强度")]
     public float coneIntensity = 5.0f;
     
     [Tooltip("圆锥内风频率加大值")]
     [Range(0.0f, 10.0f)]
     public float frequencyBoost = 5.0f;
     
-    [Header("缓冲过渡参数")]
-    [Tooltip("启用缓冲过渡，平滑风源移动")]
-    public bool enableSmoothing = true;
-    
-    [Tooltip("位置缓冲速度（值越大过渡越快）")]
-    [Range(0.1f, 20.0f)]
-    public float positionSmoothSpeed = 5.0f;
-    
-    [Tooltip("方向缓冲速度（值越大过渡越快）")]
-    [Range(0.1f, 20.0f)]
-    public float directionSmoothSpeed = 8.0f;
-    
-    [Tooltip("强度缓冲速度（值越大过渡越快）")]
-    [Range(0.1f, 20.0f)]
-    public float intensitySmoothSpeed = 10.0f;
-    
-[Header("目标毛发渲染器")]
-[Tooltip("目标毛发渲染器（如果为空，将查找场景中所有使用FurShell材质的渲染器）")]
-public Renderer targetFurRenderer;
+    [Tooltip("平滑过渡速度（值越大过渡越快，0=无平滑）")]
+    [Range(0.0f, 20.0f)]
+    public float smoothSpeed = 8.0f;
 
-[Tooltip("影响所有使用FurShell材质的渲染器")]
-public bool affectAllFurRenderers = true;
+    [Header("目标毛发渲染器")]
+    [Tooltip("目标毛发渲染器（如果为空，将查找场景中所有使用FurShell材质的渲染器）")]
+    public Renderer targetFurRenderer;
 
-[Header("动画控制")]
-[Tooltip("启用动画暂停/继续功能")]
-public bool enableAnimationControl = true;
+    [Tooltip("影响所有使用FurShell材质的渲染器")]
+    public bool affectAllFurRenderers = true;
 
-[Tooltip("检测半径（用于查找范围内的动画模型）")]
-public float detectionRadius = 10.0f;
-
-[Tooltip("检测间隔（秒）")]
-[Range(0.1f, 2.0f)]
-public float detectionInterval = 0.5f;
-
-[Tooltip("动画暂停速度（0=完全暂停，1=正常播放）")]
-[Range(0.0f, 1.0f)]
-public float pauseAnimationSpeed = 0.0f;
-
-[Tooltip("离开范围后恢复的动画速度")]
-[Range(0.0f, 2.0f)]
-public float resumeAnimationSpeed = 1.0f;
+    [Header("动画控制")]
+    [Tooltip("启用动画暂停/继续功能（圆锥范围内的动画器将被暂停）")]
+    public bool enableAnimationControl = true;
     
     [Header("调试")]
     [Tooltip("在Scene视图中显示圆锥范围")]
     public bool showGizmos = true;
-    
-    [Tooltip("圆锥Gizmos颜色")]
-    public Color gizmoColor = new Color(0.2f, 0.8f, 1.0f, 0.3f);
-    
-    [Tooltip("在Scene视图中显示检测范围")]
-    public bool showDetectionRadius = true;
-    
-    [Tooltip("检测范围Gizmos颜色")]
-    public Color detectionRadiusColor = new Color(1.0f, 0.5f, 0.0f, 0.2f);
     
     // 私有变量
     private Renderer[] targetRenderers;
@@ -103,17 +64,18 @@ public float resumeAnimationSpeed = 1.0f;
     private float smoothedConeIntensity;
     
     // 动画控制相关变量
+    private const float DetectionInterval = 0.5f;
     private float detectionTimer = 0.0f;
-    private System.Collections.Generic.List<Animator> animatorsInRange = new System.Collections.Generic.List<Animator>();
-    private System.Collections.Generic.Dictionary<Animator, float> originalAnimationSpeeds = new System.Collections.Generic.Dictionary<Animator, float>();
+    private readonly System.Collections.Generic.List<Animator> animatorsInRange = new System.Collections.Generic.List<Animator>();
+    private readonly System.Collections.Generic.Dictionary<Animator, float> originalAnimationSpeeds = new System.Collections.Generic.Dictionary<Animator, float>();
     
     // 缓存优化变量
     private static Renderer[] cachedAllFurRenderers;
     private static float lastFurRendererCacheTime = 0f;
-    private static readonly float furRendererCacheInterval = 5f; // 每5秒重新缓存一次
+    private static readonly float furRendererCacheInterval = 5f;
     private static Animator[] cachedAllAnimators;
     private static float lastAnimatorCacheTime = 0f;
-    private static readonly float animatorCacheInterval = 2f; // 每2秒重新缓存一次
+    private static readonly float animatorCacheInterval = 2f;
     private bool needRefreshFurCache = true;
     private bool needRefreshAnimatorCache = true;
     
@@ -124,6 +86,10 @@ public float resumeAnimationSpeed = 1.0f;
     private static readonly int WindConeAngleID = Shader.PropertyToID("_WindConeAngle");
     private static readonly int WindConeRangeID = Shader.PropertyToID("_WindConeRange");
     private static readonly int WindConeFrequencyBoostID = Shader.PropertyToID("_WindConeFrequencyBoost");
+    
+    // Gizmo颜色常量
+    private static readonly Color ConeGizmoColor = new Color(0.0f, 0.0f, 0.5f, 0.8f);
+    private static readonly Color DetectionGizmoColor = new Color(1.0f, 0.5f, 0.0f, 0.2f);
     
     void Start()
     {
@@ -137,22 +103,27 @@ public float resumeAnimationSpeed = 1.0f;
     
     void OnDisable()
     {
-        // 只在播放模式下禁用时关闭圆锥影响
-        if (Application.isPlaying)
+        ClearAllPropertyBlocks();
+        
+        if (enableAnimationControl && Application.isPlaying)
         {
-            SetWindConeEnabled(false);
-            
-            // 恢复所有动画器
-            if (enableAnimationControl)
-            {
-                DisableAnimationControl();
-            }
+            DisableAnimationControl();
+        }
+    }
+    
+    private void ClearAllPropertyBlocks()
+    {
+        if (targetRenderers == null) return;
+        
+        foreach (Renderer renderer in targetRenderers)
+        {
+            if (renderer == null) continue;
+            renderer.SetPropertyBlock(new MaterialPropertyBlock());
         }
     }
     
     void OnDestroy()
     {
-        // 清理资源
         targetRenderers = null;
         propertyBlock = null;
     }
@@ -161,38 +132,27 @@ public float resumeAnimationSpeed = 1.0f;
     {
         UpdateWindConeParameters();
         
-        // 更新动画控制检测
         if (enableAnimationControl && Application.isPlaying)
         {
             UpdateAnimationControl();
         }
     }
     
-    /// 初始化控制器
     private void Initialize()
     {
-        // 创建MaterialPropertyBlock用于高效设置材质属性
         propertyBlock = new MaterialPropertyBlock();
-        
-        // 查找目标渲染器
         FindTargetRenderers();
-        
-        // 初始化参数
         UpdateWindConeParameters();
     }
     
-    /// 查找目标渲染器（使用缓存优化）
     private void FindTargetRenderers()
     {
+        // 先清除旧目标上的残留PropertyBlock
+        ClearAllPropertyBlocks();
+        
         if (affectAllFurRenderers)
         {
-            // 使用缓存获取所有毛发渲染器
             targetRenderers = GetCachedFurRenderers();
-            
-            if (targetRenderers.Length == 0)
-            {
-                Debug.LogWarning("WindConeController: 未找到使用FurShell材质的渲染器");
-            }
         }
         else if (targetFurRenderer != null)
         {
@@ -200,29 +160,21 @@ public float resumeAnimationSpeed = 1.0f;
         }
         else
         {
-            // 如果没有指定目标，尝试查找当前物体或子物体中的渲染器
-            targetRenderers = GetComponentsInChildren<Renderer>();
-            
-            if (targetRenderers.Length == 0)
-            {
-                Debug.LogWarning("WindConeController: 未找到目标渲染器");
-            }
+            // targetFurRenderer为空且未勾选affectAll时，不影响任何渲染器
+            targetRenderers = new Renderer[0];
         }
     }
     
-    /// 获取缓存的毛发渲染器（减少FindObjectsOfType调用）
     private Renderer[] GetCachedFurRenderers()
     {
-        // 检查是否需要刷新缓存
         bool shouldRefreshCache = needRefreshFurCache || 
                                  cachedAllFurRenderers == null || 
                                  Time.time - lastFurRendererCacheTime > furRendererCacheInterval;
         
         if (shouldRefreshCache)
         {
-            // 查找场景中所有渲染器
             Renderer[] allRenderers = FindObjectsOfType<Renderer>();
-            System.Collections.Generic.List<Renderer> furRenderers = new System.Collections.Generic.List<Renderer>();
+            var furRenderers = new System.Collections.Generic.List<Renderer>();
             
             foreach (Renderer renderer in allRenderers)
             {
@@ -236,19 +188,13 @@ public float resumeAnimationSpeed = 1.0f;
             cachedAllFurRenderers = furRenderers.ToArray();
             lastFurRendererCacheTime = Time.time;
             needRefreshFurCache = false;
-            
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"WindConeController: 缓存了 {cachedAllFurRenderers.Length} 个毛发渲染器");
-            #endif
         }
         
         return cachedAllFurRenderers;
     }
     
-    /// 获取缓存的动画器（减少FindObjectsOfType调用）
     private Animator[] GetCachedAnimators()
     {
-        // 检查是否需要刷新缓存
         bool shouldRefreshCache = needRefreshAnimatorCache || 
                                  cachedAllAnimators == null || 
                                  Time.time - lastAnimatorCacheTime > animatorCacheInterval;
@@ -258,38 +204,31 @@ public float resumeAnimationSpeed = 1.0f;
             cachedAllAnimators = FindObjectsOfType<Animator>();
             lastAnimatorCacheTime = Time.time;
             needRefreshAnimatorCache = false;
-            
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"WindConeController: 缓存了 {cachedAllAnimators.Length} 个动画器");
-            #endif
         }
         
         return cachedAllAnimators;
     }
     
-    /// 标记需要刷新毛发渲染器缓存
     public void MarkFurCacheDirty()
     {
         needRefreshFurCache = true;
     }
     
-    /// 标记需要刷新动画器缓存
     public void MarkAnimatorCacheDirty()
     {
         needRefreshAnimatorCache = true;
     }
     
-    /// 更新圆锥形风力参数
     private void UpdateWindConeParameters()
     {
         if (targetRenderers == null || targetRenderers.Length == 0)
             return;
         
-        // 计算目标圆锥位置和方向
-        Vector3 targetConePosition = transform.position + transform.TransformDirection(positionOffset);
-        Vector3 targetConeDirection = useForwardDirection ? transform.forward : customDirection.normalized;
+        // 始终使用物体前向方向
+        Vector3 targetConePosition = transform.position;
+        Vector3 targetConeDirection = transform.forward;
         
-        // 初始化缓冲变量（如果是第一次调用）
+        // 初始化缓冲变量
         if (smoothedConePosition == Vector3.zero && targetConePosition != Vector3.zero)
         {
             smoothedConePosition = targetConePosition;
@@ -297,33 +236,16 @@ public float resumeAnimationSpeed = 1.0f;
             smoothedConeIntensity = coneIntensity;
         }
         
-        // 应用缓冲过渡
-        if (enableSmoothing && Application.isPlaying)
+        // 应用平滑过渡
+        if (smoothSpeed > 0f && Application.isPlaying)
         {
-            // 使用Lerp平滑过渡位置
-            smoothedConePosition = Vector3.Lerp(
-                smoothedConePosition, 
-                targetConePosition, 
-                positionSmoothSpeed * Time.deltaTime
-            );
-            
-            // 使用Lerp平滑过渡方向（使用Slerp处理方向向量）
-            smoothedConeDirection = Vector3.Slerp(
-                smoothedConeDirection, 
-                targetConeDirection, 
-                directionSmoothSpeed * Time.deltaTime
-            ).normalized;
-            
-            // 使用Lerp平滑过渡强度
-            smoothedConeIntensity = Mathf.Lerp(
-                smoothedConeIntensity, 
-                coneIntensity, 
-                intensitySmoothSpeed * Time.deltaTime
-            );
+            float dt = smoothSpeed * Time.deltaTime;
+            smoothedConePosition = Vector3.Lerp(smoothedConePosition, targetConePosition, dt);
+            smoothedConeDirection = Vector3.Slerp(smoothedConeDirection, targetConeDirection, dt).normalized;
+            smoothedConeIntensity = Mathf.Lerp(smoothedConeIntensity, coneIntensity, dt);
         }
         else
         {
-            // 不启用缓冲或不在播放模式，直接使用目标值
             smoothedConePosition = targetConePosition;
             smoothedConeDirection = targetConeDirection;
             smoothedConeIntensity = coneIntensity;
@@ -337,13 +259,16 @@ public float resumeAnimationSpeed = 1.0f;
                 
             try
             {
-                // 获取当前的MaterialPropertyBlock
                 renderer.GetPropertyBlock(propertyBlock);
                 
-                // 设置圆锥形风力参数
-                propertyBlock.SetFloat(UseWindConeID, enableWindCone ? 1.0f : 0.0f);
+                if (!enableWindCone)
+                {
+                    renderer.SetPropertyBlock(new MaterialPropertyBlock());
+                    continue;
+                }
                 
-                // _WindConePosition: xyz为圆锥中心位置, w为强度倍增
+                propertyBlock.SetFloat(UseWindConeID, 1.0f);
+                
                 Vector4 conePosWithIntensity = new Vector4(
                     smoothedConePosition.x, 
                     smoothedConePosition.y, 
@@ -352,7 +277,6 @@ public float resumeAnimationSpeed = 1.0f;
                 );
                 propertyBlock.SetVector(WindConePositionID, conePosWithIntensity);
                 
-                // _WindConeDirection: xyz为圆锥方向, w未使用
                 Vector4 coneDir = new Vector4(
                     smoothedConeDirection.x,
                     smoothedConeDirection.y,
@@ -365,7 +289,6 @@ public float resumeAnimationSpeed = 1.0f;
                 propertyBlock.SetFloat(WindConeRangeID, coneRange);
                 propertyBlock.SetFloat(WindConeFrequencyBoostID, frequencyBoost);
                 
-                // 应用属性
                 renderer.SetPropertyBlock(propertyBlock);
             }
             catch (System.Exception e)
@@ -375,66 +298,41 @@ public float resumeAnimationSpeed = 1.0f;
         }
     }
     
-    /// 更新动画控制
     private void UpdateAnimationControl()
     {
         detectionTimer -= Time.deltaTime;
         
         if (detectionTimer <= 0.0f)
         {
-            detectionTimer = detectionInterval;
+            detectionTimer = DetectionInterval;
             DetectAnimatorsInCone();
         }
     }
     
-    /// 检测圆锥范围内的动画器（使用缓存优化）
     private void DetectAnimatorsInCone()
     {
-        // 计算当前圆锥位置和方向
         Vector3 currentConePosition = smoothedConePosition;
         Vector3 currentConeDirection = smoothedConeDirection;
         
-        // 使用缓存获取所有动画器
         Animator[] allAnimators = GetCachedAnimators();
-        System.Collections.Generic.List<Animator> currentAnimators = new System.Collections.Generic.List<Animator>();
-        
-        #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        Debug.Log($"WindConeController: 场景中找到 {allAnimators.Length} 个动画器（使用缓存）");
-        #endif
+        var currentAnimators = new System.Collections.Generic.List<Animator>();
         
         foreach (Animator animator in allAnimators)
         {
             if (animator == null || !animator.enabled || !animator.gameObject.activeInHierarchy)
                 continue;
             
-            // 方法1：使用Animator的根位置（对于角色动画更准确）
             Vector3 animatorPosition = animator.transform.position;
             
-            // 方法2：尝试获取更精确的位置（对于蒙皮网格渲染器）
             SkinnedMeshRenderer skinnedRenderer = animator.GetComponentInChildren<SkinnedMeshRenderer>();
             if (skinnedRenderer != null && skinnedRenderer.enabled)
             {
-                // 使用蒙皮网格渲染器的边界中心作为位置
                 animatorPosition = skinnedRenderer.bounds.center;
-                #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                Debug.Log($"WindConeController: 动画器 {animator.name} 使用蒙皮网格边界中心 (位置: {animatorPosition})");
-                #endif
             }
             
-            // 检查距离
-            float distance = Vector3.Distance(animatorPosition, currentConePosition);
-            if (distance <= detectionRadius)
+            if (IsPointInCone(animatorPosition, currentConePosition, currentConeDirection, coneAngle, coneRange))
             {
-                // 检查是否在圆锥范围内
-                bool inCone = IsPointInCone(animatorPosition, currentConePosition, currentConeDirection, coneAngle, coneRange);
-                
-                if (inCone)
-                {
-                    currentAnimators.Add(animator);
-                    #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                    Debug.Log($"WindConeController: 动画器 {animator.name} 在圆锥范围内 (距离: {distance:F2}, 位置: {animatorPosition})");
-                    #endif
-                }
+                currentAnimators.Add(animator);
             }
         }
         
@@ -443,7 +341,6 @@ public float resumeAnimationSpeed = 1.0f;
         {
             if (!animatorsInRange.Contains(animator))
             {
-                // 新进入范围，暂停动画
                 PauseAnimator(animator);
                 animatorsInRange.Add(animator);
             }
@@ -453,178 +350,99 @@ public float resumeAnimationSpeed = 1.0f;
         for (int i = animatorsInRange.Count - 1; i >= 0; i--)
         {
             Animator animator = animatorsInRange[i];
-            
             if (!currentAnimators.Contains(animator))
             {
-                // 离开范围，恢复动画
                 ResumeAnimator(animator);
                 animatorsInRange.RemoveAt(i);
             }
         }
-        
-        // 调试信息：显示当前在范围内的动画器数量
-        #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        if (currentAnimators.Count > 0)
-        {
-            Debug.Log($"WindConeController: 当前有 {currentAnimators.Count} 个动画器在圆锥范围内");
-        }
-        else if (allAnimators.Length > 0)
-        {
-            Debug.Log($"WindConeController: 没有动画器在圆锥范围内。最近动画器距离: {GetNearestAnimatorDistance(allAnimators, currentConePosition):F2}");
-        }
-        #endif
     }
     
-    /// 获取最近动画器的距离（用于调试）
-    private float GetNearestAnimatorDistance(Animator[] animators, Vector3 conePosition)
+    private bool IsPointInCone(Vector3 point, Vector3 conePosition, Vector3 coneDirection, float angle, float range)
     {
-        if (animators == null || animators.Length == 0)
-            return float.MaxValue;
-            
-        float minDistance = float.MaxValue;
-        bool foundValidAnimator = false;
-        
-        foreach (Animator animator in animators)
-        {
-            if (animator == null || !animator.enabled || animator.transform == null)
-                continue;
-                
-            float distance = Vector3.Distance(animator.transform.position, conePosition);
-            if (distance < minDistance)
-            {
-                minDistance = distance;
-                foundValidAnimator = true;
-            }
-        }
-        
-        return foundValidAnimator ? minDistance : float.MaxValue;
-    }
-    
-    /// 检查点是否在圆锥范围内
-    private bool IsPointInCone(Vector3 point, Vector3 conePosition, Vector3 coneDirection, float coneAngle, float coneRange)
-    {
-        // 计算点到圆锥顶点的向量
         Vector3 pointToCone = point - conePosition;
         float distanceToCone = pointToCone.magnitude;
         
-        // 如果距离超过范围，不在圆锥内
-        if (distanceToCone > coneRange)
+        if (distanceToCone > range)
             return false;
         
-        // 计算点与圆锥方向的夹角
-        float angle = Vector3.Angle(coneDirection, pointToCone.normalized);
-        
-        // 如果夹角小于圆锥角度的一半，则在圆锥内
-        return angle <= coneAngle * 0.5f;
+        float pointAngle = Vector3.Angle(coneDirection, pointToCone.normalized);
+        return pointAngle <= angle * 0.5f;
     }
     
-    // ReSharper disable Unity.PerformanceAnalysis
-    /// 暂停动画器
     private void PauseAnimator(Animator animator)
     {
-        if (!animator)
-            return;
+        if (!animator) return;
             
-        // 保存原始速度
         if (!originalAnimationSpeeds.ContainsKey(animator))
         {
             originalAnimationSpeeds[animator] = animator.speed;
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"WindConeController: 保存动画器 {animator.name} 的原始速度: {animator.speed}");
-            #endif
         }
         
-        // 设置暂停速度
-        animator.speed = pauseAnimationSpeed;
-        
-        #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        Debug.Log($"WindConeController: 暂停动画器 {animator.name} (位置: {animator.transform.position}, 新速度: {animator.speed})");
-        #endif
+        animator.speed = 0f;
     }
     
-    /// 恢复动画器
     private void ResumeAnimator(Animator animator)
     {
-        if (!animator)
-            return;
+        if (!animator) return;
             
-        // 恢复原始速度或使用配置的恢复速度
         if (originalAnimationSpeeds.ContainsKey(animator))
         {
-            float originalSpeed = originalAnimationSpeeds[animator];
-            animator.speed = originalSpeed;
+            animator.speed = originalAnimationSpeeds[animator];
             originalAnimationSpeeds.Remove(animator);
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"WindConeController: 恢复动画器 {animator.name} 到原始速度: {originalSpeed}");
-            #endif
         }
         else
         {
-            animator.speed = resumeAnimationSpeed;
-            #if UNITY_EDITOR || DEVELOPMENT_BUILD
-            Debug.Log($"WindConeController: 恢复动画器 {animator.name} 到配置速度: {resumeAnimationSpeed}");
-            #endif
+            animator.speed = 1f;
         }
     }
     
-    /// 设置圆锥形风力启用状态
+    // === 公共API ===
+    
     public void SetWindConeEnabled(bool enabled)
     {
         enableWindCone = enabled;
         UpdateWindConeParameters();
     }
     
-    /// 设置圆锥位置偏移
-    public void SetPositionOffset(Vector3 offset)
+    public void SetWindEnabled(bool enabled)
     {
-        positionOffset = offset;
-        UpdateWindConeParameters();
+        if (targetRenderers == null || targetRenderers.Length == 0)
+            return;
+            
+        foreach (Renderer renderer in targetRenderers)
+        {
+            if (renderer == null) continue;
+            renderer.GetPropertyBlock(propertyBlock);
+            propertyBlock.SetFloat(Shader.PropertyToID("_UseWind"), enabled ? 1.0f : 0.0f);
+            renderer.SetPropertyBlock(propertyBlock);
+        }
     }
     
-    /// 设置圆锥方向
-    public void SetConeDirection(Vector3 direction)
-    {
-        customDirection = direction.normalized;
-        useForwardDirection = false;
-        UpdateWindConeParameters();
-    }
-    
-    /// 使用物体前向方向作为圆锥方向
-    public void UseForwardDirection()
-    {
-        useForwardDirection = true;
-        UpdateWindConeParameters();
-    }
-    
-    /// 设置圆锥角度
     public void SetConeAngle(float angle)
     {
         coneAngle = Mathf.Clamp(angle, 0.0f, 90.0f);
         UpdateWindConeParameters();
     }
     
-    /// 设置圆锥范围
     public void SetConeRange(float range)
     {
         coneRange = Mathf.Max(0.1f, range);
         UpdateWindConeParameters();
     }
     
-    /// 设置圆锥强度
     public void SetConeIntensity(float intensity)
     {
         coneIntensity = Mathf.Max(0.0f, intensity);
         UpdateWindConeParameters();
     }
     
-    /// 设置频率增强值
     public void SetFrequencyBoost(float boost)
     {
         frequencyBoost = Mathf.Clamp(boost, 0.0f, 10.0f);
         UpdateWindConeParameters();
     }
     
-    /// 设置目标渲染器
     public void SetTargetRenderer(Renderer renderer)
     {
         targetFurRenderer = renderer;
@@ -633,7 +451,6 @@ public float resumeAnimationSpeed = 1.0f;
         UpdateWindConeParameters();
     }
     
-    /// 影响所有使用FurShell材质的渲染器
     public void AffectAllFurRenderers()
     {
         affectAllFurRenderers = true;
@@ -642,19 +459,16 @@ public float resumeAnimationSpeed = 1.0f;
         UpdateWindConeParameters();
     }
     
-    /// 启用动画控制
     public void EnableAnimationControl()
     {
         enableAnimationControl = true;
-        detectionTimer = 0.0f; // 立即开始检测
+        detectionTimer = 0.0f;
     }
     
-    /// 禁用动画控制
     public void DisableAnimationControl()
     {
         enableAnimationControl = false;
         
-        // 恢复所有在范围内的动画器
         foreach (Animator animator in animatorsInRange)
         {
             ResumeAnimator(animator);
@@ -664,124 +478,56 @@ public float resumeAnimationSpeed = 1.0f;
         originalAnimationSpeeds.Clear();
     }
     
-    /// 设置检测半径
-    public void SetDetectionRadius(float radius)
-    {
-        detectionRadius = Mathf.Max(0.1f, radius);
-    }
+    // === Gizmos ===
     
-    /// 设置检测间隔
-    public void SetDetectionInterval(float interval)
-    {
-        detectionInterval = Mathf.Clamp(interval, 0.1f, 2.0f);
-    }
-    
-    /// 设置动画暂停速度
-    public void SetPauseAnimationSpeed(float speed)
-    {
-        pauseAnimationSpeed = Mathf.Clamp(speed, 0.0f, 1.0f);
-        
-        // 更新当前在范围内的所有动画器
-        foreach (Animator animator in animatorsInRange)
-        {
-            if (animator != null)
-            {
-                animator.speed = pauseAnimationSpeed;
-            }
-        }
-    }
-    
-    /// 设置恢复动画速度
-    public void SetResumeAnimationSpeed(float speed)
-    {
-        resumeAnimationSpeed = Mathf.Clamp(speed, 0.0f, 2.0f);
-    }
-    
-    /// 在Scene视图中绘制圆锥范围和检测范围
     void OnDrawGizmosSelected()
     {
-        // 计算圆锥位置和方向
-        Vector3 conePosition = transform.position + transform.TransformDirection(positionOffset);
-        Vector3 coneDirection = useForwardDirection ? transform.forward : customDirection.normalized;
+        if (!showGizmos) return;
         
-        // 保存原始Gizmos颜色
+        Vector3 conePosition = transform.position;
+        Vector3 coneDirection = transform.forward;
+        
         Color originalColor = Gizmos.color;
         
-        // 绘制圆锥范围
-        if (showGizmos)
+        // 绘制圆锥
+        Gizmos.color = ConeGizmoColor;
+        Gizmos.DrawSphere(conePosition, 0.1f);
+        Gizmos.DrawLine(conePosition, conePosition + coneDirection * (coneRange * 0.5f));
+        DrawConeGizmo(conePosition, coneDirection, coneAngle, coneRange);
+        
+        // 绘制动画检测范围（使用圆锥范围作为检测范围）
+        if (enableAnimationControl)
         {
-            // 设置圆锥Gizmos颜色
-            Gizmos.color = gizmoColor;
-            
-            // 绘制圆锥中心点
-            Gizmos.DrawSphere(conePosition, 0.1f);
-            
-            // 绘制圆锥方向
-            Gizmos.DrawLine(conePosition, conePosition + coneDirection * coneRange * 0.5f);
-            
-            // 绘制圆锥范围
-            DrawConeGizmo(conePosition, coneDirection, coneAngle, coneRange);
+            Gizmos.color = DetectionGizmoColor;
+            Gizmos.DrawWireSphere(conePosition, coneRange);
         }
         
-        // 绘制检测范围
-        if (showDetectionRadius && enableAnimationControl)
-        {
-            // 设置检测范围Gizmos颜色
-            Gizmos.color = detectionRadiusColor;
-            
-            // 绘制检测范围球体（透明）
-            Gizmos.DrawWireSphere(conePosition, detectionRadius);
-            
-            // 绘制检测范围球体（半透明填充）
-            Color fillColor = detectionRadiusColor;
-            fillColor.a *= 0.1f; // 更透明的填充
-            Gizmos.color = fillColor;
-            Gizmos.DrawSphere(conePosition, detectionRadius);
-            
-            // 绘制检测范围与圆锥中心的关系线
-            Gizmos.color = new Color(detectionRadiusColor.r, detectionRadiusColor.g, detectionRadiusColor.b, 0.5f);
-            Gizmos.DrawLine(conePosition, conePosition + Vector3.right * detectionRadius);
-            Gizmos.DrawLine(conePosition, conePosition - Vector3.right * detectionRadius);
-            Gizmos.DrawLine(conePosition, conePosition + Vector3.up * detectionRadius);
-            Gizmos.DrawLine(conePosition, conePosition - Vector3.up * detectionRadius);
-            Gizmos.DrawLine(conePosition, conePosition + Vector3.forward * detectionRadius);
-            Gizmos.DrawLine(conePosition, conePosition - Vector3.forward * detectionRadius);
-        }
-        
-        // 恢复原始Gizmos颜色
         Gizmos.color = originalColor;
     }
     
-    /// 绘制圆锥Gizmo
     private void DrawConeGizmo(Vector3 position, Vector3 direction, float angle, float range)
     {
         float angleRad = Mathf.Deg2Rad * angle;
         float radius = Mathf.Tan(angleRad) * range;
         
-        // 计算圆锥底面中心
         Vector3 baseCenter = position + direction * range;
         
-        // 计算两个垂直向量 - 修复垂直方向时的问题
         Vector3 up;
         Vector3 right;
         
-        // 检查方向是否接近垂直（与Vector3.up的点积接近1或-1）
         float dotWithUp = Mathf.Abs(Vector3.Dot(direction.normalized, Vector3.up));
         
         if (dotWithUp > 0.99f)
         {
-            // 方向接近垂直，使用Vector3.forward作为参考
             right = Vector3.Cross(direction, Vector3.forward).normalized;
             up = Vector3.Cross(right, direction).normalized;
         }
         else
         {
-            // 方向不垂直，使用Vector3.up作为参考
             right = Vector3.Cross(direction, Vector3.up).normalized;
             up = Vector3.Cross(right, direction).normalized;
         }
         
-        // 绘制圆锥侧面
         int segments = 16;
         for (int i = 0; i < segments; i++)
         {
@@ -791,68 +537,23 @@ public float resumeAnimationSpeed = 1.0f;
             Vector3 point1 = baseCenter + (Mathf.Cos(angle1) * right + Mathf.Sin(angle1) * up) * radius;
             Vector3 point2 = baseCenter + (Mathf.Cos(angle2) * right + Mathf.Sin(angle2) * up) * radius;
             
-            // 绘制从顶点到底面边缘的线
             Gizmos.DrawLine(position, point1);
             Gizmos.DrawLine(position, point2);
-            
-            // 绘制底面边缘
             Gizmos.DrawLine(point1, point2);
         }
-        
-        // 绘制范围球体（透明）
-        Gizmos.color = new Color(gizmoColor.r, gizmoColor.g, gizmoColor.b, gizmoColor.a * 0.2f);
-        Gizmos.DrawWireSphere(position, coneRange);
     }
     
-    /// 在Scene视图中始终绘制检测范围（当选中物体时）
-    void OnDrawGizmos()
-    {
-        // 只在选中物体时绘制检测范围
-        if (showDetectionRadius && enableAnimationControl)
-        {
-            #if UNITY_EDITOR
-            // 检查是否选中当前物体（仅在编辑器中）
-            if (Selection.activeGameObject != gameObject)
-                return;
-            #endif
-            
-            // 计算圆锥位置
-            Vector3 conePosition = transform.position + transform.TransformDirection(positionOffset);
-            
-            // 保存原始Gizmos颜色
-            Color originalColor = Gizmos.color;
-            
-            // 设置检测范围Gizmos颜色（更明显的颜色）
-            Gizmos.color = new Color(detectionRadiusColor.r, detectionRadiusColor.g, detectionRadiusColor.b, 0.3f);
-            
-            // 绘制检测范围球体
-            Gizmos.DrawWireSphere(conePosition, detectionRadius);
-            
-            // 恢复原始Gizmos颜色
-            Gizmos.color = originalColor;
-        }
-    }
-    
-    /// 验证参数
     void OnValidate()
     {
-        // 确保参数在合理范围内
         coneAngle = Mathf.Clamp(coneAngle, 0.0f, 90.0f);
         coneRange = Mathf.Max(0.1f, coneRange);
         coneIntensity = Mathf.Max(0.0f, coneIntensity);
         frequencyBoost = Mathf.Clamp(frequencyBoost, 0.0f, 10.0f);
         
-        // 动画控制参数验证
-        detectionRadius = Mathf.Max(0.1f, detectionRadius);
-        detectionInterval = Mathf.Clamp(detectionInterval, 0.1f, 2.0f);
-        pauseAnimationSpeed = Mathf.Clamp(pauseAnimationSpeed, 0.0f, 1.0f);
-        resumeAnimationSpeed = Mathf.Clamp(resumeAnimationSpeed, 0.0f, 2.0f);
-        
-        // 如果正在运行，更新参数
-        if (Application.isPlaying && enabled)
+        if (enabled)
         {
+            FindTargetRenderers();
             UpdateWindConeParameters();
         }
     }
-    
 }

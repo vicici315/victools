@@ -8,6 +8,7 @@
 // Glass_MobileNew.v2.7 添加接受阴影（传入 shadowCoord，支持软阴影）
 // Glass_MobileNew.v2.8 果冻效果实现，顶点变形支持 UV 采样模式（蒙皮模型稳定不跳动）；优化阴影与控制基础颜色关系
 // Glass_MobileNew.v2.9 修复 UV 采样模式接缝破面和蒙皮抖动：改为纯法线膨胀（顶点色R × 强度），不采样贴图，彻底消除接缝差异
+// Glass_MobileNew.v2.10 修复蒙皮模式顶点抖动：改用模型UV采样法线贴图+UV哈希偏移方向，所有输入均为模型固有属性，不随变换变化
 
 Shader "Custom/Glass_MobileNew"
 {
@@ -71,7 +72,7 @@ Shader "Custom/Glass_MobileNew"
             "RenderType"="Transparent"
             "Queue"="Transparent+10"
             "IgnoreProjector"="True"
-            "DisableBatching"="False"
+            "DisableBatching"="True"
         }
 
         // 主渲染Pass
@@ -259,7 +260,7 @@ Shader "Custom/Glass_MobileNew"
             float CalculateFresnel(float3 normalWS, float3 viewDirWS)
             {
                 float fresnel = saturate(dot(normalWS, viewDirWS));
-                fresnel = _FresnelBias + _FresnelScale * pow(1.0 - fresnel, _FresnelPower);
+                fresnel = _FresnelBias + _FresnelScale * fastPow(1.0 - fresnel, _FresnelPower);
                 return saturate(fresnel);
             }
 
@@ -267,16 +268,25 @@ Shader "Custom/Glass_MobileNew"
             {
                 Varyings OUT;
                 
-                // ── 顶点变形：采样法线贴图 RG 通道，沿法线方向偏移顶点 ──
+                // ── 顶点变形 ──
                 #ifdef _USEVERTEXDEFORM
-                    // 计算游走速度（Offset.xy）
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
-
                     float deformAmount;
+                    
                     #ifdef _DEFORM_USE_UV
-                        // 蒙皮稳定模式：不采样贴图，直接用顶点色 R × 强度做均匀法线膨胀
-                        // 避免任何采样差异导致的接缝破面和蒙皮抖动
-                        deformAmount = _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
+                        // 蒙皮/固定模式：用模型 UV 采样法线贴图，变形结果固定在模型表面
+                        // UV 不随旋转/平移/动画变化，所以变形位置完全固定
+                        float2 deformUV = IN.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                        float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
+                        float3 normalTS = UnpackNormal(normalTex);
+                        deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
+                        // 用 UV 哈希生成固定偏移方向，不依赖 normalOS
+                        float3 fixedDir;
+                        fixedDir.x = frac(sin(dot(IN.uv, float2(12.9898, 78.233))) * 43758.5453) * 2.0 - 1.0;
+                        fixedDir.y = frac(sin(dot(IN.uv, float2(39.346, 11.135))) * 43758.5453) * 2.0 - 1.0;
+                        fixedDir.z = frac(sin(dot(IN.uv, float2(73.156, 52.235))) * 43758.5453) * 2.0 - 1.0;
+                        fixedDir = normalize(fixedDir);
+                        IN.positionOS.xyz += fixedDir * deformAmount;
                     #else
                         // 世界坐标模式：用世界空间 XZ 坐标采样法线贴图，支持流动动画
                         float3 worldPosForDeform = TransformObjectToWorld(IN.positionOS.xyz);
@@ -288,14 +298,13 @@ Shader "Custom/Glass_MobileNew"
                         float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
                         float3 normalTS = UnpackNormal(normalTex);
                         deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * IN.vertexColor.r;
+                        IN.positionOS.xyz += IN.normalOS * deformAmount;
                     #endif
-
-                    IN.positionOS.xyz += normalize(IN.normalOS) * deformAmount;
                 #endif
 
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(IN.positionOS.xyz);
                 VertexNormalInputs normalInput = GetVertexNormalInputs(IN.normalOS, IN.tangentOS);
-                
+
                 OUT.positionCS = vertexInput.positionCS;
                 OUT.positionWS = vertexInput.positionWS;
                 OUT.screenPos = ComputeScreenPos(OUT.positionCS);
@@ -533,7 +542,16 @@ Shader "Custom/Glass_MobileNew"
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
                     float deformAmount;
                     #ifdef _DEFORM_USE_UV
-                        deformAmount = _VertexDeformStrength * _BumpScale * input.vertexColor.r;
+                        float2 deformUV = input.uv * _BumpMap_ST.xy + _BumpMap_ST.zw;
+                        float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
+                        float3 normalTS = UnpackNormal(normalTex);
+                        deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * input.vertexColor.r;
+                        float3 fixedDir;
+                        fixedDir.x = frac(sin(dot(input.uv, float2(12.9898, 78.233))) * 43758.5453) * 2.0 - 1.0;
+                        fixedDir.y = frac(sin(dot(input.uv, float2(39.346, 11.135))) * 43758.5453) * 2.0 - 1.0;
+                        fixedDir.z = frac(sin(dot(input.uv, float2(73.156, 52.235))) * 43758.5453) * 2.0 - 1.0;
+                        fixedDir = normalize(fixedDir);
+                        input.positionOS.xyz += fixedDir * deformAmount;
                     #else
                         float3 worldPosForDeform = TransformObjectToWorld(input.positionOS.xyz);
                         float2 deformUV = worldPosForDeform.xz * _BumpMap_ST.xy;
@@ -543,8 +561,8 @@ Shader "Custom/Glass_MobileNew"
                         float4 normalTex = SAMPLE_TEXTURE2D_LOD(_BumpMap, sampler_BumpMap, deformUV, 0);
                         float3 normalTS = UnpackNormal(normalTex);
                         deformAmount = (1.0 - normalTS.z) * _VertexDeformStrength * _BumpScale * input.vertexColor.r;
+                        input.positionOS.xyz += input.normalOS * deformAmount;
                     #endif
-                    input.positionOS.xyz += normalize(input.normalOS) * deformAmount;
                 #endif
 
                 float3 positionWS = TransformObjectToWorld(input.positionOS.xyz);

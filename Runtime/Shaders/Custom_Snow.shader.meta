@@ -1,0 +1,12 @@
+fileFormatVersion: 2
+guid: 567e35d629e517b4bb0dd741753f12ae
+ShaderImporter:
+  externalObjects: {}
+  defaultTextures:
+  - _BaseMap: {instanceID: 0}
+  - _NormalMap: {instanceID: 0}
+  - _SparkleTex: {fileID: 2800000, guid: 2602671bda5f5074ea20247360574cc7, type: 3}
+  nonModifiableTextures: []
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 

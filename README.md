@@ -9,6 +9,23 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.9.7
+
+- Snow 1.1 优化雪地闪烁表现，陡峭斜面剔除：法线Y分量越小说明越陡峭，剔除闪光避免拉线。
+  Snow 1.2 使用_SparkleTex G通道噪波增强镜头转动时随机闪烁效果，添加【蒙版纹理密度】值，完善GUI参数说明。
+  
+- 场景工具 v2.22 修复资源箱对象异常丢失，添加 ResourceBoxBuildPreprocessor — 打包前确保资源箱数据已保存。
+
+- FurShell 1.7 修复“使用圆锥风力”选项开关控制无效问题
+
+- 毛发材质圆锥风力场 WindConeController2.0 优化控制参数，修复targetFurRenderer相关参数控制实时生效。
+
+- Grass 2.0 添加草地交互系统，添加草地控制器脚本。
+
+  ![grassCollision](./README.assets/grassCollision.gif)
+
+
+
 ### 版本 2.9.6
 
 - [Material] 菜单添加 +Ctrl 键时更换材质。

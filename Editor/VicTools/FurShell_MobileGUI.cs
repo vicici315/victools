@@ -1,6 +1,7 @@
 // FurShell_MobileGUI 1.1 - 毛发shader的GUI控制脚本
 // 1.1 添加Tiling/Offset控制，优化按钮风格
 // 2.0 添加预设列表菜单
+// FurShell 1.7 修复“使用圆锥风力”选项开关控制无效问题
 
 using UnityEngine;
 using UnityEditor;
@@ -66,13 +67,13 @@ public class FurShell_MobileGUI : ShaderGUI
         EditorGUILayout.Space(5);
         DrawFurProperties();
         EditorGUILayout.Space(5);
+        DrawAdvancedSettings();
+        EditorGUILayout.Space(5);
         DrawWindSettings();
         EditorGUILayout.Space(5);
         DrawTouchSettings();
         EditorGUILayout.Space(5);
         DrawWindConeSettings();
-        EditorGUILayout.Space(5);
-        DrawAdvancedSettings();
     }
 
     private void FindProperties()
@@ -384,14 +385,14 @@ public class FurShell_MobileGUI : ShaderGUI
         
         if (shellAmount != null)
             m_MaterialEditor.ShaderProperty(shellAmount, "毛发层数");
+        if (furScale != null)
+            m_MaterialEditor.ShaderProperty(furScale, "毛发密度");
         if (furLength != null)
             m_MaterialEditor.ShaderProperty(furLength, "毛发长度");
         if (alphaOffset != null)
             m_MaterialEditor.ShaderProperty(alphaOffset, "Alpha偏移");
         if (alphaCutout != null)
             m_MaterialEditor.ShaderProperty(alphaCutout, "Alpha裁剪");
-        if (furScale != null)
-            m_MaterialEditor.ShaderProperty(furScale, "毛发密度");
         if (occlusion != null)
             m_MaterialEditor.ShaderProperty(occlusion, "光影遮蔽");
     }
@@ -493,21 +494,61 @@ public class FurShell_MobileGUI : ShaderGUI
                         material.SetFloat("_WindConeAngle", 30.0f);
                         material.SetFloat("_WindConeRange", 5.0f);
                         material.SetFloat("_WindConeFrequencyBoost", 2.0f);
-                        Debug.Log("已关闭圆锥风力并重置相关参数");
+                        
+                        // 同步关闭场景中所有 WindConeController 的 enableWindCone
+                        // 防止 Controller 每帧通过 PropertyBlock 覆盖材质值
+                        WindConeController[] controllers = GameObject.FindObjectsOfType<WindConeController>();
+                        foreach (var controller in controllers)
+                        {
+                            if (controller.enableWindCone)
+                            {
+                                Undo.RecordObject(controller, "Disable Wind Cone Controller");
+                                controller.enableWindCone = false;
+                                EditorUtility.SetDirty(controller);
+                            }
+                        }
+                        
+                        // 清除使用该材质的渲染器上残留的 PropertyBlock
+                        Renderer[] allRenderers = GameObject.FindObjectsOfType<Renderer>();
+                        foreach (var r in allRenderers)
+                        {
+                            if (r.sharedMaterial == material)
+                            {
+                                r.SetPropertyBlock(new MaterialPropertyBlock());
+                            }
+                        }
+                        
+                        Debug.Log("已关闭圆锥风力、同步关闭场景中的WindConeController并清除PropertyBlock");
                     }
                     
                     // 调试信息
                     Debug.Log($"UseWindCone设置为: {(newValue ? 1.0f : 0.0f)}, 材质值: {material.GetFloat("_UseWindCone")}");
                     
-                    // 如果启用圆锥风力，自动启用风力
-                    if (newValue && useWind != null)
+                    // 如果启用圆锥风力，自动启用风力，并同步启用场景中的 WindConeController
+                    if (newValue)
                     {
-                        float windValue = material.GetFloat("_UseWind");
-                        if (windValue < 0.5f)
+                        // 自动启用普通风力
+                        if (useWind != null)
                         {
-                            material.SetFloat("_UseWind", 1.0f);
-                            useWind.floatValue = 1.0f;
-                            Debug.Log("圆锥风力需要启用风力，已自动启用'使用风力'选项");
+                            float windValue = material.GetFloat("_UseWind");
+                            if (windValue < 0.5f)
+                            {
+                                material.SetFloat("_UseWind", 1.0f);
+                                useWind.floatValue = 1.0f;
+                                Debug.Log("圆锥风力需要启用风力，已自动启用'使用风力'选项");
+                            }
+                        }
+                        
+                        // 同步启用场景中的 WindConeController
+                        WindConeController[] controllers = GameObject.FindObjectsOfType<WindConeController>();
+                        foreach (var controller in controllers)
+                        {
+                            if (!controller.enableWindCone)
+                            {
+                                Undo.RecordObject(controller, "Enable Wind Cone Controller");
+                                controller.enableWindCone = true;
+                                EditorUtility.SetDirty(controller);
+                            }
                         }
                     }
                     
@@ -651,7 +692,7 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawAdvancedSettings()
     {
-        EditorGUILayout.LabelField("高级设置", EditorStyles.boldLabel);
+        // EditorGUILayout.LabelField("高级设置", EditorStyles.boldLabel);
         
         if (faceViewProdThresh != null)
             m_MaterialEditor.ShaderProperty(faceViewProdThresh, "剔除阈值");

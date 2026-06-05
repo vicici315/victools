@@ -1435,16 +1435,16 @@ namespace VicTools
             
             // 添加帮助和配置按钮 - 放在窗口右上角
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(new GUIContent("Menu", "辅助工具菜单"), GUILayout.Width(44), GUILayout.Height(14)))
+            if (GUILayout.Button(new GUIContent("Menu ▾", "辅助工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
             {
                 ShowMenuDropdown();
             }
-            if (GUILayout.Button(new GUIContent("Tools", "其它工具菜单"), GUILayout.Width(44), GUILayout.Height(14)))
+            if (GUILayout.Button(new GUIContent("Tools ▾", "其它工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
             {
                 ShowToolsDropdown();
             }
             GUI.backgroundColor = Color.green;
-            if (GUILayout.Button(new GUIContent("Material", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(56), GUILayout.Height(14)))
+            if (GUILayout.Button(new GUIContent("Material:URP ▾", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(94), GUILayout.Height(20)))
             {
                 ShowMaterialDropdown();
             }
@@ -1840,23 +1840,24 @@ namespace VicTools
         {
             GenericMenu menu = new GenericMenu();
             // ── 创建材质球（Ctrl+点击菜单项 = 直接替换选中对象材质的 Shader） ──
-            menu.AddItem(new GUIContent("创建材质球/PBR_Mobile（自定义PBR主材质）"),           false, () => CreateMaterialFromShader("Custom/PBR_Mobile"));
-            menu.AddItem(new GUIContent("创建材质球/PBR_Mobile_Trans（自定义PBR主材质透明版）"),     false, () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans"));
-            menu.AddSeparator("创建材质球/");   // 二级菜单分割线
-            menu.AddItem(new GUIContent("创建材质球/AddTrans（透明叠加，可模拟灯光照射）"),            false, () => CreateMaterialFromShader("Custom/AddTrans"));
-            menu.AddItem(new GUIContent("创建材质球/Glass_carWindow（玻璃材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_carWindow"));
-            menu.AddItem(new GUIContent("创建材质球/Glass_MobileNew（折射效果水、果冻材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_MobileNew"));
-            menu.AddItem(new GUIContent("创建材质球/Tree_Trans（植被树叶透明飘动材质）"),           false, () => CreateMaterialFromShader("Custom/Tree_Trans"));
-            menu.AddItem(new GUIContent("创建材质球/Grass（草地材质）"),                false, () => CreateMaterialFromShader("Custom/Grass"));
-            menu.AddItem(new GUIContent("创建材质球/Texture（纯贴图颜色Alpha透明）"),              false, () => CreateMaterialFromShader("Custom/Texture"));
-            menu.AddItem(new GUIContent("创建材质球/FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）"), false, () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC"));
-            menu.AddItem(new GUIContent("创建材质球/Custom_Hair（头发材质）"), false, () => CreateMaterialFromShader("Custom/Hair"));
-            menu.AddItem(new GUIContent("创建材质球/Custom_Toon（卡通材质）"), false, () => CreateMaterialFromShader("Custom/Toon"));
-            menu.AddSeparator("创建材质球/");
-            menu.AddItem(new GUIContent("创建材质球/ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
-            menu.AddItem(new GUIContent("创建材质球/Outline（模型描边）/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
-            menu.AddItem(new GUIContent("创建材质球/Outline（模型描边）/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
-            menu.AddItem(new GUIContent("创建材质球/Fx（特效）/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));
+            menu.AddItem(new GUIContent("PBR_Mobile（自定义PBR主材质）"),           false, () => CreateMaterialFromShader("Custom/PBR_Mobile"));
+            menu.AddItem(new GUIContent("PBR_Mobile_Trans（自定义PBR主材质透明版）"),     false, () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans"));
+            menu.AddSeparator("");   // 二级菜单分割线
+            menu.AddItem(new GUIContent("AddTrans（透明叠加，可模拟灯光照射）"),            false, () => CreateMaterialFromShader("Custom/AddTrans"));
+            menu.AddItem(new GUIContent("Glass_carWindow（玻璃材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_carWindow"));
+            menu.AddItem(new GUIContent("Glass_MobileNew（折射效果水、果冻材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_MobileNew"));
+            menu.AddItem(new GUIContent("Tree_Trans（植被树叶透明飘动材质）"),           false, () => CreateMaterialFromShader("Custom/Tree_Trans"));
+            menu.AddItem(new GUIContent("Grass（草地材质，可交互）"),                false, () => CreateMaterialFromShader("Custom/Grass"));
+            menu.AddItem(new GUIContent("Texture（纯贴图颜色Alpha透明）"),              false, () => CreateMaterialFromShader("Custom/Texture"));
+            menu.AddItem(new GUIContent("FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）"), false, () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC"));
+            menu.AddItem(new GUIContent("Custom_Hair（头发材质）"), false, () => CreateMaterialFromShader("Custom/Hair"));
+            menu.AddItem(new GUIContent("Custom_Toon（卡通材质）"), false, () => CreateMaterialFromShader("Custom/Toon"));
+            menu.AddItem(new GUIContent("Custom_Snow（雪地材质，可交互）"), false, () => CreateMaterialFromShader("Custom/Snow"));
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
+            menu.AddItem(new GUIContent("Outline（模型描边）/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
+            menu.AddItem(new GUIContent("Outline（模型描边）/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
+            menu.AddItem(new GUIContent("Fx（特效）/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));
             menu.ShowAsContext();
         }
 

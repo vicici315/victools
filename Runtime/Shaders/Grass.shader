@@ -12,6 +12,7 @@
     // UV 完整平铺 0~1 矩形，不会有任何扭曲
     // 3 段草体的尖角顶点被排除（因为单个三角面无法合理平铺矩形 UV）
 // Grass 1.8 添加超距离剔除：在Hull Shader阶段按摄像机距离线性衰减细分因子，超出距离后细分为0不生成草叶
+// Grass 2.0 添加草地交互系统，添加草地控制器脚本
 
 Shader "Custom/Grass"
 {
@@ -137,6 +138,47 @@ Shader "Custom/Grass"
         SAMPLER(sampler_BaseMap);
         TEXTURE2D(_BladeOverlayTex);
         SAMPLER(sampler_BladeOverlayTex);
+
+        // ─── 草地交互全局参数 ───
+        #define GRASS_MAX_INTERACTORS 4
+        float _GrassInteractionCount;
+        float _GrassInteractionStrength;
+        float4 _GrassInteractionData[GRASS_MAX_INTERACTORS]; // xyz=worldPos, w=radius
+
+        // 计算交互偏移：将草叶从交互点推开（返回世界空间偏移）
+        // 当交互点高度远离草地表面时，影响自动衰减为0
+        float3 ComputeInteractionOffset(float3 worldPos, float t)
+        {
+            float3 totalOffset = float3(0, 0, 0);
+            int count = clamp((int)_GrassInteractionCount, 0, GRASS_MAX_INTERACTORS);
+            if (count <= 0 || _GrassInteractionStrength <= 0) return totalOffset;
+
+            for (int i = 0; i < GRASS_MAX_INTERACTORS; i++)
+            {
+                if (i >= count) break;
+                float3 interactorPos = _GrassInteractionData[i].xyz;
+                float radius = _GrassInteractionData[i].w;
+                if (radius <= 0) continue;
+
+                float3 diff = worldPos - interactorPos;
+                float dist = length(diff.xz); // XZ平面距离
+
+                // 高度衰减：交互点与草地的垂直距离超过半径时不产生影响
+                float heightDiff = abs(diff.y);
+                float heightFade = saturate(1.0 - heightDiff / radius);
+
+                float influence = saturate(1.0 - dist / radius);
+                influence = influence * influence * heightFade; // 平滑衰减 + 高度衰减
+
+                // 推开方向（XZ平面）+ 向下压
+                float3 pushDir = float3(0, 0, 0);
+                if (dist > 0.001)
+                    pushDir = normalize(float3(diff.x, 0, diff.z));
+
+                totalOffset += (pushDir * influence - float3(0, influence * 0.5, 0)) * _GrassInteractionStrength * t * t;
+            }
+            return totalOffset;
+        }
 
         #include "CustomTessellation.hlsl"
 
@@ -267,7 +309,8 @@ Shader "Custom/Grass"
                     float3 toCamera = GetCameraPositionWS() - worldPos;
                     toCamera.y = 0;
                     toCamera = normalize(toCamera);
-                    rightDir = normalize(cross(float3(0, 1, 0), toCamera)) * width;
+                    // 反转rightDir方向，使三角形绕序在背面剔除时正确朝向摄像机
+                    rightDir = -normalize(cross(float3(0, 1, 0), toCamera)) * width;
                     faceNormal = toCamera;
                 }
                 else
@@ -281,6 +324,14 @@ Shader "Custom/Grass"
                 int layerCount = segments + 1;
                 float maxT = (float)segments / (float)BLADE_SEGMENTS;
 
+                // 交互偏移：公告板模式下禁用（避免shader编译问题）
+                float3 maxInteractOffset = float3(0, 0, 0);
+                if (_UseBillboard < 0.5)
+                {
+                    float3 grassWorldPos2 = TransformObjectToWorld(pos);
+                    maxInteractOffset = ComputeInteractionOffset(grassWorldPos2, 1.0);
+                }
+
                 [unroll]
                 for (int i = 0; i < 3; i++)
                 {
@@ -291,8 +342,8 @@ Shader "Custom/Grass"
                     float colorV = saturate(t / maxT);
 
                     float3 upOffset = float3(0, segmentHeight, 0);
-                    float3 localL = pos + rightDir + upOffset + segWindOffset;
-                    float3 localR = pos - rightDir + upOffset + segWindOffset;
+                    float3 localL = pos + rightDir + upOffset + segWindOffset + maxInteractOffset * t * t;
+                    float3 localR = pos - rightDir + upOffset + segWindOffset + maxInteractOffset * t * t;
 
                     geometryOutput oL;
                     oL.pos = TransformObjectToHClip(localL);
@@ -341,6 +392,10 @@ Shader "Custom/Grass"
                 float3 windVec = float3(windSample.x, 0, windSample.y) * heightScale;
                 totalBendAngle *= heightScale;
 
+                // 计算交互偏移（一次计算，按高度比例应用）
+                float3 grassWorldPos = TransformObjectToWorld(pos);
+                float3 maxInteractOffset = ComputeInteractionOffset(grassWorldPos, 1.0);
+
                 int segments = clamp((int)round(_BladeSegments), 1, BLADE_SEGMENTS);
                 int layerCount = segments < BLADE_SEGMENTS ? (segments + 1) : BLADE_SEGMENTS;
                 float maxT = (segments >= 3) ? 1.0 : (float)segments / (float)BLADE_SEGMENTS;
@@ -360,10 +415,13 @@ Shader "Custom/Grass"
                     float3x3 transformMatrix = mul(baseTransform, segBendRot);
                     float3 segWindOffset = windVec * t * t;
 
+                    // 交互偏移按 t*t 比例应用
+                    float3 interactOffset = maxInteractOffset * t * t;
+
                     float colorV = saturate(t / maxT);
 
-                    triStream.Append(GenerateGrassVertex(pos, segmentWidth, segmentHeight, float2(0, colorV), transformMatrix, segWindOffset, grassColor, float2(0, 0)));
-                    triStream.Append(GenerateGrassVertex(pos, -segmentWidth, segmentHeight, float2(1, colorV), transformMatrix, segWindOffset, grassColor, float2(0, 0)));
+                    triStream.Append(GenerateGrassVertex(pos + interactOffset, segmentWidth, segmentHeight, float2(0, colorV), transformMatrix, segWindOffset, grassColor, float2(0, 0)));
+                    triStream.Append(GenerateGrassVertex(pos + interactOffset, -segmentWidth, segmentHeight, float2(1, colorV), transformMatrix, segWindOffset, grassColor, float2(0, 0)));
                 }
 
                 if (segments >= 3)
@@ -371,7 +429,7 @@ Shader "Custom/Grass"
                     float3x3 tipBendRot = AngleAxis3x3(totalBendAngle, float3(1, 0, 0));
                     float3x3 tipTransform = mul(baseTransform, tipBendRot);
                     float3 tipWindOffset = windVec;
-                    triStream.Append(GenerateGrassVertex(pos, 0, height, float2(0.5, 1), tipTransform, tipWindOffset, grassColor, float2(0, 0)));
+                    triStream.Append(GenerateGrassVertex(pos + maxInteractOffset, 0, height, float2(0.5, 1), tipTransform, tipWindOffset, grassColor, float2(0, 0)));
                 }
                 #endif
             }

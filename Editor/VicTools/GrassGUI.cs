@@ -2,6 +2,7 @@
 // 参考 Glass_carWindowGUI 的控制逻辑实现
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 
 public class GrassGUI : ShaderGUI
 {
@@ -58,6 +59,8 @@ public class GrassGUI : ShaderGUI
             DrawWind();
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
             DrawDistanceCulling();
+        using (new GUILayout.VerticalScope(EditorStyles.helpBox))
+            DrawInteraction();
 
         DrawRenderSettings();
     }
@@ -388,10 +391,85 @@ public class GrassGUI : ShaderGUI
         EditorGUILayout.HelpBox("摄像机距离 < 开始衰减 → 全密度\n开始衰减 ~ 完全剔除 → 线性降低细分\n> 完全剔除 → 不生成草叶（细分=0）", MessageType.Info);
     }
 
+    private void DrawInteraction()
+    {
+        GUILayout.Label("6 ▌交互控制 (Interaction)", EditorStyles.boldLabel);
+
+        // 检查场景中是否已有 Controller
+        var controller = Object.FindObjectOfType<GrassInteractionController>();
+
+        if (controller != null)
+        {
+            EditorGUILayout.HelpBox($"场景中已存在交互控制器: {controller.gameObject.name}\n交互点数量: {controller.interactors.Count}/{GrassInteractionController.MaxInteractors}", MessageType.Info);
+
+            EditorGUILayout.BeginHorizontal();
+            GUI.backgroundColor = new Color(0.8f, 1.0f, 0.8f);
+            if (GUILayout.Button("选中交互控制器", GUILayout.Height(24)))
+            {
+                Selection.activeGameObject = controller.gameObject;
+                EditorGUIUtility.PingObject(controller.gameObject);
+            }
+
+            GUI.backgroundColor = new Color(1.0f, 0.9f, 0.6f);
+            if (GUILayout.Button("添加交互点", GUILayout.Height(24)))
+            {
+                CreateInteractorUnderController(controller);
+            }
+            GUI.backgroundColor = Color.white;
+            EditorGUILayout.EndHorizontal();
+        }
+        else
+        {
+            EditorGUILayout.HelpBox("场景中没有草地交互控制器。\n点击下方按钮创建控制器，然后添加交互对象。", MessageType.Warning);
+
+            GUI.backgroundColor = new Color(0.4f, 1.0f, 0.6f);
+            if (GUILayout.Button("创建交互控制器", GUILayout.Height(28)))
+            {
+                CreateInteractionController();
+            }
+            GUI.backgroundColor = Color.white;
+        }
+    }
+
+    private void CreateInteractionController()
+    {
+        GameObject controllerObj = new GameObject("GrassInteractionController");
+        var controller = controllerObj.AddComponent<GrassInteractionController>();
+
+        // 创建一个默认交互点作为子对象
+        CreateInteractorUnderController(controller);
+
+        Undo.RegisterCreatedObjectUndo(controllerObj, "Create Grass Interaction Controller");
+        Selection.activeGameObject = controllerObj;
+        EditorGUIUtility.PingObject(controllerObj);
+
+        // 标记场景为已修改
+        if (!Application.isPlaying)
+            EditorSceneManager.MarkSceneDirty(controllerObj.scene);
+
+        Debug.Log("[GrassGUI] 已创建草地交互控制器，包含一个默认交互点。");
+    }
+
+    private void CreateInteractorUnderController(GrassInteractionController controller)
+    {
+        GameObject interactorObj = new GameObject($"GrassInteractor_{controller.interactors.Count}");
+        interactorObj.transform.SetParent(controller.transform);
+        interactorObj.transform.localPosition = Vector3.zero;
+
+        var interactor = interactorObj.AddComponent<GrassInteractor>();
+        controller.interactors.Add(interactor);
+
+        Undo.RegisterCreatedObjectUndo(interactorObj, "Create Grass Interactor");
+        Selection.activeGameObject = interactorObj;
+
+        if (!Application.isPlaying)
+            EditorSceneManager.MarkSceneDirty(interactorObj.scene);
+    }
+
     private void DrawRenderSettings()
     {
         EditorGUILayout.Space(5);
-        GUILayout.Label("6 ▌渲染设置", EditorStyles.boldLabel);
+        GUILayout.Label("7 ▌渲染设置", EditorStyles.boldLabel);
 
         // 单双面渲染选项
         Material mat = m_MaterialEditor.target as Material;

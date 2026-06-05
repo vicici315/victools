@@ -4,6 +4,8 @@
 //FurShell 1.4 修改边缘光范围加大；修改变量_BaseColor；修改默认值
 //FurShell 1.5 支持多点触摸
 //FurShell 1.6 添加法线纹理控制毛发簇效果
+//FurShell 1.7 修复“使用圆锥风力”选项开关控制无效问题
+
 Shader "Custom/FurShell_Mobile_SingleC"
 {
     Properties
@@ -45,7 +47,6 @@ Shader "Custom/FurShell_Mobile_SingleC"
         // w: 空间频率，控制风动画随模型位置的变化 (值越大，空间变化越明显)
         _WindMove("Wind Move", Vector) = (1.2, 0.3, 0.2, 2.0)
         
-        [Space(20)]
         // 背面剔除阈值
         _FaceViewProdThresh("Direction Threshold", Range(0.0001, 1.0)) = 0.001
         // 触摸挤压参数（支持最多4个触摸点）
@@ -511,28 +512,23 @@ Shader "Custom/FurShell_Mobile_SingleC"
                 if (_UseWind > 0.5)
                 {
                     // 3.1 计算风角度：基于时间和频率参数
-                    // 公式：windAngle = _Time.w * _WindFreq.xyz
-                    // - _Time.w: Unity提供的全局时间
-                    // - _WindFreq.xyz: 风频率向量，控制动画速度
-                    //   不同轴向使用不同频率，创造更自然的风效果
                     float3 windAngle = _Time.w * _WindFreq.xyz;
                     
-                    // 3.2 应用圆锥频率增强
-                    // 在圆锥范围内增加风频率，模拟吹风机效果
-                    float frequencyBoost = 1.0 + (coneInfluence - 1.0) * _WindConeFrequencyBoost;
-                    windAngle *= frequencyBoost;
-                    
-                    // 3.3 计算风移动向量
-                    // 公式：windMove = moveFactor * _WindMove.xyz * sin(windAngle + posOS * _WindMove.w)
-                    // - moveFactor: 移动因子，控制不同层的风强度
-                    // - _WindMove.xyz: 使用调整后的风方向
-                    // - sin(...): 正弦函数创建周期性摆动
-                    // - posOS * _WindMove.w: 添加空间变化，使不同位置的毛发有不同的相位
+                    // 3.2 风移动向量
                     float3 windMoveVector = _WindMove.xyz;
-                    // 调整风方向以匹配圆锥方向
-                    windMoveVector = adjustedWindDirection * length(_WindMove.xyz);
-                    // 应用圆锥强度影响
-                    windMoveVector *= coneInfluence;
+                    
+                    // 仅在圆锥风启用时应用圆锥效果
+                    if (_UseWindCone > 0.5)
+                    {
+                        // 应用圆锥频率增强
+                        float frequencyBoost = 1.0 + (coneInfluence - 1.0) * _WindConeFrequencyBoost;
+                        windAngle *= frequencyBoost;
+                        
+                        // 调整风方向以匹配圆锥方向
+                        windMoveVector = adjustedWindDirection * length(_WindMove.xyz);
+                        // 应用圆锥强度影响
+                        windMoveVector *= coneInfluence;
+                    }
                     
                     windMove = moveFactor * windMoveVector * sin(windAngle + posOS * _WindMove.w);
                 }
