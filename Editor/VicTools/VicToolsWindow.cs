@@ -1663,6 +1663,7 @@ namespace VicTools
             menu.AddItem(new GUIContent("创建 混合变形控制（BlendShape）"), false, CreateBlendShapeAni);
             menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制（EmissionFlicker）"), false, CreateEmissionFlicker);
             menu.AddItem(new GUIContent("创建 旋转动画控制脚步（RotationController）"), false, CreateRotationController);
+            menu.AddItem(new GUIContent("创建 探照灯体积雾（SpotLightVolume）"), false, CreateSpotLightVolume);
             menu.ShowAsContext();
         }
 
@@ -1686,6 +1687,55 @@ namespace VicTools
             }
             Debug.Log($"成功为 {count} 个物体添加了组件。");
         }
+
+        private void CreateSpotLightVolume()
+        {
+            GameObject[] selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "请先在场景中选择Spot Light对象", "确定");
+                return;
+            }
+
+            int count = 0;
+            int skipped = 0;
+            int notSpot = 0;
+
+            foreach (GameObject obj in selectedObjects)
+            {
+                Light light = obj.GetComponent<Light>();
+                if (light == null || light.type != LightType.Spot)
+                {
+                    notSpot++;
+                    continue;
+                }
+
+                if (obj.GetComponent<SpotLightVolume>() != null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                Undo.AddComponent<SpotLightVolume>(obj);
+                var volume = obj.GetComponent<SpotLightVolume>();
+                if (volume != null)
+                {
+                    volume.maxDistance = light.range;
+                }
+                EditorUtility.SetDirty(obj);
+                count++;
+            }
+
+            if (count > 0)
+                Debug.Log($"[VicTools] 已为 {count} 个Spot Light创建SpotLightVolume体积雾效果");
+            if (skipped > 0)
+                Debug.Log($"[VicTools] 跳过 {skipped} 个已存在SpotLightVolume的灯光");
+            if (notSpot > 0)
+                Debug.LogWarning($"[VicTools] {notSpot} 个选中对象不是Spot Light，已忽略");
+            if (count == 0 && skipped == 0)
+                EditorUtility.DisplayDialog("提示", "选中对象中没有可用的Spot Light", "确定");
+        }
+
         private void CreateEmissionFlicker()
         {
             GameObject[] selectedObjects = Selection.gameObjects;

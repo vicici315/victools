@@ -66,6 +66,9 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.9.8",
+"- TextureGaussianBlur_HLSL v1.0 — 高斯模糊材质 Shader。",
+"- Tools菜单添加：探照灯体积雾（SpotLightVolume），SpotLightVolume v1.0 - 优化轻量探照灯体积雾效果。",
                 "■ v2.9.7",
 "- Custom_Snow 1.1 优化雪地闪烁表现，陡峭斜面剔除：法线Y分量越小说明越陡峭，剔除闪光避免拉线。",
 "  Custom_Snow 1.2 使用_SparkleTex G通道噪波增强镜头转动时随机闪烁效果，添加【蒙版纹理密度】值，完善GUI参数说明。",

@@ -116,6 +116,7 @@ public class ResourceBoxFileItem
         private Texture2D _switchPBRMIcon; // lightDir.png图标
         private Texture2D _levelIn; // 层级设置图标
         private Texture2D _levelOut; // 层级设置图标
+        private Texture2D _selectLayer; // 层级设置图标
         private bool _setStatic = false;
         private bool _selPrefab = false;
         private bool _selMesh = false;
@@ -190,6 +191,7 @@ public class ResourceBoxFileItem
             string switchPBRMicon = "Packages/com.youdoo.victools/Editor/VicTools/switchPBRM.png";
             string levelIn = "Packages/com.youdoo.victools/Editor/VicTools/level-In.png";
             string levelOut = "Packages/com.youdoo.victools/Editor/VicTools/level-Out.png";
+            string selectLayer = "Packages/com.youdoo.victools/Editor/VicTools/selectLayer.png";
             
             // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
             // #if UNITY_2019_3_OR_NEWER
@@ -207,6 +209,7 @@ public class ResourceBoxFileItem
             _switchPBRMIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(switchPBRMicon);
             _levelIn = AssetDatabase.LoadAssetAtPath<Texture2D>(levelIn);
             _levelOut = AssetDatabase.LoadAssetAtPath<Texture2D>(levelOut);
+            _selectLayer = AssetDatabase.LoadAssetAtPath<Texture2D>(selectLayer);
             
             // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
             // if (_lightDirIcon == null)
@@ -1191,7 +1194,7 @@ public class ResourceBoxFileItem
                 
                 if (_switchPBRMIcon != null)
                 {
-                    if (GUILayout.Button(new GUIContent(_switchPBRMIcon, "PBR_Mobile材质切换可接收灯光材质"), GUILayout.Height(35), GUILayout.Width(38)))
+                    if (GUILayout.Button(new GUIContent(_switchPBRMIcon, "PBR_Mobile材质切换可接收灯光材质"), GUILayout.Height(33), GUILayout.Width(38)))
                     {
                         SceneTools.SwitchPBRLightingShader(_setStatic);
                     }
@@ -1207,7 +1210,7 @@ public class ResourceBoxFileItem
                 SceneTools.RemoveSelectedObjectsFromParent();
             }
             GUI.backgroundColor = Color.cyan;
-            if (GUILayout.Button(new GUIContent("选择层级", "选择当前对象所在层级的所有对象"), GUILayout.Height(30)))
+            if (GUILayout.Button(new GUIContent(_selectLayer, "选择当前对象所在层级的所有对象"), GUILayout.Height(35), GUILayout.Width(38)))
             {
                 SceneTools.SelectAllHierarchy();
             }
@@ -1219,13 +1222,6 @@ public class ResourceBoxFileItem
                     SelectAssociatedLattice();
                 }
             }
-            GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
-            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的物体"), GUILayout.Height(30)))
-            {
-                // 根据选项选择场景中的物体
-                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissScript, _selAct, _selMeshObj, _selParticleObj, _selParent);
-            }
-            GUI.backgroundColor = Color.white;
             if (_lightDirIcon != null)
             {
                 if (GUILayout.Button(new GUIContent(_lightDirIcon, "以碰撞体落地操作（Ctrl+点击：以模型底部落地）"), GUILayout.Height(35), GUILayout.Width(38)))
@@ -1234,6 +1230,13 @@ public class ResourceBoxFileItem
                     SceneTools.PlaceObjectOnGround(useRaycast);
                 }
             }
+            GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
+            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象"), GUILayout.Height(30)))
+            {
+                // 根据选项选择场景中的物体
+                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissScript, _selAct, _selMeshObj, _selParticleObj, _selParent);
+            }
+            GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
         }
 
