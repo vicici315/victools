@@ -16,6 +16,10 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - Tools菜单添加：探照灯体积雾（SpotLightVolume），SpotLightVolume v1.0 - 优化轻量探照灯体积雾效果。
 
   ![image-20260605150714558](./README.assets/image-20260605150714558.png)
+  
+  SpotLightVolume v3.1 优化步进预计算为1步。效果上边缘过渡会稍微粗糙，性能有大幅提升。
+  
+  ![image-20260609171940276](./README.assets/image-20260609171940276.png)
 
 
 

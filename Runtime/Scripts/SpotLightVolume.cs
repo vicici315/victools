@@ -1,6 +1,8 @@
 /// SpotLightVolume v1.0 - 轻量探照灯体积雾效果
 /// 基于锥形Mesh + 自定义Shader的简洁实现，性能优化版本
 /// 参数：起始距离、最长距离、边缘羽化、末端羽化、混合方式等
+/// SpotLightVolume v2.0 - 参考VLB架构重写
+/// 归一化Mesh + localScale缩放 + 双Pass渲染 + Fresnel + 距离衰减 + DepthBlend
 
 using UnityEngine;
 
@@ -22,34 +24,42 @@ namespace Vic.Runtime
     [RequireComponent(typeof(Light))]
     public class SpotLightVolume : MonoBehaviour
     {
-        [Header("距离控制")]
-        [Tooltip("雾效起始距离（从光源出发）")]
+        // [Header("距离控制")]
+        [Tooltip("光源半径(光柱始端宽度): 0=尖锥, 越大始端越宽")]
         [Min(0f)]
-        public float startDistance = 0f;
+        public float lightSourceRadius = 0f;
 
-        [Tooltip("雾效最长距离（从光源出发）")]
+        [Tooltip("衰减起始距离")]
+        [Min(0f)]
+        public float fallOffStart = 0f;
+
+        [Tooltip("衰减结束距离(最远距离)")]
         [Min(0.1f)]
-        public float maxDistance = 10f;
+        public float maxDistance = 3f;
 
-        [Header("羽化控制")]
-        [Tooltip("边缘羽化强度（0=硬边，1=完全柔化）")]
+        // [Header("羽化控制")]
+        [Tooltip("边缘羽化: 值越大边缘越软，越小越硬")]
+        [Range(0.01f, 2f)]
+        public float edgeFade = 0.3f;
+
+        [Tooltip("末端羽化强度")]
         [Range(0f, 1f)]
-        public float edgeFade = 0.5f;
+        public float endFade = 0.5f;
 
-        [Tooltip("末端羽化强度（0=硬截断，1=完全淡出）")]
+        [Tooltip("正面眩光: 从光源方向看的亮度提升")]
         [Range(0f, 1f)]
-        public float endFade = 1.0f;
+        public float glareFrontal = 0.5f;
 
-        [Tooltip("深度混合距离（与场景模型交叠时的过渡距离，0=关闭）")]
-        [Range(0f, 5f)]
-        public float depthFadeDistance = 1.5f;
+        [Tooltip("背面眩光: 从光束后方看的亮度提升")]
+        [Range(0f, 1f)]
+        public float glareBehind = 0.3f;
 
-        [Header("外观")]
+        // [Header("外观")]
         [Tooltip("雾效整体强度")]
-        [Range(0f, 2f)]
+        [Range(0f, 5f)]
         public float intensity = 1f;
 
-        [Tooltip("雾效颜色（默认跟随灯光颜色）")]
+        [Tooltip("跟随灯光颜色")]
         public bool colorFromLight = true;
 
         [ColorUsage(false, true)]
@@ -58,35 +68,41 @@ namespace Vic.Runtime
         [Tooltip("混合方式")]
         public VolumeBlendMode blendMode = VolumeBlendMode.Additive;
 
-        [Header("Mesh质量")]
-        [Tooltip("圆锥面数（越高越圆滑，越低越省）")]
-        [Range(6, 32)]
-        public int coneSides = 8;
+        // [Header("Mesh质量")]
+        [Tooltip("圆锥面数")]
+        [Range(3, 32)]
+        public int coneSides = 12;
 
         [Tooltip("圆锥分段数")]
-        [Range(1, 8)]
+        [Range(1, 10)]
         public int coneSegments = 1;
 
         // 内部引用
         private Light _light;
         private MeshFilter _meshFilter;
         private MeshRenderer _meshRenderer;
-        private Mesh _coneMesh;
         private Material _material;
         private GameObject _volumeChild;
+
+        // 共享归一化Mesh缓存 (同sides+segments的beam共享一个mesh)
+        private static Mesh _sharedMesh;
+        private static int _sharedMeshSides;
+        private static int _sharedMeshSegments;
 
         // Shader属性ID缓存
         private static readonly int _ColorID = Shader.PropertyToID("_VolumeColor");
         private static readonly int _IntensityID = Shader.PropertyToID("_Intensity");
-        private static readonly int _StartDistID = Shader.PropertyToID("_StartDistance");
-        private static readonly int _MaxDistID = Shader.PropertyToID("_MaxDistance");
+        private static readonly int _FallOffStartID = Shader.PropertyToID("_FallOffStart");
+        private static readonly int _FallOffEndID = Shader.PropertyToID("_FallOffEnd");
         private static readonly int _EdgeFadeID = Shader.PropertyToID("_EdgeFade");
         private static readonly int _EndFadeID = Shader.PropertyToID("_EndFade");
-        private static readonly int _DepthFadeDistID = Shader.PropertyToID("_DepthFadeDistance");
+        private static readonly int _GlareFrontalID = Shader.PropertyToID("_GlareFrontal");
+        private static readonly int _GlareBehindID = Shader.PropertyToID("_GlareBehind");
         private static readonly int _ConeRadiusStartID = Shader.PropertyToID("_ConeRadiusStart");
         private static readonly int _ConeRadiusEndID = Shader.PropertyToID("_ConeRadiusEnd");
+        private static readonly int _ConeSlopeCosSinID = Shader.PropertyToID("_ConeSlopeCosSin");
 
-        // 缓存值用于变更检测
+        // 缓存值
         private float _cachedSpotAngle;
         private float _cachedMaxDistance;
         private int _cachedSides;
@@ -96,11 +112,11 @@ namespace Vic.Runtime
         {
             _light = GetComponent<Light>();
             EnsureVolumeChild();
-            RebuildMesh();
+            UpdateGeometry();
             UpdateMaterial();
-            
-            // 确保相机渲染深度贴图（深度混合功能需要）
-            if (depthFadeDistance > 0 && Camera.main != null)
+
+            // 确保深度纹理可用（shader需要采样场景深度来做遮挡）
+            if (Camera.main != null)
             {
                 Camera.main.depthTextureMode |= DepthTextureMode.Depth;
             }
@@ -116,14 +132,13 @@ namespace Vic.Runtime
         {
             if (_light == null || _light.type != LightType.Spot) return;
 
-            // 检测是否需要重建Mesh
             bool needRebuild = !Mathf.Approximately(_cachedSpotAngle, _light.spotAngle)
                             || !Mathf.Approximately(_cachedMaxDistance, maxDistance)
                             || _cachedSides != coneSides
                             || _cachedSegments != coneSegments;
 
             if (needRebuild)
-                RebuildMesh();
+                UpdateGeometry();
 
             UpdateMaterial();
         }
@@ -138,16 +153,6 @@ namespace Vic.Runtime
                 else
 #endif
                     Destroy(_volumeChild);
-            }
-
-            if (_coneMesh != null)
-            {
-#if UNITY_EDITOR
-                if (!Application.isPlaying)
-                    DestroyImmediate(_coneMesh);
-                else
-#endif
-                    Destroy(_coneMesh);
             }
 
             if (_material != null)
@@ -166,10 +171,11 @@ namespace Vic.Runtime
             if (_volumeChild != null)
             {
                 _volumeChild.SetActive(true);
+                _meshFilter = _volumeChild.GetComponent<MeshFilter>();
+                _meshRenderer = _volumeChild.GetComponent<MeshRenderer>();
                 return;
             }
 
-            // 查找已有的子对象
             Transform existing = transform.Find("__SpotLightVolumeMesh__");
             if (existing != null)
             {
@@ -180,7 +186,6 @@ namespace Vic.Runtime
                 return;
             }
 
-            // 创建新子对象
             _volumeChild = new GameObject("__SpotLightVolumeMesh__");
             _volumeChild.transform.SetParent(transform, false);
             _volumeChild.transform.localPosition = Vector3.zero;
@@ -196,7 +201,8 @@ namespace Vic.Runtime
             _meshRenderer.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
         }
 
-        private void RebuildMesh()
+        /// 更新几何体：使用归一化Mesh + localScale缩放
+        private void UpdateGeometry()
         {
             if (_light == null || _light.type != LightType.Spot) return;
 
@@ -205,24 +211,23 @@ namespace Vic.Runtime
             _cachedSides = coneSides;
             _cachedSegments = coneSegments;
 
-            float radiusEnd = maxDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
-            float radiusStart = 0.001f; // 微小起始半径避免法线退化
-
-            if (_coneMesh == null)
-                _coneMesh = new Mesh();
-            else
-                _coneMesh.Clear();
-
-            _coneMesh.name = "SpotLightVolumeCone";
-            GenerateConeMesh(_coneMesh, maxDistance, radiusStart, radiusEnd, coneSides, coneSegments);
-
+            // 获取或创建共享归一化Mesh
+            Mesh mesh = GetSharedNormalizedMesh(coneSides, coneSegments);
             if (_meshFilter != null)
-                _meshFilter.sharedMesh = _coneMesh;
+                _meshFilter.sharedMesh = mesh;
+
+            // 通过localScale控制锥体实际尺寸
+            // 归一化Mesh: XY在[-1,1], Z在[0,1]
+            // localScale使其变为实际世界尺寸
+            float radiusEnd = maxDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
+            float maxRadius = Mathf.Max(radiusEnd, Mathf.Max(lightSourceRadius, 0.001f));
+            if (_volumeChild != null)
+                _volumeChild.transform.localScale = new Vector3(maxRadius, maxRadius, maxDistance);
         }
 
         private void UpdateMaterial()
         {
-            if (_meshRenderer == null) return;
+            if (_meshRenderer == null || _light == null) return;
 
             if (_material == null)
             {
@@ -237,7 +242,7 @@ namespace Vic.Runtime
                 _meshRenderer.sharedMaterial = _material;
             }
 
-            // 设置混合模式关键字
+            // 混合模式
             _material.DisableKeyword("_BLEND_ADDITIVE");
             _material.DisableKeyword("_BLEND_SOFTADD");
             _material.DisableKeyword("_BLEND_ALPHA");
@@ -261,90 +266,169 @@ namespace Vic.Runtime
             }
 
             // 颜色
-            Color c = colorFromLight && _light != null ? _light.color : volumeColor;
+            Color c = colorFromLight ? _light.color : volumeColor;
             _material.SetColor(_ColorID, c);
             _material.SetFloat(_IntensityID, intensity);
-            _material.SetFloat(_StartDistID, startDistance);
-            _material.SetFloat(_MaxDistID, maxDistance);
+            _material.SetFloat(_FallOffStartID, fallOffStart);
+            _material.SetFloat(_FallOffEndID, maxDistance);
             _material.SetFloat(_EdgeFadeID, edgeFade);
             _material.SetFloat(_EndFadeID, endFade);
-            _material.SetFloat(_DepthFadeDistID, depthFadeDistance);
+            _material.SetFloat(_GlareFrontalID, glareFrontal);
+            _material.SetFloat(_GlareBehindID, glareBehind);
 
+            // 锥体参数
             float radiusEnd = maxDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
-            _material.SetFloat(_ConeRadiusStartID, 0.001f);
+            float radiusStart = Mathf.Max(lightSourceRadius, 0.001f); // 最小保留微小值避免法线退化
+            _material.SetFloat(_ConeRadiusStartID, radiusStart);
             _material.SetFloat(_ConeRadiusEndID, radiusEnd);
 
-            // 渲染队列
+            // 锥面斜率 cos/sin（基于实际radiusStart和radiusEnd）
+            float slopeAngle = Mathf.Atan2(radiusEnd - radiusStart, maxDistance);
+            float cosSlope = Mathf.Cos(slopeAngle);
+            float sinSlope = Mathf.Sin(slopeAngle);
+            _material.SetVector(_ConeSlopeCosSinID, new Vector4(cosSlope, sinSlope, 0, 0));
+
             _material.renderQueue = 3100;
         }
 
-        /// 生成锥形Mesh
-        private static void GenerateConeMesh(Mesh mesh, float length, float radiusStart, float radiusEnd, int sides, int segments)
+        /// 获取或创建共享的归一化锥形Mesh
+        /// 归一化Mesh：顶点XY在[-1,1]，Z在[0,1]，含前后两个Cap
+        private static Mesh GetSharedNormalizedMesh(int sides, int segments)
         {
-            int vertCount = sides * (segments + 2);
-            var vertices = new Vector3[vertCount];
-            var uvs = new Vector2[vertCount]; // uv.x = 归一化深度, uv.y = 归一化径向位置
+            if (_sharedMesh != null && _sharedMeshSides == sides && _sharedMeshSegments == segments)
+                return _sharedMesh;
 
-            float angleOffset = sides == 4 ? Mathf.PI * 0.25f : 0f;
+            _sharedMesh = GenerateNormalizedConeMesh(sides, segments);
+            _sharedMeshSides = sides;
+            _sharedMeshSegments = segments;
+            return _sharedMesh;
+        }
 
+        /// 生成归一化锥形Mesh：XY在[-1,1], Z在[0,1]
+        /// 包含锥面 + 前Cap(Z=0) + 后Cap(Z=1)，确保Cull Front时从任何角度都有面可渲染
+        /// UV.x标记：0=锥面, 1=cap
+        private static Mesh GenerateNormalizedConeMesh(int sides, int segments)
+        {
+            var mesh = new Mesh();
+            mesh.name = "SpotLightVolume_SharedCone";
+
+            // 锥面顶点 + 前Cap(Z=0) + 后Cap(Z=1)
+            int vertCountSides = sides * (segments + 2);
+            int vertCountFrontCap = sides + 1; // 中心 + 一圈
+            int vertCountBackCap = sides + 1;  // 中心 + 一圈
+            int vertCountTotal = vertCountSides + vertCountFrontCap + vertCountBackCap;
+
+            var vertices = new Vector3[vertCountTotal];
+            var uvs = new Vector2[vertCountTotal]; // uv.x: 0=sides, 1=cap
+
+            // === 锥面顶点 ===
             for (int i = 0; i < sides; i++)
             {
-                float angle = angleOffset + 2f * Mathf.PI * i / sides;
+                float angle = 2f * Mathf.PI * i / sides;
                 float cos = Mathf.Cos(angle);
                 float sin = Mathf.Sin(angle);
 
                 for (int seg = 0; seg <= segments + 1; seg++)
                 {
                     float t = (float)seg / (segments + 1);
-                    // 非线性分布：靠近光源更密集
-                    float tz = t * t;
-                    float radius = Mathf.Lerp(radiusStart, radiusEnd, tz);
                     int idx = i + seg * sides;
-                    vertices[idx] = new Vector3(radius * cos, radius * sin, tz * length);
-                    uvs[idx] = new Vector2(tz, 1f); // x=深度比, y=边缘标记
+                    vertices[idx] = new Vector3(cos, sin, t);
+                    uvs[idx] = new Vector2(0, 0);
                 }
             }
 
-            // 单面三角形（配合Cull Front，只渲染内表面）
-            int triCount = sides * (segments + 1) * 6;
-            var triangles = new int[triCount];
+            // === 前Cap顶点（Z=0处）===
+            int frontCapStart = vertCountSides;
+            vertices[frontCapStart] = Vector3.zero;
+            uvs[frontCapStart] = new Vector2(1, 0);
+            for (int i = 0; i < sides; i++)
+            {
+                float angle = 2f * Mathf.PI * i / sides;
+                vertices[frontCapStart + 1 + i] = new Vector3(Mathf.Cos(angle), Mathf.Sin(angle), 0f);
+                uvs[frontCapStart + 1 + i] = new Vector2(1, 0);
+            }
+
+            // === 后Cap顶点（Z=1处）===
+            int backCapStart = frontCapStart + vertCountFrontCap;
+            vertices[backCapStart] = new Vector3(0, 0, 1f);
+            uvs[backCapStart] = new Vector2(1, 0);
+            for (int i = 0; i < sides; i++)
+            {
+                float angle = 2f * Mathf.PI * i / sides;
+                vertices[backCapStart + 1 + i] = new Vector3(Mathf.Cos(angle), Mathf.Sin(angle), 1f);
+                uvs[backCapStart + 1 + i] = new Vector2(1, 0);
+            }
+
+            // === 三角形 ===
+            int triCountSides = sides * (segments + 1) * 6;
+            int triCountFrontCap = sides * 3;
+            int triCountBackCap = sides * 3;
+            var triangles = new int[triCountSides + triCountFrontCap + triCountBackCap];
             int tri = 0;
 
+            // 锥面三角形（正面朝外 — Cull Front时背面对相机可见）
             for (int seg = 0; seg < segments + 1; seg++)
             {
                 for (int i = 0; i < sides; i++)
                 {
                     int current = seg * sides + i;
                     int next = seg * sides + (i + 1) % sides;
-                    int currentNext = (seg + 1) * sides + i;
-                    int nextNext = (seg + 1) * sides + (i + 1) % sides;
+                    int currentUp = (seg + 1) * sides + i;
+                    int nextUp = (seg + 1) * sides + (i + 1) % sides;
 
                     triangles[tri++] = current;
-                    triangles[tri++] = currentNext;
                     triangles[tri++] = next;
+                    triangles[tri++] = currentUp;
 
                     triangles[tri++] = next;
-                    triangles[tri++] = currentNext;
-                    triangles[tri++] = nextNext;
+                    triangles[tri++] = nextUp;
+                    triangles[tri++] = currentUp;
                 }
+            }
+
+            // 前Cap三角形（正面朝+Z方向，背面朝-Z = 从正面看时Cull Front可见）
+            for (int i = 0; i < sides; i++)
+            {
+                int nextI = (i + 1) % sides;
+                triangles[tri++] = frontCapStart;
+                triangles[tri++] = frontCapStart + 1 + i;
+                triangles[tri++] = frontCapStart + 1 + nextI;
+            }
+
+            // 后Cap三角形（正面朝-Z方向，背面朝+Z = 从背后看时Cull Front可见）
+            for (int i = 0; i < sides; i++)
+            {
+                int nextI = (i + 1) % sides;
+                triangles[tri++] = backCapStart;
+                triangles[tri++] = backCapStart + 1 + nextI;
+                triangles[tri++] = backCapStart + 1 + i;
             }
 
             mesh.vertices = vertices;
             mesh.uv = uvs;
             mesh.triangles = triangles;
             mesh.RecalculateBounds();
+            return mesh;
         }
 
         void OnValidate()
         {
             maxDistance = Mathf.Max(0.1f, maxDistance);
-            startDistance = Mathf.Clamp(startDistance, 0f, maxDistance - 0.01f);
+            fallOffStart = Mathf.Clamp(fallOffStart, 0f, maxDistance - 0.01f);
+            lightSourceRadius = Mathf.Max(0f, lightSourceRadius);
 
-            if (_light != null && enabled)
+            // 延迟到下一帧执行，避免OnValidate中SendMessage错误
+#if UNITY_EDITOR
+            UnityEditor.EditorApplication.delayCall += () =>
             {
-                RebuildMesh();
-                UpdateMaterial();
-            }
+                if (this == null) return;
+                if (_light != null && enabled)
+                {
+                    UpdateGeometry();
+                    UpdateMaterial();
+                }
+            };
+#endif
         }
 
 #if UNITY_EDITOR
@@ -355,18 +439,15 @@ namespace Vic.Runtime
             Gizmos.color = new Color(0.3f, 0.8f, 1f, 0.3f);
             Gizmos.matrix = transform.localToWorldMatrix;
 
-            // 绘制雾效范围辅助线
             float radiusEnd = maxDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
-            float radiusStart = startDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
+            float radiusStart = fallOffStart * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
 
-            // 起始面
-            if (startDistance > 0)
+            if (fallOffStart > 0)
             {
                 Gizmos.color = new Color(1f, 1f, 0f, 0.4f);
-                DrawWireCircle(Vector3.forward * startDistance, radiusStart, 16);
+                DrawWireCircle(Vector3.forward * fallOffStart, radiusStart, 16);
             }
 
-            // 末端面
             Gizmos.color = new Color(0.3f, 0.8f, 1f, 0.4f);
             DrawWireCircle(Vector3.forward * maxDistance, radiusEnd, 16);
         }

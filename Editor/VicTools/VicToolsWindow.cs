@@ -1662,7 +1662,7 @@ namespace VicTools
             // menu.AddSeparator("");
             menu.AddItem(new GUIContent("创建 混合变形控制（BlendShape）"), false, CreateBlendShapeAni);
             menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制（EmissionFlicker）"), false, CreateEmissionFlicker);
-            menu.AddItem(new GUIContent("创建 旋转动画控制脚步（RotationController）"), false, CreateRotationController);
+            menu.AddItem(new GUIContent("创建 旋转动画控制脚本（RotationController）"), false, CreateRotationController);
             menu.AddItem(new GUIContent("创建 探照灯体积雾（SpotLightVolume）"), false, CreateSpotLightVolume);
             menu.ShowAsContext();
         }
@@ -1722,6 +1722,13 @@ namespace VicTools
                 {
                     volume.maxDistance = light.range;
                 }
+
+                // 禁用灯光实时照明，仅用于提供角度/颜色参数给体积雾
+                // light.renderMode = LightRenderMode.ForceVertex;
+                // light.intensity = 0f;
+                // light.bounceIntensity = 0f;
+                // light.shadows = LightShadows.None;
+
                 EditorUtility.SetDirty(obj);
                 count++;
             }
@@ -1905,6 +1912,7 @@ namespace VicTools
             menu.AddItem(new GUIContent("Custom_Snow（雪地材质，可交互）"), false, () => CreateMaterialFromShader("Custom/Snow"));
             menu.AddSeparator("");
             menu.AddItem(new GUIContent("ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
+            menu.AddItem(new GUIContent("TextureGaussianBlur（ScreenColor高斯模糊材质）"),       false, () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL"));
             menu.AddItem(new GUIContent("Outline（模型描边）/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
             menu.AddItem(new GUIContent("Outline（模型描边）/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
             menu.AddItem(new GUIContent("Fx（特效）/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));

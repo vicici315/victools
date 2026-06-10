@@ -1,0 +1,29 @@
+{
+    "lightSourceRadius": 0.07999999821186066,
+    "fallOffStart": 0.3499999940395355,
+    "maxDistance": 27.729999542236329,
+    "edgeFade": 0.9629999995231628,
+    "endFade": 0.30000001192092898,
+    "glareFrontal": 0.5,
+    "glareBehind": 0.30000001192092898,
+    "intensity": 5.0,
+    "colorFromLight": true,
+    "volumeColor": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+    ],
+    "blendMode": 1,
+    "coneSides": 8,
+    "coneSegments": 2,
+    "lowQuality": true,
+    "spotAngle": 8.493795394897461,
+    "innerSpotAngle": 0.0,
+    "lightColor": [
+        0.0,
+        1.0,
+        0.014388561248779297,
+        1.0
+    ]
+}
