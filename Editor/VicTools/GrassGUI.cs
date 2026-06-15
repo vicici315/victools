@@ -3,6 +3,7 @@
 using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
+using Vic.Runtime;
 
 public class GrassGUI : ShaderGUI
 {

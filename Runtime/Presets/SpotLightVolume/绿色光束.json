@@ -1,0 +1,32 @@
+{
+    "lightSourceRadius": 0.05999999865889549,
+    "fallOffStart": 9.020000457763672,
+    "maxDistance": 27.729999542236329,
+    "edgeFade": 1.5099999904632569,
+    "endFade": 0.30000001192092898,
+    "glareFrontal": 0.5,
+    "glareBehind": 0.30000001192092898,
+    "intensity": 5.0,
+    "colorFromLight": true,
+    "volumeColor": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+    ],
+    "blendMode": 1,
+    "coneSides": 8,
+    "coneSegments": 1,
+    "enableOcclusion": true,
+    "occlusionLayerMask": 487,
+    "occlusionUpdateInterval": 0.08500000089406967,
+    "occlusionDetectTriggers": false,
+    "spotAngle": 2.8670814037323,
+    "innerSpotAngle": 0.0,
+    "lightColor": [
+        0.0,
+        1.0,
+        0.014388561248779297,
+        1.0
+    ]
+}

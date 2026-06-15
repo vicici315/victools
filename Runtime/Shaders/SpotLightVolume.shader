@@ -1,5 +1,6 @@
-// SpotLightVolume v3.0 - 参考VLB HD架构
-// 单Pass(Cull Front) + Ray-Cone Intersection + 简化Raymarching
+// SpotLightVolume v5.0 - 参考VLB HD架构
+// v3.0 单Pass(Cull Front) + Ray-Cone Intersection + 简化Raymarching
+// v5.0 增加射线遮挡截断
 // 从任意方向（包括正面面对光源）都可见
 Shader "Hidden/VicTools/SpotLightVolume"
 {
@@ -16,6 +17,7 @@ Shader "Hidden/VicTools/SpotLightVolume"
         _ConeRadiusStart ("锥体起始半径", Float) = 0.001
         _ConeRadiusEnd ("锥体末端半径", Float) = 3
         _ConeSlopeCosSin ("锥面斜率CosSin", Vector) = (1, 0, 0, 0)
+        _ClipDistance ("射线截断距离", Float) = -1
 
         [HideInInspector] _SrcBlend ("SrcBlend", Int) = 1
         [HideInInspector] _DstBlend ("DstBlend", Int) = 1
@@ -31,8 +33,6 @@ Shader "Hidden/VicTools/SpotLightVolume"
             "RenderPipeline" = "UniversalPipeline"
         }
 
-        // 单Pass：只渲染内表面（背面），ZTest Always确保任何角度可见
-        // 通过fragment shader中ray-cone intersection + depth clipping实现正确遮挡
         Pass
         {
             Name "SpotLightVolume"

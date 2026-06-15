@@ -13,6 +13,7 @@
     // 3 段草体的尖角顶点被排除（因为单个三角面无法合理平铺矩形 UV）
 // Grass 1.8 添加超距离剔除：在Hull Shader阶段按摄像机距离线性衰减细分因子，超出距离后细分为0不生成草叶
 // Grass 2.0 添加草地交互系统，添加草地控制器脚本
+// Grass 2.1 添加DepthOnly pass写入深度纹理，修复SpotLightVolume无法被草遮挡的问题；ForwardLit显式ZWrite On；ShadowCaster支持overlay alpha clip
 
 Shader "Custom/Grass"
 {
@@ -443,6 +444,7 @@ Shader "Custom/Grass"
         {
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
+            ZWrite On
 
             HLSLPROGRAM
             #pragma vertex vert
@@ -515,6 +517,37 @@ Shader "Custom/Grass"
 
             half4 fragShadow(geometryOutput i) : SV_Target
             {
+                #ifdef _BLADE_OVERLAY_ON
+                half4 overlay = SAMPLE_TEXTURE2D(_BladeOverlayTex, sampler_BladeOverlayTex, i.overlayUV);
+                clip(overlay.a - _BladeOverlayAlphaClip);
+                #endif
+                return 0;
+            }
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+            ZWrite On
+            ZTest LEqual
+            ColorMask R
+
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma hull hull
+            #pragma domain domain
+            #pragma geometry geo
+            #pragma fragment fragDepth
+            #pragma target 4.6
+
+            half4 fragDepth(geometryOutput i) : SV_Target
+            {
+                #ifdef _BLADE_OVERLAY_ON
+                half4 overlay = SAMPLE_TEXTURE2D(_BladeOverlayTex, sampler_BladeOverlayTex, i.overlayUV);
+                clip(overlay.a - _BladeOverlayAlphaClip);
+                #endif
                 return 0;
             }
             ENDHLSL

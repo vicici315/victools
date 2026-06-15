@@ -1,5 +1,6 @@
-/// SpotLightVolume v3.0 自定义Inspector面板
-/// 存档/读档/预设按钮 + 参数面板
+/// SpotLightVolume v5.0 自定义Inspector面板
+/// 存档/读档/预设按钮 + 参数面板 + 射线遮挡参数
+/// SpotLightVolume v6.0 重构代码，改进重复的GetComponent调用，消除 UpdateGeometry 和 UpdateMaterial 中的重复计算
 
 using UnityEngine;
 using UnityEditor;
@@ -11,19 +12,27 @@ namespace VicTools
     [CanEditMultipleObjects]
     public class SpotLightVolumeEditor : Editor
     {
+        // 距离
         private SerializedProperty lightSourceRadius;
         private SerializedProperty fallOffStart;
         private SerializedProperty maxDistance;
+        // 羽化
         private SerializedProperty edgeFade;
         private SerializedProperty endFade;
         private SerializedProperty glareFrontal;
         private SerializedProperty glareBehind;
+        // 外观
         private SerializedProperty intensity;
         private SerializedProperty colorFromLight;
         private SerializedProperty volumeColor;
         private SerializedProperty blendMode;
+        // Mesh
         private SerializedProperty coneSides;
         private SerializedProperty coneSegments;
+        // 射线遮挡
+        private SerializedProperty enableOcclusion;
+        private SerializedProperty occlusionLayerMask;
+        private SerializedProperty occlusionUpdateInterval;
 
         private const string SaveFolderBase = "Library/VicTools/SpotLightVolume";
         private const string PresetFolder = "Packages/com.youdoo.victools/Runtime/Presets/SpotLightVolume";
@@ -43,88 +52,113 @@ namespace VicTools
             blendMode = serializedObject.FindProperty("blendMode");
             coneSides = serializedObject.FindProperty("coneSides");
             coneSegments = serializedObject.FindProperty("coneSegments");
+            enableOcclusion = serializedObject.FindProperty("enableOcclusion");
+            occlusionLayerMask = serializedObject.FindProperty("occlusionLayerMask");
+            occlusionUpdateInterval = serializedObject.FindProperty("occlusionUpdateInterval");
         }
 
         public override void OnInspectorGUI()
         {
             serializedObject.Update();
 
-            // ─── 顶部标题 + 存档/读档/预设按钮 ───
             DrawHeader();
             EditorGUILayout.Space(4);
 
-            // 距离
-            EditorGUILayout.LabelField("距离控制", EditorStyles.miniBoldLabel);
-            EditorGUILayout.PropertyField(lightSourceRadius, new GUIContent("光源半径(始端宽度)"));
-            EditorGUILayout.PropertyField(fallOffStart, new GUIContent("衰减起始"));
-            EditorGUILayout.PropertyField(maxDistance, new GUIContent("最远距离"));
-            EditorGUILayout.Space(4);
-
-            // 羽化
-            EditorGUILayout.LabelField("羽化控制", EditorStyles.miniBoldLabel);
-            EditorGUILayout.PropertyField(edgeFade, new GUIContent("边缘羽化"));
-            EditorGUILayout.PropertyField(endFade, new GUIContent("末端羽化"));
-            EditorGUILayout.PropertyField(glareFrontal, new GUIContent("正面眩光"));
-            EditorGUILayout.PropertyField(glareBehind, new GUIContent("背面眩光"));
-            EditorGUILayout.Space(4);
-
-            // 外观
-            EditorGUILayout.LabelField("外观", EditorStyles.miniBoldLabel);
-            EditorGUILayout.PropertyField(intensity, new GUIContent("强度"));
-            EditorGUILayout.PropertyField(blendMode, new GUIContent("混合方式"));
-            EditorGUILayout.PropertyField(colorFromLight, new GUIContent("跟随灯光颜色"));
-            if (!colorFromLight.boolValue)
+            DrawSection("距离控制", () =>
             {
-                EditorGUI.indentLevel++;
-                EditorGUILayout.PropertyField(volumeColor, new GUIContent("自定义颜色"));
-                EditorGUI.indentLevel--;
-            }
-            EditorGUILayout.Space(4);
+                EditorGUILayout.PropertyField(lightSourceRadius, new GUIContent("光源半径(始端宽度)"));
+                EditorGUILayout.PropertyField(fallOffStart, new GUIContent("衰减起始"));
+                EditorGUILayout.PropertyField(maxDistance, new GUIContent("最远距离"));
+            });
 
-            // Mesh质量
-            EditorGUILayout.LabelField("Mesh 质量", EditorStyles.miniBoldLabel);
-            EditorGUILayout.PropertyField(coneSides, new GUIContent("圆锥面数"));
-            EditorGUILayout.PropertyField(coneSegments, new GUIContent("圆锥分段"));
+            DrawSection("羽化控制", () =>
+            {
+                EditorGUILayout.PropertyField(edgeFade, new GUIContent("边缘羽化"));
+                EditorGUILayout.PropertyField(endFade, new GUIContent("末端羽化"));
+                EditorGUILayout.PropertyField(glareFrontal, new GUIContent("正面眩光"));
+                EditorGUILayout.PropertyField(glareBehind, new GUIContent("背面眩光"));
+            });
+
+            DrawSection("外观", () =>
+            {
+                EditorGUILayout.PropertyField(intensity, new GUIContent("强度"));
+                EditorGUILayout.PropertyField(blendMode, new GUIContent("混合方式"));
+                EditorGUILayout.PropertyField(colorFromLight, new GUIContent("跟随灯光颜色"));
+                if (!colorFromLight.boolValue)
+                {
+                    EditorGUI.indentLevel++;
+                    EditorGUILayout.PropertyField(volumeColor, new GUIContent("自定义颜色"));
+                    EditorGUI.indentLevel--;
+                }
+            });
+
+            DrawSection("Mesh 质量", () =>
+            {
+                EditorGUILayout.PropertyField(coneSides, new GUIContent("圆锥面数"));
+                EditorGUILayout.PropertyField(coneSegments, new GUIContent("圆锥分段"));
+            });
+
+            DrawSection("射线遮挡", () =>
+            {
+                EditorGUILayout.PropertyField(enableOcclusion, new GUIContent("启用遮挡"));
+                if (enableOcclusion.boolValue)
+                {
+                    EditorGUILayout.PropertyField(occlusionLayerMask, new GUIContent("检测层"));
+                    EditorGUILayout.PropertyField(occlusionUpdateInterval, new GUIContent("检测间隔(秒)"));
+                }
+            });
 
             serializedObject.ApplyModifiedProperties();
         }
 
+        #region UI辅助
 
-        // ─── 顶部按钮栏 ───
+        private static void DrawSection(string label, System.Action drawContent)
+        {
+            drawContent();
+            EditorGUILayout.Space(4);
+        }
+
         private new void DrawHeader()
         {
             EditorGUILayout.BeginHorizontal();
             GUILayout.Label("探照灯体积雾", EditorStyles.boldLabel);
 
-            GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f);
-            if (GUILayout.Button(new GUIContent("存档", "保存当前体积光参数和灯光角度/颜色到本地JSON文件"), GUILayout.Width(50)))
-                EditorApplication.delayCall += SaveParameters;
+            DrawHeaderButton("存档", new Color(0.3f, 0.8f, 1.0f), "保存当前体积光参数和灯光角度/颜色到本地JSON文件", 50,
+                () => EditorApplication.delayCall += SaveParameters);
 
-            GUI.backgroundColor = new Color(0.5f, 1.0f, 0.5f);
-            if (GUILayout.Button(new GUIContent("读档 ▾", "从已保存的本地存档中加载参数"), GUILayout.Width(55)))
-                ShowLoadDropdown();
+            DrawHeaderButton("读档 ▾", new Color(0.5f, 1.0f, 0.5f), "从已保存的本地存档中加载参数", 55,
+                () => ShowFileDropdown(SaveFolderBase));
 
-            GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
-            if (GUILayout.Button(new GUIContent("预设 ▾", "加载内置预设参数（包内只读）"), GUILayout.Width(55)))
-                ShowPresetDropdown();
+            DrawHeaderButton("预设 ▾", new Color(0.9f, 0.7f, 1.0f), "加载内置预设参数（包内只读）", 55,
+                () => ShowFileDropdown(PresetFolder));
 
-            GUI.backgroundColor = new Color(1.0f, 0.6f, 0.4f);
-            if (GUILayout.Button(new GUIContent("禁用光照", "将SpotLight设为不产生实时照明（intensity=0, 无阴影）"), GUILayout.Width(60)))
-                DisableLightIllumination();
+            DrawHeaderButton("禁用光照", new Color(1.0f, 0.6f, 0.4f), "将SpotLight设为不产生实时照明", 60,
+                DisableLightIllumination);
 
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
         }
 
-        // ─── 禁用光照 ───
+        private static void DrawHeaderButton(string text, Color bgColor, string tooltip, float width, System.Action onClick)
+        {
+            GUI.backgroundColor = bgColor;
+            if (GUILayout.Button(new GUIContent(text, tooltip), GUILayout.Width(width)))
+                onClick();
+        }
+
+        #endregion
+
+        #region 功能操作
+
         private void DisableLightIllumination()
         {
             foreach (var t in targets)
             {
-                SpotLightVolume vol = t as SpotLightVolume;
+                var vol = t as SpotLightVolume;
                 if (vol == null) continue;
 
-                Light light = vol.GetComponent<Light>();
+                var light = vol.GetComponent<Light>();
                 if (light == null) continue;
 
                 Undo.RecordObject(light, "Disable Light Illumination");
@@ -134,37 +168,35 @@ namespace VicTools
                 light.shadows = LightShadows.None;
                 EditorUtility.SetDirty(light);
             }
-
             Debug.Log("[SpotLightVolume] 已禁用灯光实时照明");
         }
 
-        // ─── 存档 ───
+        #endregion
+
+        #region 存档/读档
+
         private void SaveParameters()
         {
-            if (!System.IO.Directory.Exists(SaveFolderBase))
-                System.IO.Directory.CreateDirectory(SaveFolderBase);
+            EnsureDirectory(SaveFolderBase);
 
-            string path = EditorUtility.SaveFilePanel(
-                "保存体积光参数", SaveFolderBase, "VolumePreset", "json");
-
+            string path = EditorUtility.SaveFilePanel("保存体积光参数", SaveFolderBase, "VolumePreset", "json");
             if (string.IsNullOrEmpty(path)) return;
 
             SaveToFile(path);
             Debug.Log("[SpotLightVolume] 参数已保存: " + path);
         }
 
-        // ─── 读档下拉 ───
-        private void ShowLoadDropdown()
+        /// <summary>通用文件下拉菜单（存档和预设共用）</summary>
+        private void ShowFileDropdown(string folder)
         {
-            if (!System.IO.Directory.Exists(SaveFolderBase))
-                System.IO.Directory.CreateDirectory(SaveFolderBase);
+            EnsureDirectory(folder);
 
-            string[] files = System.IO.Directory.GetFiles(SaveFolderBase, "*.json");
-            GenericMenu menu = new GenericMenu();
+            string[] files = System.IO.Directory.GetFiles(folder, "*.json");
+            var menu = new GenericMenu();
 
             if (files.Length == 0)
             {
-                menu.AddDisabledItem(new GUIContent("（无存档）"));
+                menu.AddDisabledItem(new GUIContent("（无文件）"));
             }
             else
             {
@@ -181,42 +213,12 @@ namespace VicTools
             menu.ShowAsContext();
         }
 
-        // ─── 预设下拉 ───
-        private void ShowPresetDropdown()
-        {
-            if (!System.IO.Directory.Exists(PresetFolder))
-                System.IO.Directory.CreateDirectory(PresetFolder);
-
-            string[] files = System.IO.Directory.GetFiles(PresetFolder, "*.json");
-            GenericMenu menu = new GenericMenu();
-
-            if (files.Length == 0)
-            {
-                menu.AddDisabledItem(new GUIContent("（无预设）"));
-            }
-            else
-            {
-                foreach (string file in files)
-                {
-                    string fileName = System.IO.Path.GetFileNameWithoutExtension(file);
-                    string filePath = file;
-                    menu.AddItem(new GUIContent(fileName), false, () =>
-                    {
-                        EditorApplication.delayCall += () => LoadFromFile(filePath);
-                    });
-                }
-            }
-            menu.ShowAsContext();
-        }
-
-        // ─── 序列化/反序列化 ───
         private void SaveToFile(string path)
         {
-            SpotLightVolume vol = target as SpotLightVolume;
+            var vol = target as SpotLightVolume;
             if (vol == null) return;
 
-            Light light = vol.GetComponent<Light>();
-
+            var light = vol.GetComponent<Light>();
             var data = new SpotLightVolumeData
             {
                 lightSourceRadius = vol.lightSourceRadius,
@@ -228,67 +230,70 @@ namespace VicTools
                 glareBehind = vol.glareBehind,
                 intensity = vol.intensity,
                 colorFromLight = vol.colorFromLight,
-                volumeColor = new float[] { vol.volumeColor.r, vol.volumeColor.g, vol.volumeColor.b, vol.volumeColor.a },
+                volumeColor = ColorToArray(vol.volumeColor),
                 blendMode = (int)vol.blendMode,
                 coneSides = vol.coneSides,
                 coneSegments = vol.coneSegments,
-                // Light参数（仅颜色和角度）
+                enableOcclusion = vol.enableOcclusion,
+                occlusionLayerMask = (int)vol.occlusionLayerMask,
+                occlusionUpdateInterval = vol.occlusionUpdateInterval,
+                occlusionDetectTriggers = vol.occlusionDetectTriggers,
                 spotAngle = light != null ? light.spotAngle : 30f,
                 innerSpotAngle = light != null ? light.innerSpotAngle : 0f,
-                lightColor = light != null ? new float[] { light.color.r, light.color.g, light.color.b, light.color.a } : new float[] { 1, 1, 1, 1 }
+                lightColor = light != null ? ColorToArray(light.color) : new float[] { 1, 1, 1, 1 }
             };
 
-            string json = JsonUtility.ToJson(data, true);
-            System.IO.File.WriteAllText(path, json);
+            System.IO.File.WriteAllText(path, JsonUtility.ToJson(data, true));
         }
 
         private void LoadFromFile(string path)
         {
             if (!System.IO.File.Exists(path)) return;
 
-            string json = System.IO.File.ReadAllText(path);
-            var data = JsonUtility.FromJson<SpotLightVolumeData>(json);
+            var data = JsonUtility.FromJson<SpotLightVolumeData>(System.IO.File.ReadAllText(path));
             if (data == null) return;
 
             foreach (var t in targets)
             {
-                SpotLightVolume vol = t as SpotLightVolume;
+                var vol = t as SpotLightVolume;
                 if (vol == null) continue;
 
                 Undo.RecordObject(vol, "Load SpotLightVolume Preset");
+                data.ApplyTo(vol);
 
-                vol.lightSourceRadius = data.lightSourceRadius;
-                vol.fallOffStart = data.fallOffStart;
-                vol.maxDistance = data.maxDistance;
-                vol.edgeFade = data.edgeFade;
-                vol.endFade = data.endFade;
-                vol.glareFrontal = data.glareFrontal;
-                vol.glareBehind = data.glareBehind;
-                vol.intensity = data.intensity;
-                vol.colorFromLight = data.colorFromLight;
-                if (data.volumeColor != null && data.volumeColor.Length == 4)
-                    vol.volumeColor = new Color(data.volumeColor[0], data.volumeColor[1], data.volumeColor[2], data.volumeColor[3]);
-                vol.blendMode = (VolumeBlendMode)data.blendMode;
-                vol.coneSides = data.coneSides;
-                vol.coneSegments = data.coneSegments;
-
-                // 恢复Light参数（仅颜色和角度）
-                Light light = vol.GetComponent<Light>();
+                var light = vol.GetComponent<Light>();
                 if (light != null)
                 {
                     Undo.RecordObject(light, "Load SpotLightVolume Light Preset");
-                    light.spotAngle = data.spotAngle;
-                    light.innerSpotAngle = data.innerSpotAngle;
-                    if (data.lightColor != null && data.lightColor.Length == 4)
-                        light.color = new Color(data.lightColor[0], data.lightColor[1], data.lightColor[2], data.lightColor[3]);
+                    data.ApplyLightTo(light);
                     EditorUtility.SetDirty(light);
                 }
-
                 EditorUtility.SetDirty(vol);
             }
 
             Debug.Log("[SpotLightVolume] 参数已加载: " + System.IO.Path.GetFileNameWithoutExtension(path));
         }
+
+        #endregion
+
+        #region 工具方法
+
+        private static void EnsureDirectory(string path)
+        {
+            if (!System.IO.Directory.Exists(path))
+                System.IO.Directory.CreateDirectory(path);
+        }
+
+        private static float[] ColorToArray(Color c) => new[] { c.r, c.g, c.b, c.a };
+
+        private static Color ArrayToColor(float[] arr)
+        {
+            return arr != null && arr.Length == 4 ? new Color(arr[0], arr[1], arr[2], arr[3]) : Color.white;
+        }
+
+        #endregion
+
+        #region 序列化数据
 
         [System.Serializable]
         private class SpotLightVolumeData
@@ -306,10 +311,45 @@ namespace VicTools
             public int blendMode;
             public int coneSides;
             public int coneSegments;
-            // Light参数
+            public bool enableOcclusion;
+            public int occlusionLayerMask;
+            public float occlusionUpdateInterval;
+            public bool occlusionDetectTriggers;
             public float spotAngle;
             public float innerSpotAngle;
             public float[] lightColor;
+
+            public void ApplyTo(SpotLightVolume vol)
+            {
+                vol.lightSourceRadius = lightSourceRadius;
+                vol.fallOffStart = fallOffStart;
+                vol.maxDistance = maxDistance;
+                vol.edgeFade = edgeFade;
+                vol.endFade = endFade;
+                vol.glareFrontal = glareFrontal;
+                vol.glareBehind = glareBehind;
+                vol.intensity = intensity;
+                vol.colorFromLight = colorFromLight;
+                if (volumeColor != null && volumeColor.Length == 4)
+                    vol.volumeColor = new Color(volumeColor[0], volumeColor[1], volumeColor[2], volumeColor[3]);
+                vol.blendMode = (VolumeBlendMode)blendMode;
+                vol.coneSides = coneSides;
+                vol.coneSegments = coneSegments;
+                vol.enableOcclusion = enableOcclusion;
+                vol.occlusionLayerMask = occlusionLayerMask;
+                vol.occlusionUpdateInterval = occlusionUpdateInterval;
+                vol.occlusionDetectTriggers = occlusionDetectTriggers;
+            }
+
+            public void ApplyLightTo(Light light)
+            {
+                light.spotAngle = spotAngle;
+                light.innerSpotAngle = innerSpotAngle;
+                if (lightColor != null && lightColor.Length == 4)
+                    light.color = new Color(lightColor[0], lightColor[1], lightColor[2], lightColor[3]);
+            }
         }
+
+        #endregion
     }
 }

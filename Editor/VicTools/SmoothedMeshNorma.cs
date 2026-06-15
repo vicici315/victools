@@ -3,6 +3,7 @@
 // SmoothMeshNormal_1.3 添加<选择父对象>按钮，优化模型列表"选择"按钮只选中相应对象
 // SmoothMeshNormal_1.4 添加<创建描边模型>按钮，自动克隆 _OL 描边对象并生成平滑网格，添加描边材质预置接口
 // SmoothMeshNormal_1.5 添加<统一法线>按钮，将选中对象的 Mesh 法线重新计算为统一平滑法线
+// SmoothMeshNormal_1.6 优化"选择描边对象"按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件
 
 using System;
 using System.Collections;
@@ -74,7 +75,7 @@ public class SmoothedNormalsUtility : EditorWindow
 
 	private static SmoothedNormalsUtility GetWindow()
 	{
-		var window = GetWindow<SmoothedNormalsUtility>(true, "平滑网格法线 1.5", true);
+		var window = GetWindow<SmoothedNormalsUtility>(true, "平滑网格法线 1.6", true);
 		window.minSize = new Vector2(400f, 400f);
 		window.maxSize = new Vector2(400f, 5000f);
 		return window;
@@ -102,6 +103,7 @@ public class SmoothedNormalsUtility : EditorWindow
 
 	private void GUI_SelectMesh() 
 	{
+		// Mesh 列表（有选中时显示，无选中时显示提示）
 		if (mMeshes != null && mMeshes.Count > 0)
 		{
 			mScroll = EditorGUILayout.BeginScrollView(mScroll);
@@ -154,110 +156,128 @@ public class SmoothedNormalsUtility : EditorWindow
 			}
 			GUI.backgroundColor = Color.white;
 			EditorGUILayout.EndScrollView();
-			GUILayout.FlexibleSpace();
+		}
+		else
+		{
+			EditorGUILayout.HelpBox("请在场景或Project中选择 Mesh / 模型 / MeshFilter / SkinnedMeshRenderer，以生成平滑法线版本的网格。", MessageType.Info);
+		}
 
-			GUILayout.BeginHorizontal();
-			GUILayout.Space(20);
-			GUI.backgroundColor = new Color(0.6f, 1f, 0.6f);
-			if (GUILayout.Button(new GUIContent("创建描边模型", "为选中对象克隆 _OL 描边子对象并生成平滑网格"), GUILayout.Width(115), GUILayout.Height(25)))
+		GUILayout.FlexibleSpace();
+
+		// 操作按钮区域（始终显示）
+		GUILayout.BeginHorizontal();
+		GUILayout.Space(20);
+		GUI.backgroundColor = new Color(0.6f, 1f, 0.6f);
+		if (GUILayout.Button(new GUIContent("创建描边模型", "为选中对象克隆 _OL 描边子对象并生成平滑网格"), GUILayout.Width(115), GUILayout.Height(25)))
+		{
+			string matInfo = mOutlineMaterial != null
+				? $"描边材质：{mOutlineMaterial.name}"
+				: "⚠️ 未指定描边材质，创建后需手动赋材质";
+			if (EditorUtility.DisplayDialog("创建平滑描边模型",
+				"将为选中对象创建 _OL 描边子模型：\n\n" +
+				"• 克隆网格对象并添加 _OL 后缀\n" +
+				"• 自动生成平滑法线网格\n" +
+				"• 关闭阴影投射\n" +
+				$"• {matInfo}\n\n" +
+				"已存在 _OL 对象的将被跳过。",
+				"确认创建", "取消"))
 			{
-				string matInfo = mOutlineMaterial != null
-					? $"描边材质：{mOutlineMaterial.name}"
-					: "⚠️ 未指定描边材质，创建后需手动赋材质";
-				if (EditorUtility.DisplayDialog("创建平滑描边模型",
-					"将为选中对象创建 _OL 描边子模型：\n\n" +
-					"• 克隆网格对象并添加 _OL 后缀\n" +
-					"• 自动生成平滑法线网格\n" +
-					"• 关闭阴影投射\n" +
-					$"• {matInfo}\n\n" +
-					"已存在 _OL 对象的将被跳过。",
-					"确认创建", "取消"))
-				{
-					CreateOutlineModels();
-				}
+				CreateOutlineModels();
 			}
-			// GUI.backgroundColor = Color.white;
-			// 描边材质球拖入接口
-			EditorGUIUtility.labelWidth = 58;
-			Material newMat = (Material)EditorGUILayout.ObjectField("描边材质", mOutlineMaterial, typeof(Material), false, GUILayout.Width(230), GUILayout.Height(25));
-			if (newMat != mOutlineMaterial)
-				mOutlineMaterial = newMat;
-			EditorGUIUtility.labelWidth = 0;
-			// 赋予材质按钮
-			GUI.backgroundColor = Color.green;
-			if (GUILayout.Button(new GUIContent("←", "将描边材质赋予当前选中的模型"), GUILayout.Width(25), GUILayout.Height(25)))
-			{
-				ApplyOutlineMaterialToSelection();
-			}
-			GUI.backgroundColor = Color.white;
-			GUILayout.EndHorizontal();
+		}
+		// 描边材质球拖入接口
+		EditorGUIUtility.labelWidth = 58;
+		Material newMat = (Material)EditorGUILayout.ObjectField("描边材质", mOutlineMaterial, typeof(Material), false, GUILayout.Width(230), GUILayout.Height(25));
+		if (newMat != mOutlineMaterial)
+			mOutlineMaterial = newMat;
+		EditorGUIUtility.labelWidth = 0;
+		// 赋予材质按钮
+		GUI.backgroundColor = Color.green;
+		if (GUILayout.Button(new GUIContent("←", "将描边材质赋予当前选中的模型"), GUILayout.Width(25), GUILayout.Height(25)))
+		{
+			ApplyOutlineMaterialToSelection();
+		}
+		GUI.backgroundColor = Color.white;
+		GUILayout.EndHorizontal();
 			GUILayout.BeginHorizontal();
-			mOverwrite = GUILayout.Toggle(mOverwrite, new GUIContent("覆盖","生成平滑网格直接覆盖原Mesh"), GUILayout.Width(45));
-			if (GUILayout.Button(mMeshes.Count == 1 ? "生成平滑网格" : "批量生成平滑网格", GUILayout.Height(30)))
+		mOverwrite = GUILayout.Toggle(mOverwrite, new GUIContent("覆盖","生成平滑网格直接覆盖原Mesh"), GUILayout.Width(45));
+		bool hasMeshes = mMeshes != null && mMeshes.Count > 0;
+		string genLabel = hasMeshes && mMeshes.Count == 1 ? "生成平滑网格" : "批量生成平滑网格";
+		if (GUILayout.Button(new GUIContent(genLabel,
+			"将选中对象的 Mesh 按指定通道生成平滑法线网格资产。\n\n" +
+			"功能说明：\n" +
+			"• 对列表中的 Mesh 计算平滑法线，写入所选通道（切线/顶点色/UV）\n" +
+			"• 单个对象显示为「生成平滑网格」，多个对象自动切换为「批量生成」\n" +
+			"• 勾选「覆盖」时直接覆盖原始 Mesh 文件（不可撤销）\n" +
+			"• 未勾选「覆盖」时在同目录生成 _SmoothedNormals 后缀的新资产\n\n" +
+			"使用步骤：\n" +
+			"1. 选择包含 MeshFilter/SkinnedMeshRenderer 的对象\n" +
+			"2. 选择平滑法线写入的目标通道\n" +
+			"3. 按需勾选「覆盖」选项\n" +
+			"4. 点击此按钮生成"), GUILayout.Height(30)))
+		{
+			if (!hasMeshes)
+			{
+				ShowNotification(new GUIContent("请先选择包含 Mesh 的对象"));
+			}
+			else
 			{
 				var confirmMsg = mMeshes.Count == 1
 					? $"确认为 [{mMeshes.Values.First().Name}] 生成平滑网格？"
 					: $"确认批量生成 {mMeshes.Count} 个平滑网格？";
 				if (mOverwrite)
 					confirmMsg += "\n\n⚠️ 已开启「覆盖」模式，将直接覆盖原始 Mesh 文件，此操作不可撤销。";
-				if (!EditorUtility.DisplayDialog(
+				if (EditorUtility.DisplayDialog(
 					mMeshes.Count == 1 ? "生成平滑网格" : "批量生成平滑网格",
 					confirmMsg, "确认", "取消"))
-					return;
-				try
 				{
-					var selection = new List<Object>();
-					float progress = 1;
-					float total = mMeshes.Count;
-					foreach (var sm in mMeshes.Values)
+					try
 					{
-						if (sm == null)
-							continue;
-
-						EditorUtility.DisplayProgressBar("请稍候", (mMeshes.Count > 1 ?
-							"正在批量生成平滑网格：\n" : "正在生成平滑网格：\n") + sm.Name, progress / total);
-						progress++;
-						Object o = CreateSmoothedMeshAsset(sm);
-						if (o != null)
-							selection.Add(o);
+						var selection = new List<Object>();
+						float progress = 1;
+						float total = mMeshes.Count;
+						foreach (var sm in mMeshes.Values)
+						{
+							if (sm == null) continue;
+							EditorUtility.DisplayProgressBar("请稍候", (mMeshes.Count > 1 ?
+								"正在批量生成平滑网格：\n" : "正在生成平滑网格：\n") + sm.Name, progress / total);
+							progress++;
+							Object o = CreateSmoothedMeshAsset(sm);
+							if (o != null) selection.Add(o);
+						}
+						Selection.objects = selection.ToArray();
 					}
-					Selection.objects = selection.ToArray();
+					finally
+					{
+						EditorUtility.ClearProgressBar();
+					}
 				}
-				finally
-				{
-					EditorUtility.ClearProgressBar();
-				}
 			}
-			if (GUILayout.Button(new GUIContent("统一法线",
-				"将选中对象的 Mesh 法线重新计算为统一平滑法线。\n\n" +
-				"原理：相同位置的顶点共享同一个平均法线方向，\n" +
-				"消除硬边，使整个模型表面法线连续平滑。\n\n" +
-				"适用场景：\n" +
-				"• 修复导入模型的法线接缝/硬边问题\n" +
-				"• 让描边 Shader 沿统一法线方向膨胀，避免断裂\n" +
-				"• 需要全局平滑光照效果的模型\n\n" +
-				"注意：勾选「覆盖」时直接修改原 Mesh，不可撤销。"),
-				GUILayout.Height(30)))
-			{
-				UnifyMeshNormals();
-			}
-			GUI.backgroundColor = Color.cyan;
-			if (GUILayout.Button(new GUIContent("选择父对象","选择父级对象"), GUILayout.Height(30), GUILayout.Width(80)))
-			{
-				SelectParentObjects();
-			}
-			if (GUILayout.Button(new GUIContent("选择描边对象","一键挑选所有 _OL 描边对象"), GUILayout.Height(30), GUILayout.Width(100)))
-			{
-				SelectOutlineObjects();
-			}
-			GUI.backgroundColor = Color.white;
-			GUILayout.EndHorizontal();
 		}
-		else
+		if (GUILayout.Button(new GUIContent("统一法线",
+			"将选中对象的 Mesh 法线重新计算为统一平滑法线。\n\n" +
+			"原理：相同位置的顶点共享同一个平均法线方向，\n" +
+			"消除硬边，使整个模型表面法线连续平滑。\n\n" +
+			"适用场景：\n" +
+			"• 修复导入模型的法线接缝/硬边问题\n" +
+			"• 让描边 Shader 沿统一法线方向膨胀，避免断裂\n" +
+			"• 需要全局平滑光照效果的模型\n\n" +
+			"注意：勾选「覆盖」时直接修改原 Mesh，不可撤销。"),
+			GUILayout.Height(30)))
 		{
-			EditorGUILayout.HelpBox("请在场景或Project中选择 Mesh / 模型 / MeshFilter / SkinnedMeshRenderer，以生成平滑法线版本的网格。", MessageType.Info);
-			GUILayout.FlexibleSpace();
+			UnifyMeshNormals();
 		}
+		GUI.backgroundColor = Color.cyan;
+		if (GUILayout.Button(new GUIContent("选择父对象","选择父级对象"), GUILayout.Height(30), GUILayout.Width(80)))
+		{
+			SelectParentObjects();
+		}
+		if (GUILayout.Button(new GUIContent("选择描边对象","一键挑选所有 _OL 描边对象"), GUILayout.Height(30), GUILayout.Width(100)))
+		{
+			SelectOutlineObjects();
+		}
+		GUI.backgroundColor = Color.white;
+		GUILayout.EndHorizontal();
 	}
 
 	// 统一法线：将选中对象的 Mesh 法线重新计算为统一平滑法线
@@ -617,6 +637,9 @@ public class SmoothedNormalsUtility : EditorWindow
 		}
 
 		Selection.objects = result.ToArray();
+		// 立即刷新 Mesh 列表，确保选中 _OL 对象后操作按钮保持显示
+		mMeshes = GetSelectedMeshes();
+		Repaint();
 		ShowNotification(new GUIContent($"已选中 {result.Count} 个描边对象"));
 	}
 

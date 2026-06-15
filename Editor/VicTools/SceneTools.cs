@@ -314,7 +314,7 @@ namespace VicTools
         /// <param name="selAct">勾选时只挑选激活的对象，取消时只挑选未激活的对象</param>
         /// <param name="selMeshObj">是否挑选Mesh对象</param>
         /// <param name="selParticleObj">是否挑选粒子对象</param>
-        public static void SelectObjectsByType(bool selectMesh = true, bool selectPrefab = false, bool selectLODGroup = false, bool selectMissMat = false, bool selectMissScript = false, bool selAct = false, bool selMeshObj = false, bool selParticleObj = false, bool selParent = false)
+        public static void SelectObjectsByType(bool selectMesh = true, bool selectPrefab = false, bool selectLODGroup = false, bool selectMissMat = false, bool selectMissMesh = false, bool selectMissScript = false, bool selAct = false, bool selMeshObj = false, bool selParticleObj = false, bool selParent = false, bool localScope = false)
         {
             // 辅助方法：检查对象是否符合激活状态条件
             bool CheckActivationState(GameObject obj)
@@ -378,23 +378,49 @@ namespace VicTools
             }
             
             // 判断是否为排除模式（所有5个选项都为false时）
-            bool isExcludeMode = !selectMesh && !selectPrefab && !selectLODGroup && !selectMissMat && !selectMissScript;
+            bool isExcludeMode = !selectMesh && !selectPrefab && !selectLODGroup && !selectMissMat && !selectMissMesh && !selectMissScript;
             
             // 获取场景中的游戏对象
             GameObject[] allGameObjects;
-            // 始终使用GetRootGameObjects获取根对象及其所有子对象，确保能遍历到所有对象
-            var roots = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
-            var allObjects = new List<GameObject>();
-            foreach (var root in roots)
+            
+            if (localScope)
             {
-                // 获取根对象及其所有子对象（包括未激活的）
-                var transforms = root.GetComponentsInChildren<Transform>(true);
-                foreach (var t in transforms)
+                // 局部范围：只在当前选中对象的父级（或选中对象自身）的子层级中搜索
+                var currentSelection = Selection.gameObjects;
+                if (currentSelection == null || currentSelection.Length == 0)
                 {
-                    allObjects.Add(t.gameObject);
+                    EditorUtility.DisplayDialog("提示", "Ctrl+挑选需要先选中对象，将在其父级范围内搜索", "确定");
+                    return;
                 }
+                var scopeObjects = new List<GameObject>();
+                foreach (var sel in currentSelection)
+                {
+                    // 使用选中对象的父对象作为搜索根；如果没有父则用自身
+                    Transform searchRoot = sel.transform.parent != null ? sel.transform.parent : sel.transform;
+                    var transforms = searchRoot.GetComponentsInChildren<Transform>(true);
+                    foreach (var t in transforms)
+                    {
+                        if (!scopeObjects.Contains(t.gameObject))
+                            scopeObjects.Add(t.gameObject);
+                    }
+                }
+                allGameObjects = scopeObjects.ToArray();
             }
-            allGameObjects = allObjects.ToArray();
+            else
+            {
+                // 全场景范围
+                var roots = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
+                var allObjects = new List<GameObject>();
+                foreach (var root in roots)
+                {
+                    var transforms = root.GetComponentsInChildren<Transform>(true);
+                    foreach (var t in transforms)
+                    {
+                        allObjects.Add(t.gameObject);
+                    }
+                }
+                allGameObjects = allObjects.ToArray();
+            }
             
             var selectedObjects = new HashSet<GameObject>();
             
@@ -581,6 +607,36 @@ namespace VicTools
                         }
                     }
                     
+                    // 检查是否选择丢失Mesh的对象
+                    if (selectMissMesh && !shouldSelect)
+                    {
+                        bool hasMissingMesh = false;
+                        
+                        // 检查 MeshFilter 的 sharedMesh 是否为空
+                        var meshFilter = gameObject.GetComponent<MeshFilter>();
+                        if (meshFilter != null && meshFilter.sharedMesh == null)
+                        {
+                            hasMissingMesh = true;
+                        }
+                        
+                        // 检查 SkinnedMeshRenderer 的 sharedMesh 是否为空
+                        if (!hasMissingMesh)
+                        {
+                            var skinnedRenderer = gameObject.GetComponent<SkinnedMeshRenderer>();
+                            if (skinnedRenderer != null && skinnedRenderer.sharedMesh == null)
+                            {
+                                hasMissingMesh = true;
+                            }
+                        }
+                        
+                        if (hasMissingMesh && 
+                            CheckActivationState(gameObject) && 
+                            PassesSecondaryTypeFilter(gameObject))
+                        {
+                            shouldSelect = true;
+                        }
+                    }
+
                     // 检查是否选择丢失脚本的对象
                     if (selectMissScript && !shouldSelect)
                     {
@@ -647,6 +703,7 @@ namespace VicTools
                 if (selectPrefab) typeDescriptions.Add("Prefab对象");
                 if (selectLODGroup) typeDescriptions.Add("带LODGroup的对象");
                 if (selectMissMat) typeDescriptions.Add("丢失材质球的模型对象");
+                if (selectMissMesh) typeDescriptions.Add("丢失Mesh的对象");
                 if (selectMissScript) typeDescriptions.Add("丢失脚本的对象");
             }
             
@@ -671,6 +728,232 @@ namespace VicTools
             Debug.Log($"已选择 {selectedObjects.Count} 个{typeDescription}（筛选：{filterDescription}）");
         }
         
+        /// 尝试为选中的丢失 Mesh 对象自动找回 Mesh
+        /// 策略：根据对象名称在项目中搜索匹配的 Mesh 资产
+        /// _OL 后缀对象优先匹配 _SmoothNormal 后缀的 Mesh
+        /// 公共函数调用方法：SceneTools.FindMissMeshs();
+        public static void FindMissMeshs()
+        {
+            var selectedObjects = Selection.gameObjects;
+            if (selectedObjects == null || selectedObjects.Length == 0)
+            {
+                EditorUtility.DisplayDialog("提示", "请先选中丢失 Mesh 的对象（可先用 Miss Mesh 挑选）", "确定");
+                return;
+            }
+
+            int fixedCount = 0;
+            int failedCount = 0;
+
+            foreach (var go in selectedObjects)
+            {
+                // 检查是否确实丢失 Mesh
+                MeshFilter mf = go.GetComponent<MeshFilter>();
+                SkinnedMeshRenderer smr = go.GetComponent<SkinnedMeshRenderer>();
+                bool isMeshFilter = mf != null && mf.sharedMesh == null;
+                bool isSkinned = smr != null && smr.sharedMesh == null;
+
+                if (!isMeshFilter && !isSkinned)
+                    continue;
+
+                string objName = go.name;
+                bool isOL = objName.EndsWith("_OL", System.StringComparison.OrdinalIgnoreCase);
+
+                // 构建搜索关键词
+                string baseName = isOL ? objName.Substring(0, objName.Length - 3) : objName;
+
+                Mesh foundMesh = null;
+
+                if (isOL)
+                {
+                    // _OL 对象：最优先查找 objName + _SmoothNormal（如 xxx_OL_SmoothNormal）
+                    foundMesh = SearchMeshAsset(objName + "_SmoothNormal");
+                    // 备选：查找 baseName + _SmoothNormal（如 xxx_SmoothNormal）
+                    if (foundMesh == null)
+                        foundMesh = SearchMeshAsset(baseName + "_SmoothNormal");
+                    // 备选：查找 baseName + _OL 的 Mesh
+                    if (foundMesh == null)
+                        foundMesh = SearchMeshAsset(baseName + "_OL");
+                    // 再备选：查找 objName（完整名）的 Mesh
+                    if (foundMesh == null)
+                        foundMesh = SearchMeshAsset(objName);
+                }
+                else
+                {
+                    // 普通对象：按对象名称直接查找
+                    foundMesh = SearchMeshAsset(objName);
+                    // 备选：去掉常见后缀再搜索
+                    if (foundMesh == null)
+                        foundMesh = SearchMeshAsset(baseName);
+                }
+
+                if (foundMesh != null)
+                {
+                    if (isMeshFilter)
+                    {
+                        Undo.RecordObject(mf, "找回 Mesh");
+                        mf.sharedMesh = foundMesh;
+                        EditorUtility.SetDirty(mf);
+                    }
+                    else if (isSkinned)
+                    {
+                        Undo.RecordObject(smr, "找回 Mesh");
+                        smr.sharedMesh = foundMesh;
+                        EditorUtility.SetDirty(smr);
+                    }
+                    fixedCount++;
+                }
+                else
+                {
+                    // 兜底：使用对象名称进行模糊相似匹配
+                    // _OL 对象优先查找带 _SmoothNormal 后缀的 Mesh
+                    if (isOL)
+                    {
+                        foundMesh = SearchMeshAssetFuzzy(objName + "_SmoothNormal");
+                        if (foundMesh == null)
+                            foundMesh = SearchMeshAssetFuzzy(baseName + "_SmoothNormal");
+                        if (foundMesh == null)
+                            foundMesh = SearchMeshAssetFuzzy(baseName);
+                    }
+                    else
+                    {
+                        foundMesh = SearchMeshAssetFuzzy(objName);
+                    }
+
+                    if (foundMesh != null)
+                    {
+                        if (isMeshFilter)
+                        {
+                            Undo.RecordObject(mf, "找回 Mesh（模糊匹配）");
+                            mf.sharedMesh = foundMesh;
+                            EditorUtility.SetDirty(mf);
+                        }
+                        else if (isSkinned)
+                        {
+                            Undo.RecordObject(smr, "找回 Mesh（模糊匹配）");
+                            smr.sharedMesh = foundMesh;
+                            EditorUtility.SetDirty(smr);
+                        }
+                        fixedCount++;
+                        Debug.Log($"[FindMissMeshs] 通过模糊匹配找回 Mesh：{objName} → {foundMesh.name}");
+                    }
+                    else
+                    {
+                        failedCount++;
+                        Debug.LogWarning($"[FindMissMeshs] 未找到匹配的 Mesh：{objName}（搜索关键词：{baseName}）");
+                    }
+                }
+            }
+
+            string msg = $"已找回 {fixedCount} 个 Mesh";
+            if (failedCount > 0)
+                msg += $"，{failedCount} 个未找到（详见 Console）";
+            EditorUtility.DisplayDialog("找回 Mesh 结果", msg, "确定");
+        }
+
+        /// 在项目资产中按名称搜索 Mesh（支持 .asset 和模型文件中的子 Mesh）
+        private static Mesh SearchMeshAsset(string meshName)
+        {
+            // 方式1：搜索 .asset 文件（独立 Mesh 资产）
+            string[] guids = AssetDatabase.FindAssets(meshName + " t:Mesh");
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                // 加载路径下的所有资产（模型文件可能包含多个子 Mesh）
+                Object[] assets = AssetDatabase.LoadAllAssetsAtPath(path);
+                foreach (var asset in assets)
+                {
+                    if (asset is Mesh mesh && mesh.name == meshName)
+                        return mesh;
+                }
+            }
+
+            // 方式2：模糊匹配（名称包含搜索词）
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                Object[] assets = AssetDatabase.LoadAllAssetsAtPath(path);
+                foreach (var asset in assets)
+                {
+                    if (asset is Mesh mesh && mesh.name.Contains(meshName))
+                        return mesh;
+                }
+            }
+
+            return null;
+        }
+
+        /// 基于对象名称的模糊相似匹配查找 Mesh
+        /// 策略：将对象名拆分为单词片段，在项目中搜索包含最多匹配片段的 Mesh
+        private static Mesh SearchMeshAssetFuzzy(string objectName)
+        {
+            // 清理名称：去掉常见后缀和数字编号，拆分为有意义的片段
+            string cleanName = objectName
+                .Replace("_OL", "")
+                .Replace("_ol", "")
+                .Replace("(Clone)", "")
+                .Trim();
+
+            // 按 _、空格、大小写变化拆分为片段
+            var segments = System.Text.RegularExpressions.Regex.Split(cleanName, @"[_\s\-]+")
+                .Where(s => s.Length > 1)
+                .ToList();
+
+            // 也按大小写驼峰拆分
+            var camelSegments = new List<string>();
+            foreach (var seg in segments)
+            {
+                var parts = System.Text.RegularExpressions.Regex.Split(seg, @"(?<!^)(?=[A-Z])");
+                foreach (var p in parts)
+                    if (p.Length > 1)
+                        camelSegments.Add(p.ToLower());
+            }
+
+            if (camelSegments.Count == 0 && segments.Count == 0)
+                return null;
+
+            var allSegments = segments.Select(s => s.ToLower()).Concat(camelSegments).Distinct().ToList();
+
+            // 搜索项目中所有 Mesh 资产
+            string[] guids = AssetDatabase.FindAssets("t:Mesh");
+            Mesh bestMatch = null;
+            int bestScore = 0;
+
+            foreach (string guid in guids)
+            {
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                Object[] assets = AssetDatabase.LoadAllAssetsAtPath(path);
+                foreach (var asset in assets)
+                {
+                    if (!(asset is Mesh mesh)) continue;
+
+                    string meshNameLower = mesh.name.ToLower();
+                    int score = 0;
+
+                    foreach (var seg in allSegments)
+                    {
+                        if (meshNameLower.Contains(seg))
+                            score += seg.Length; // 按匹配片段长度加权
+                    }
+
+                    // 额外加分：对象名包含在 mesh 名中，或 mesh 名包含在对象名中
+                    if (meshNameLower.Contains(cleanName.ToLower()))
+                        score += cleanName.Length * 2;
+                    else if (cleanName.ToLower().Contains(meshNameLower))
+                        score += meshNameLower.Length;
+
+                    if (score > bestScore)
+                    {
+                        bestScore = score;
+                        bestMatch = mesh;
+                    }
+                }
+            }
+
+            // 设置最低匹配阈值：至少匹配到对象名长度的 40% 才认为有效
+            int threshold = Mathf.Max(3, (int)(cleanName.Length * 0.4f));
+            return bestScore >= threshold ? bestMatch : null;
+        }
+
         /// 选择所有层级 - 当选择了父物体时选择所有子物体，当选择了子物体时选择父物体及所有子物体
         /// 改进：当选中对象父物体是Prefab或者直接选择的是Prefab则只选择该Prefab以下的子对象
         /// 公共函数调用方法：SceneTools.SelectAllHierarchy();

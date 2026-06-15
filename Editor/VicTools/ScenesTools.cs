@@ -10,6 +10,8 @@
 // 场景工具 v2.22 修复资源箱对象异常丢失，添加 ResourceBoxBuildPreprocessor — 打包前确保资源箱数据已保存
 // 场景工具 v2.23 修复资源箱对象错误复制Bug，验证场景匹配和名称匹配（防止Domain Reload后InstanceID被分配给不同对象）防止打包后产生灰色重复对象，又不会在刷新时误删已有的正常记录。
 // 场景工具 v2.24 再次优化资源箱列表场景对象出错Bug
+// 场景工具 v2.25 拆分 SceneTools.cs 为独立静态工具类，包含：灯光方向同步材质、PBR Lighting Shader 切换、按类型选择对象、丢失Mesh查找修复、全选层级、赋予材质、设置父子关系、模型落地（碰撞检测+射线兜底）
+// 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh
 
 using System;
 using UnityEngine;
@@ -117,11 +119,13 @@ public class ResourceBoxFileItem
         private Texture2D _levelIn; // 层级设置图标
         private Texture2D _levelOut; // 层级设置图标
         private Texture2D _selectLayer; // 层级设置图标
+        private Texture2D _findMesh; // 层级设置图标
         private bool _setStatic = false;
         private bool _selPrefab = false;
         private bool _selMesh = false;
         private bool _selLODGroup = false;
         private bool _selMissMat = false;
+        private bool _selMissMesh = false;
         private bool _selMissScript = false;
         // 二级选项
         private bool _selAct = true;
@@ -140,7 +144,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.25]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.26]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -166,6 +170,7 @@ public class ResourceBoxFileItem
             _selMesh = EditorPrefs.GetBool("ScenesTools_selMesh", false);
             _selLODGroup = EditorPrefs.GetBool("ScenesTools_selLODGroup", false);
             _selMissMat = EditorPrefs.GetBool("ScenesTools_selMissMat", false);
+            _selMissMesh = EditorPrefs.GetBool("ScenesTools_selMissMesh", false);
             _selMissScript = EditorPrefs.GetBool("ScenesTools_selMissScript", false);
             // 加载二级选项的存档设置
             _selAct = EditorPrefs.GetBool("ScenesTools_selAct", false);
@@ -192,6 +197,7 @@ public class ResourceBoxFileItem
             string levelIn = "Packages/com.youdoo.victools/Editor/VicTools/level-In.png";
             string levelOut = "Packages/com.youdoo.victools/Editor/VicTools/level-Out.png";
             string selectLayer = "Packages/com.youdoo.victools/Editor/VicTools/selectLayer.png";
+            string findMesh = "Packages/com.youdoo.victools/Editor/VicTools/findMesh.png";
             
             // 方法2：备用方案，使用PackageInfo获取包路径（需要Unity 2019.3+）
             // #if UNITY_2019_3_OR_NEWER
@@ -210,6 +216,7 @@ public class ResourceBoxFileItem
             _levelIn = AssetDatabase.LoadAssetAtPath<Texture2D>(levelIn);
             _levelOut = AssetDatabase.LoadAssetAtPath<Texture2D>(levelOut);
             _selectLayer = AssetDatabase.LoadAssetAtPath<Texture2D>(selectLayer);
+            _findMesh = AssetDatabase.LoadAssetAtPath<Texture2D>(findMesh);
             
             // 如果加载失败，尝试使用相对路径（针对某些特殊情况）
             // if (_lightDirIcon == null)
@@ -238,6 +245,7 @@ public class ResourceBoxFileItem
             EditorPrefs.SetBool("ScenesTools_selMesh", _selMesh);
             EditorPrefs.SetBool("ScenesTools_selLODGroup", _selLODGroup);
             EditorPrefs.SetBool("ScenesTools_selMissMat", _selMissMat);
+            EditorPrefs.SetBool("ScenesTools_selMissMesh", _selMissMesh);
             EditorPrefs.SetBool("ScenesTools_selMissScript", _selMissScript);
             // 保存二级选项的存档设置
             EditorPrefs.SetBool("ScenesTools_selAct", _selAct);
@@ -1137,6 +1145,7 @@ public class ResourceBoxFileItem
             _selMesh = base.CreateToggleWithStyle(new GUIContent("Mesh", "挑选 非预设 对象"), _selMesh, null, null, null, null, 40, 20);
             _selLODGroup = base.CreateToggleWithStyle(new GUIContent("LOD", "挑选带 LODGroup 对象"), _selLODGroup, null, null, null, null, 30, 20);
             _selMissMat = base.CreateToggleWithStyle(new GUIContent("Miss Mat", "挑选 丢失材质球 的模型对象"), _selMissMat, null, null, null, null, 60, 20);
+            _selMissMesh = base.CreateToggleWithStyle(new GUIContent("Miss Mesh", "挑选 丢失Mesh 的对象（MeshFilter或SkinnedMeshRenderer的Mesh为空）"), _selMissMesh, null, null, null, null, 69, 20);
             _selMissScript = base.CreateToggleWithStyle(new GUIContent("Miss Scirpt", "挑选 丢失脚本 的对象"), _selMissScript, null, null, null, null, 75, 20);
             EditorGUILayout.EndHorizontal();
             EditorGUILayout.BeginHorizontal(EditorStyles.helpBox);
@@ -1153,6 +1162,7 @@ public class ResourceBoxFileItem
                 _selMesh = false;
                 _selLODGroup = false;
                 _selMissMat = false;
+                _selMissMesh = false;
                 _selMissScript = false;
                 _selMeshObj = false;
                 _selParticleObj = false;
@@ -1190,7 +1200,7 @@ public class ResourceBoxFileItem
             using (new GUILayout.HorizontalScope(boxStyle, GUILayout.ExpandWidth(false), GUILayout.MaxWidth(105)))
             {
                 // GUI.backgroundColor = prevBgColor;
-                _setStatic = base.CreateToggleWithStyle(new GUIContent("Static", "只设置用于烘焙的静态对象材质"), _setStatic, null, null, null, null, 40, 20);
+                _setStatic = base.CreateToggleWithStyle(new GUIContent("Static", "设置所有用于烘焙的静态对象材质"), _setStatic, null, null, null, null, 40, 20);
                 
                 if (_switchPBRMIcon != null)
                 {
@@ -1231,10 +1241,16 @@ public class ResourceBoxFileItem
                 }
             }
             GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
-            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象"), GUILayout.Height(30)))
+            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象\n\n按住 Ctrl+点击：只在当前选中对象的父级范围内挑选"), GUILayout.Height(30)))
             {
-                // 根据选项选择场景中的物体
-                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissScript, _selAct, _selMeshObj, _selParticleObj, _selParent);
+                // 按住 Ctrl 时只在选中对象的父级范围内挑选，并自动忽略 selParent 选项
+                bool localScope = Event.current.control;
+                bool effectiveSelParent = localScope ? false : _selParent;
+                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissMesh, _selMissScript, _selAct, _selMeshObj, _selParticleObj, effectiveSelParent, localScope);
+            }
+            if (GUILayout.Button(new GUIContent(_findMesh, "对丢失Mesh的模型对象尝试自动找回Mesh"), GUILayout.Height(35), GUILayout.Width(38)))
+            {
+                SceneTools.FindMissMeshs();
             }
             GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();

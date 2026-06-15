@@ -1,9 +1,15 @@
-// SpotLightVolumeCore.hlsl - URP核心着色逻辑 v4.1
-// 保持v3.0原始效果，仅做性能优化（提取循环不变量、消除分支、减少采样）
-// 单Pass(Cull Front) + Ray-Cone Intersection + 8步Raymarching（优化版）
-// 模拟聚光灯体积光（光柱/光锥），从任意角度可见。
-// 渲染方式：单 Pass，Cull Front（只渲染mesh背面），ZTest Always，fragment shader 中做 raymarching
-// SpotLightVolumeCore3.1 步进预计算优化为1步。效果上边缘过渡会更粗糙（只有1个采样点取平均）
+// SpotLightVolumeCore.hlsl - URP核心着色逻辑
+// v1.0 基础锥形体积光
+// v2.0 参考VLB架构重写，归一化Mesh + localScale缩放
+// v3.0 单Pass(Cull Off) + Ray-Cone Intersection + 8步Raymarching
+// v3.1 步进预计算优化为1步。效果上边缘过渡会更粗糙（只有1个采样点取平均）
+// v4.1 保持v3.0原始效果，仅做性能优化（提取循环不变量、消除分支、减少采样）
+// v5.0 射线遮挡截断：
+//      - C#端Physics.Raycast沿光柱forward方向检测第一个碰撞物体
+//      - 碰撞距离传入shader的_ClipDistance参数
+//      - Raymarching循环中，采样点Z接近_ClipDistance时平滑羽化淡出（30%范围渐变）
+//      - 衰减计算始终基于原始_FallOffEnd，截断不影响光柱亮度分布
+//      - 完整保留v4.1的所有原始效果：双面显示、深度tOut截断、ZTest Always、Cull Off
 
 #ifndef SPOT_LIGHT_VOLUME_CORE_INCLUDED
 #define SPOT_LIGHT_VOLUME_CORE_INCLUDED
@@ -36,6 +42,7 @@ CBUFFER_START(UnityPerMaterial)
     float _ConeRadiusStart;
     float _ConeRadiusEnd;
     float2 _ConeSlopeCosSin;
+    float _ClipDistance;  // C#端射线检测得到的截断距离, -1表示无遮挡
 CBUFFER_END
 
 // === Ray-Cone Intersection (Inigo Quilez / VLB) ===
@@ -145,7 +152,7 @@ half4 frag(Varyings input) : SV_Target
     // tOut
     float tOut = length(posOS - cameraPosOS);
 
-    // 场景深度限制tOut
+    // 场景深度限制tOut（原始v4.1逻辑，保持不变）
     if (sceneEyeDepth < eyeDepth)
     {
         tOut = tOut * (sceneEyeDepth / max(eyeDepth, 0.001));
@@ -154,7 +161,7 @@ half4 frag(Varyings input) : SV_Target
     // 无效区域
     clip(tOut - tIn - 0.0001);
 
-    // === 预计算循环不变量 ===
+    // === 预计算循环不变量（全部基于原始_FallOffEnd，不受截断影响）===
     float invFallOffEnd = 1.0 / max(_FallOffEnd, 0.001);
     float range = max(_FallOffEnd - _FallOffStart, 0.001);
     float invRange = 1.0 / range;
@@ -162,25 +169,33 @@ half4 frag(Varyings input) : SV_Target
     float endFadeStart = 1.0 - _EndFade;
     float invEndFade = 1.0 / max(_EndFade, 0.001);
 
-    // 步进预计算 为1步。效果上边缘过渡会更粗糙（只有两个采样点取平均），但对探照灯这种通常较均匀的光柱来说差异不大。如果觉得效果不够可以随时改回来
+    // 步进预计算为1步
     const int STEPS = 1;
     float stepSize = (tOut - tIn) / float(STEPS);
-    float3 stepStart = cameraPosOS + rayDir * (tIn + stepSize * 0.5); // 第一个采样点
-    float3 stepVec = rayDir * stepSize;                                // 每步增量
+    float3 stepStart = cameraPosOS + rayDir * (tIn + stepSize * 0.5);
+    float3 stepVec = rayDir * stepSize;
 
     float totalIntensity = 0.0;
     float3 samplePos = stepStart;
 
-    // 展开提示（大多数GPU对小常数循环自动展开）
     [unroll]
     for (int i = 0; i < STEPS; i++)
     {
         float sampleZ = samplePos.z;
 
-        // 有效性掩码（替代 if/continue 分支）
+        // 有效性掩码
         float valid = step(0.0, sampleZ) * step(sampleZ, _FallOffEnd);
 
-        // 距离衰减
+        // === 射线遮挡截断（v5.0新增，仅此一处改动）===
+        // 在_ClipDistance处平滑羽化，不影响衰减计算
+        if (_ClipDistance > 0.0 && _ClipDistance < _FallOffEnd)
+        {
+            float clipFadeRange = min(_ClipDistance * 0.3, 0.5);
+            float clipFade = 1.0 - saturate((sampleZ - (_ClipDistance - clipFadeRange)) / max(clipFadeRange, 0.001));
+            valid *= clipFade;
+        }
+
+        // 距离衰减（基于原始_FallOffEnd）
         float attenLinear = 1.0 - saturate((sampleZ - _FallOffStart) * invRange);
         float atten = attenLinear * attenLinear;
 
@@ -199,9 +214,7 @@ half4 frag(Varyings input) : SV_Target
         samplePos += stepVec;
     }
 
-    // 归一化：平均光密度 × 射线长度贡献
-    // 不除以_FallOffEnd，使"最远距离"不影响整体亮度
-    // rayLength用对数压缩，避免远距离时过亮或近距离时过暗
+    // 归一化
     float rayLength = tOut - tIn;
     totalIntensity = (totalIntensity / float(STEPS)) * saturate(rayLength / max(rayLength + 1.0, 0.001));
 

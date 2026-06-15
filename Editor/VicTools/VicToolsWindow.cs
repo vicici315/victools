@@ -1662,7 +1662,7 @@ namespace VicTools
             // menu.AddSeparator("");
             menu.AddItem(new GUIContent("创建 混合变形控制（BlendShape）"), false, CreateBlendShapeAni);
             menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制（EmissionFlicker）"), false, CreateEmissionFlicker);
-            menu.AddItem(new GUIContent("创建 旋转动画控制脚本（RotationController）"), false, CreateRotationController);
+            menu.AddItem(new GUIContent("创建 旋转动画控制组件（RotationController）"), false, CreateRotationController);
             menu.AddItem(new GUIContent("创建 探照灯体积雾（SpotLightVolume）"), false, CreateSpotLightVolume);
             menu.ShowAsContext();
         }
@@ -1877,6 +1877,9 @@ namespace VicTools
                     if (modeField != null) modeField.SetValue(lattice, 1); // MultiRenderer = 1
                     var manualField = latticeType.GetField("manualRenderers");
                     if (manualField != null) manualField.SetValue(lattice, allRenderers);
+                    // 自动将选中的第一个对象设为多目标根节点
+                    var rootField = latticeType.GetField("targetRoot");
+                    if (rootField != null) rootField.SetValue(lattice, primary.transform);
                 }
             }
 
@@ -1911,11 +1914,11 @@ namespace VicTools
             menu.AddItem(new GUIContent("Custom_Toon（卡通材质）"), false, () => CreateMaterialFromShader("Custom/Toon"));
             menu.AddItem(new GUIContent("Custom_Snow（雪地材质，可交互）"), false, () => CreateMaterialFromShader("Custom/Snow"));
             menu.AddSeparator("");
-            menu.AddItem(new GUIContent("ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
-            menu.AddItem(new GUIContent("TextureGaussianBlur（ScreenColor高斯模糊材质）"),       false, () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL"));
-            menu.AddItem(new GUIContent("Outline（模型描边）/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
-            menu.AddItem(new GUIContent("Outline（模型描边）/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
-            menu.AddItem(new GUIContent("Fx（特效）/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));
+            menu.AddItem(new GUIContent("特殊材质 >/ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
+            menu.AddItem(new GUIContent("特殊材质 >/TextureGaussianBlur（ScreenColor高斯模糊材质）"),       false, () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL"));
+            menu.AddItem(new GUIContent("Outline（模型描边）>/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
+            menu.AddItem(new GUIContent("Outline（模型描边）>/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
+            menu.AddItem(new GUIContent("Fx（特效）>/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));
             menu.ShowAsContext();
         }
 

@@ -66,9 +66,15 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.10.0",
+"- LatticeModifier 3.0 重构：引入 DeformTarget 封装单 Renderer 变形管线，消除 Single/Multi 大量重复逻辑，添加【链接选中对象到晶格】功能按钮。",
+"- LatticeModifierEditor 3.1 新增多目标模式【修复丢失绑定】按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer。",
+"- SmoothMeshNormal_1.6 优化【选择描边对象】按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件。",
+"- 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh。",
                 "■ v2.9.8",
 "- TextureGaussianBlur_HLSL v1.0 — 高斯模糊材质 Shader。",
 "- Tools菜单添加：探照灯体积雾（SpotLightVolume），SpotLightVolume v1.0 - 优化轻量探照灯体积雾效果。",
+"- RotationController v2.0 - 新增PingPong摆动模式、AnimationCurve缓动曲线、RotationMode枚举，重构代码结构。",
                 "■ v2.9.7",
 "- Custom_Snow 1.1 优化雪地闪烁表现，陡峭斜面剔除：法线Y分量越小说明越陡峭，剔除闪光避免拉线。",
 "  Custom_Snow 1.2 使用_SparkleTex G通道噪波增强镜头转动时随机闪烁效果，添加【蒙版纹理密度】值，完善GUI参数说明。",

@@ -17,6 +17,8 @@
 // LatticeModifierEditor 2.7 优化控制点显示 // 内部控制点：蓝色
 // LatticeModifierEditor 2.8 晶格体背面控制点压暗显示
 // LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序
+// LatticeModifierEditor 3.0 配合 Runtime v3.0 重构验证通过，公共 API 完全兼容无需修改
+// LatticeModifierEditor 3.1 多目标模式新增"修复丢失绑定"按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -373,6 +375,51 @@ public class LatticeModifierEditor : Editor
                 }
                 EditorGUI.indentLevel--;
             }
+
+            // ── 丢失绑定修复按钮 ──
+            // 检测是否有丢失绑定（manualRenderers 或 targetRoot 子对象中未在 deformTargets 中绑定的）
+            int missingCount = 0;
+            var activeSet = new HashSet<Renderer>(renderers);
+            if (lattice.manualRenderers.Count > 0)
+            {
+                foreach (var r in lattice.manualRenderers)
+                    if (r != null && !activeSet.Contains(r))
+                        missingCount++;
+            }
+            else if (lattice.targetRoot != null)
+            {
+                var allChildRenderers = lattice.targetRoot.GetComponentsInChildren<Renderer>(true);
+                foreach (var r in allChildRenderers)
+                    if (!activeSet.Contains(r))
+                        missingCount++;
+            }
+
+            if (missingCount > 0)
+            {
+                EditorGUILayout.Space(3);
+                GUI.backgroundColor = new Color(1f, 0.6f, 0.2f);
+                EditorGUILayout.HelpBox(
+                    $"检测到 {missingCount} 个目标 Renderer 丢失晶格绑定", MessageType.Warning);
+                if (GUILayout.Button(new GUIContent($"修复丢失绑定（{missingCount} 个）",
+                    "重新链接指定列表中未绑定到晶格的 Renderer。\n\n" +
+                    "适用场景：\n" +
+                    "• Prefab 实例化后部分绑定丢失\n" +
+                    "• 撤销/重做导致部分目标断开连接\n" +
+                    "• 手动修改了 manualRenderers 列表后同步绑定"),
+                    GUILayout.Height(26)))
+                {
+                    Undo.RecordObject(lattice, "修复丢失绑定");
+                    int repaired = lattice.RepairMissingBindings();
+                    EditorUtility.SetDirty(lattice);
+                    SceneView.RepaintAll();
+
+                    if (repaired > 0)
+                        Debug.Log($"[LatticeModifier] 已修复 {repaired} 个丢失绑定");
+                    else
+                        EditorUtility.DisplayDialog("提示", "没有需要修复的绑定", "确定");
+                }
+                GUI.backgroundColor = Color.white;
+            }
         }
 
         EditorGUILayout.Space(3);
@@ -496,6 +543,19 @@ public class LatticeModifierEditor : Editor
             EditorGUILayout.HelpBox(
                 "动画控制点已创建，可在 Animation/Timeline 中对子物体 CP_x_y_z 的 Position 做关键帧动画。",
                 MessageType.Info);
+            EditorGUILayout.BeginHorizontal();
+            GUI.backgroundColor = new Color(0.5f, 0.9f, 1f);
+            if (GUILayout.Button(new GUIContent("链接选中对象到晶格",
+                "将 Hierarchy 中选中的模型对象追加为当前晶格的变形目标。可以先将晶格对象参数窗口独立出来（Alt + P）\n\n" +
+                "操作方法：\n" +
+                "1. 在 Hierarchy 中选中要变形的模型（支持 Ctrl+多选）\n" +
+                "2. 再 Ctrl+点击选中晶格体（保持多选）\n" +
+                "3. 点击此按钮完成链接\n\n" +
+                "链接后模型会立即受晶格控制点影响。"),
+                GUILayout.Height(24)))
+            {
+                LinkSelectedObjectsToLattice();
+            }
             GUI.backgroundColor = new Color(1f, 0.6f, 0.4f);
             if (GUILayout.Button("清除动画控制点", GUILayout.Height(24)))
             {
@@ -504,7 +564,9 @@ public class LatticeModifierEditor : Editor
                 EditorUtility.SetDirty(lattice);
                 SceneView.RepaintAll();
             }
+            EditorGUILayout.EndHorizontal();
         }
+
         GUI.backgroundColor = Color.white;
     }
 
@@ -1063,6 +1125,52 @@ public class LatticeModifierEditor : Editor
         else
             Debug.Log($"[LatticeModifier] 烘焙完成，共保存 {savedMeshes.Count} 个 Mesh Asset 到 {relativeDir}");
     }
+    private void LinkSelectedObjectsToLattice()
+    {
+        // 收集选中的非晶格对象的所有 Renderer
+        var allRenderers = new List<Renderer>();
+        foreach (var obj in Selection.gameObjects)
+        {
+            if (obj == lattice.gameObject) continue;
+
+            Renderer rend = obj.GetComponent<Renderer>();
+            if (rend != null && !allRenderers.Contains(rend))
+                allRenderers.Add(rend);
+
+            var childRenderers = obj.GetComponentsInChildren<Renderer>(true);
+            foreach (var cr in childRenderers)
+            {
+                if (!allRenderers.Contains(cr))
+                    allRenderers.Add(cr);
+            }
+        }
+
+        if (allRenderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示",
+                "请先在 Hierarchy 中选中要链接的模型对象（可 Ctrl+点击多选），然后再点此按钮。", "确定");
+            return;
+        }
+
+        Undo.RecordObject(lattice, "链接对象到晶格");
+        int linked = lattice.LinkRenderers(allRenderers);
+
+        if (linked > 0)
+        {
+            EditorUtility.SetDirty(lattice);
+            SceneView.RepaintAll();
+            Debug.Log($"[LatticeModifier] 已链接 {linked} 个 Renderer 到晶格");
+        }
+        else
+        {
+            EditorUtility.DisplayDialog("提示",
+                "选中的对象已全部链接或没有有效 Renderer", "确定");
+        }
+
+        // 链接后重新选中晶格体
+        Selection.activeGameObject = lattice.gameObject;
+    }
+
     private void CreateStandaloneLattice()
     {
         bool isSingle = lattice.targetMode == LatticeModifier.TargetMode.SingleRenderer;
@@ -1070,9 +1178,24 @@ public class LatticeModifierEditor : Editor
         Transform targetRt = lattice.targetRoot;
         int dx = lattice.divisionsX, dy = lattice.divisionsY, dz = lattice.divisionsZ;
         bool live = lattice.liveUpdate;
-        var mode = lattice.targetMode;
+        var manualRends = new List<Renderer>(lattice.manualRenderers);
 
         Transform refT = isSingle ? targetRend?.transform : targetRt;
+
+        // 如果 targetRoot 为空，从选中对象或 targetRenderer 推断根节点
+        if (refT == null)
+        {
+            if (targetRend != null)
+                refT = targetRend.transform;
+            else if (manualRends.Count > 0 && manualRends[0] != null)
+                refT = manualRends[0].transform;
+        }
+
+        // 确定多目标根节点：使用选中对象自身（含所有子 Renderer）
+        Transform autoRoot = refT;
+        if (autoRoot != null && autoRoot.parent != null)
+            autoRoot = autoRoot.parent;
+
         string refName = refT != null ? refT.name : "Unknown";
 
         Undo.DestroyObjectImmediate(lattice);
@@ -1087,9 +1210,10 @@ public class LatticeModifierEditor : Editor
         }
 
         LatticeModifier newLattice = latticeObj.AddComponent<LatticeModifier>();
-        newLattice.targetMode = mode;
+        newLattice.targetMode = LatticeModifier.TargetMode.MultiRenderer;
+        newLattice.targetRoot = autoRoot;
         newLattice.targetRenderer = targetRend;
-        newLattice.targetRoot = targetRt;
+        newLattice.manualRenderers = manualRends;
         newLattice.divisionsX = dx;
         newLattice.divisionsY = dy;
         newLattice.divisionsZ = dz;
