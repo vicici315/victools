@@ -12,6 +12,8 @@
 // 场景工具 v2.24 再次优化资源箱列表场景对象出错Bug
 // 场景工具 v2.25 拆分 SceneTools.cs 为独立静态工具类，包含：灯光方向同步材质、PBR Lighting Shader 切换、按类型选择对象、丢失Mesh查找修复、全选层级、赋予材质、设置父子关系、模型落地（碰撞检测+射线兜底）
 // 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh
+// 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。
+//               修复重置旋转按钮显示异常值（清除m_LocalEulerAnglesHint缓存）
 
 using System;
 using UnityEngine;
@@ -116,6 +118,9 @@ public class ResourceBoxFileItem
         private Texture2D _lightDirIcon; // lightDir.png图标
         private Texture2D _SelectLattIcon; // lightDir.png图标
         private Texture2D _switchPBRMIcon; // lightDir.png图标
+        private Texture2D _resetPositionIcon; // lightDir.png图标
+        private Texture2D _resetRotationIcon; // lightDir.png图标
+        private Texture2D _resetScaleIcon; // lightDir.png图标
         private Texture2D _levelIn; // 层级设置图标
         private Texture2D _levelOut; // 层级设置图标
         private Texture2D _selectLayer; // 层级设置图标
@@ -144,7 +149,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.26]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.27]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -194,6 +199,9 @@ public class ResourceBoxFileItem
             string lightDirIcon = "Packages/com.youdoo.victools/Editor/VicTools/lightDir.png";
             string selectLattIcon = "Packages/com.youdoo.victools/Editor/VicTools/icon_SelectLattIcon.png";
             string switchPBRMicon = "Packages/com.youdoo.victools/Editor/VicTools/switchPBRM.png";
+            string resetPositionicon = "Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png";
+            string resetRotationicon = "Packages/com.youdoo.victools/Editor/VicTools/resetRotation.png";
+            string resetScaleicon = "Packages/com.youdoo.victools/Editor/VicTools/resetScale.png";
             string levelIn = "Packages/com.youdoo.victools/Editor/VicTools/level-In.png";
             string levelOut = "Packages/com.youdoo.victools/Editor/VicTools/level-Out.png";
             string selectLayer = "Packages/com.youdoo.victools/Editor/VicTools/selectLayer.png";
@@ -213,6 +221,9 @@ public class ResourceBoxFileItem
             _lightDirIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(lightDirIcon);
             _SelectLattIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(selectLattIcon);
             _switchPBRMIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(switchPBRMicon);
+            _resetPositionIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(resetPositionicon);
+            _resetRotationIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(resetRotationicon);
+            _resetScaleIcon = AssetDatabase.LoadAssetAtPath<Texture2D>(resetScaleicon);
             _levelIn = AssetDatabase.LoadAssetAtPath<Texture2D>(levelIn);
             _levelOut = AssetDatabase.LoadAssetAtPath<Texture2D>(levelOut);
             _selectLayer = AssetDatabase.LoadAssetAtPath<Texture2D>(selectLayer);
@@ -1169,6 +1180,14 @@ public class ResourceBoxFileItem
                 _selParent = false;
                 _selAct = true;
             }
+            GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
+            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象\n\n按住 Ctrl+点击：只在当前选中对象的父级范围内挑选"), GUILayout.Width(70), GUILayout.Height(22)))
+            {
+                // 按住 Ctrl 时只在选中对象的父级范围内挑选，并自动忽略 selParent 选项
+                bool localScope = Event.current.control;
+                bool effectiveSelParent = localScope ? false : _selParent;
+                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissMesh, _selMissScript, _selAct, _selMeshObj, _selParticleObj, effectiveSelParent, localScope);
+            }
             // 处理自动勾选逻辑
             /*
             if (newSelMeshObj != _selMeshObj || newSelParticleObj != _selParticleObj)
@@ -1224,7 +1243,6 @@ public class ResourceBoxFileItem
             {
                 SceneTools.SelectAllHierarchy();
             }
-            GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f);
             if (_SelectLattIcon != null)
             {
                 if (GUILayout.Button(new GUIContent(_SelectLattIcon, "选择晶格对象 / 模型对象（双向切换）\n\n• 选中模型 → 点击：选中对应的 Lattice_ 晶格对象\n• 选中晶格 → 点击：反向选中晶格控制的模型\n• Ctrl+点击：加选（不替换当前选择）"), GUILayout.Height(35), GUILayout.Width(38)))
@@ -1232,6 +1250,13 @@ public class ResourceBoxFileItem
                     SelectAssociatedLattice();
                 }
             }
+            
+            GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f);
+            if (GUILayout.Button(new GUIContent(_findMesh, "对丢失Mesh的模型对象尝试自动找回Mesh"), GUILayout.Height(35), GUILayout.Width(38)))
+            {
+                SceneTools.FindMissMeshs();
+            }
+            GUI.backgroundColor = Color.black;
             if (_lightDirIcon != null)
             {
                 if (GUILayout.Button(new GUIContent(_lightDirIcon, "以碰撞体落地操作（Ctrl+点击：以模型底部落地）"), GUILayout.Height(35), GUILayout.Width(38)))
@@ -1240,19 +1265,50 @@ public class ResourceBoxFileItem
                     SceneTools.PlaceObjectOnGround(useRaycast);
                 }
             }
-            GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
-            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象\n\n按住 Ctrl+点击：只在当前选中对象的父级范围内挑选"), GUILayout.Height(30)))
+            GUI.backgroundColor = Color.black;
+            using (new GUILayout.HorizontalScope(boxStyle, GUILayout.ExpandWidth(false), GUILayout.MaxWidth(105)))
             {
-                // 按住 Ctrl 时只在选中对象的父级范围内挑选，并自动忽略 selParent 选项
-                bool localScope = Event.current.control;
-                bool effectiveSelParent = localScope ? false : _selParent;
-                SceneTools.SelectObjectsByType(_selMesh, _selPrefab, _selLODGroup, _selMissMat, _selMissMesh, _selMissScript, _selAct, _selMeshObj, _selParticleObj, effectiveSelParent, localScope);
+                if (GUILayout.Button(new GUIContent(_resetPositionIcon, "重置位移"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    var selected = Selection.gameObjects;
+                    if (selected.Length > 0)
+                    {
+                        Undo.RecordObjects(System.Array.ConvertAll(selected, go => (Object)go.transform), "重置位移");
+                        foreach (var go in selected)
+                            go.transform.localPosition = Vector3.zero;
+                    }
+                }
+                if (GUILayout.Button(new GUIContent(_resetRotationIcon, "重置旋转"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    var selected = Selection.gameObjects;
+                    if (selected.Length > 0)
+                    {
+                        Undo.RecordObjects(System.Array.ConvertAll(selected, go => (Object)go.transform), "重置旋转");
+                        foreach (var go in selected)
+                        {
+                            go.transform.localRotation = Quaternion.identity;
+                            // 通过 SerializedObject 清除 euler hint 缓存，确保 Inspector 显示 (0,0,0)
+                            var so = new SerializedObject(go.transform);
+                            var eulerHint = so.FindProperty("m_LocalEulerAnglesHint");
+                            if (eulerHint != null)
+                            {
+                                eulerHint.vector3Value = Vector3.zero;
+                                so.ApplyModifiedPropertiesWithoutUndo();
+                            }
+                        }
+                    }
+                }
+                if (GUILayout.Button(new GUIContent(_resetScaleIcon, "重置缩放"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    var selected = Selection.gameObjects;
+                    if (selected.Length > 0)
+                    {
+                        Undo.RecordObjects(System.Array.ConvertAll(selected, go => (Object)go.transform), "重置缩放");
+                        foreach (var go in selected)
+                            go.transform.localScale = Vector3.one;
+                    }
+                }
             }
-            if (GUILayout.Button(new GUIContent(_findMesh, "对丢失Mesh的模型对象尝试自动找回Mesh"), GUILayout.Height(35), GUILayout.Width(38)))
-            {
-                SceneTools.FindMissMeshs();
-            }
-            GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
         }
 

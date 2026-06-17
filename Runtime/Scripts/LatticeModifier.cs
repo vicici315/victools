@@ -17,6 +17,8 @@
 // LatticeModifier 2.11 修复 Undo 操作可能导致 Renderer 上的 Mesh 引用被恢复为 originalMesh 或 null
 // LatticeModifier 3.0 重构：引入 DeformTarget 封装单 Renderer 变形管线，消除 Single/Multi 大量重复逻辑
 // LatticeModifier 3.1 新增 RepairMissingBindings()：多目标模式下自动检测并修复 manualRenderers/targetRoot 中丢失晶格绑定的 Renderer
+// LatticeModifier 3.2 新增边缘羽化（feather）：晶格边界区域变形通过 smoothstep 平滑衰减到零，消除硬切边缘
+// LatticeModifier 3.3 修复轴心旋转后变形方向错位：统一使用当前晶格变换计算参数坐标，轴心操作同步更新内部数据；修复Undo支持（记录子CP Transform）；羽化基于当前晶格包围盒从中心向边缘衰减
 
 using System;
 using System.Collections.Generic;
@@ -46,6 +48,9 @@ public class LatticeModifier : MonoBehaviour
     [Range(1, 8)] public int divisionsY = 2;
     [Range(1, 8)] public int divisionsZ = 2;
 
+    [Header("边缘羽化")]
+    [Range(0f, 0.5f)] public float feather = 0f;
+
     [Header("设置")]
     public bool liveUpdate = true;
 
@@ -55,6 +60,8 @@ public class LatticeModifier : MonoBehaviour
     [HideInInspector] [SerializeField] private Vector3 latticeSize;
     [HideInInspector] [SerializeField] private bool initialized;
     [HideInInspector] [SerializeField] private Transform[] controlPointTransforms;
+    [HideInInspector] [SerializeField] private Matrix4x4 initLatticeLocalToWorld;
+    [HideInInspector] [SerializeField] private Matrix4x4 initLatticeWorldToLocal;
 
     [HideInInspector] [SerializeField] private List<DeformTarget> deformTargets = new List<DeformTarget>();
 
@@ -93,6 +100,7 @@ public class LatticeModifier : MonoBehaviour
     [NonSerialized] private Vector3[] cachedControlPoints;
     [NonSerialized] private Matrix4x4 cachedLatticeMatrix;
     [NonSerialized] private Matrix4x4 cachedTargetMatrix;
+    [NonSerialized] private float cachedFeather;
     [NonSerialized] private bool isDirty = true;
     [NonSerialized] private bool runtimeInitialized;
 
@@ -101,6 +109,12 @@ public class LatticeModifier : MonoBehaviour
     private bool CheckDirty()
     {
         if (isDirty) return true;
+
+        if (feather != cachedFeather)
+        {
+            cachedFeather = feather;
+            return true;
+        }
 
         Matrix4x4 curLattice = transform.localToWorldMatrix;
         if (curLattice != cachedLatticeMatrix)
@@ -134,6 +148,7 @@ public class LatticeModifier : MonoBehaviour
     private void SaveSnapshot()
     {
         isDirty = false;
+        cachedFeather = feather;
         if (controlPoints != null)
         {
             if (cachedControlPoints == null || cachedControlPoints.Length != controlPoints.Length)
@@ -152,6 +167,13 @@ public class LatticeModifier : MonoBehaviour
     private void OnEnable()
     {
         if (!initialized || runtimeInitialized) return;
+
+        // 兼容旧数据：如果初始化矩阵未设置（零矩阵），使用当前变换作为初始值
+        if (initLatticeLocalToWorld == Matrix4x4.zero)
+        {
+            initLatticeLocalToWorld = transform.localToWorldMatrix;
+            initLatticeWorldToLocal = transform.worldToLocalMatrix;
+        }
 
         RebuildDeformMeshes();
         runtimeInitialized = true;
@@ -222,6 +244,8 @@ public class LatticeModifier : MonoBehaviour
 
         ComputeBounds();
         GenerateControlPoints();
+        initLatticeLocalToWorld = transform.localToWorldMatrix;
+        initLatticeWorldToLocal = transform.worldToLocalMatrix;
         initialized = true;
     }
 
@@ -415,13 +439,11 @@ public class LatticeModifier : MonoBehaviour
         return count;
     }
 
-    /// <summary>
     /// 修复多目标模式下丢失绑定的 Renderer。
     /// 检查 manualRenderers 列表（或 targetRoot 下的所有 Renderer）中
     /// 哪些没有在当前 deformTargets 中绑定，重新链接它们。
     /// 同时清理 deformTargets 中 renderer 已为 null 的无效条目。
-    /// </summary>
-    /// <returns>修复（重新链接）的 Renderer 数量</returns>
+    /// 返回修复（重新链接）的 Renderer 数量
     public int RepairMissingBindings()
     {
         if (!initialized || targetMode != TargetMode.MultiRenderer) return 0;
@@ -669,6 +691,22 @@ public class LatticeModifier : MonoBehaviour
         return Binomial(n, i) * Mathf.Pow(t, i) * Mathf.Pow(1f - t, n - i);
     }
 
+    /// 计算单轴羽化系数。参数 coord ∈ [0,1] 为归一化坐标，featherSize 为羽化带宽度占比。
+    /// 在 [0, featherSize] 和 [1-featherSize, 1] 范围内从 0 平滑过渡到 1（smoothstep）。
+    private static float FeatherFactor(float coord, float featherSize)
+    {
+        if (featherSize <= 0f) return 1f;
+        float f;
+        if (coord < featherSize)
+            f = coord / featherSize;
+        else if (coord > 1f - featherSize)
+            f = (1f - coord) / featherSize;
+        else
+            return 1f;
+        // smoothstep: 3t² - 2t³
+        return f * f * (3f - 2f * f);
+    }
+
     #endregion
 
     #region 内部 - 变形核心
@@ -694,10 +732,12 @@ public class LatticeModifier : MonoBehaviour
             Vector3 worldPos = curTargetL2W.MultiplyPoint3x4(srcVerts[v]);
             Vector3 latticeLocal = curLatticeW2L.MultiplyPoint3x4(worldPos);
 
+            // 统一使用当前晶格变换计算参数坐标和范围检测
             float s = latticeSize.x > 0 ? (latticeLocal.x - latticeMin.x) / latticeSize.x : 0;
             float t = latticeSize.y > 0 ? (latticeLocal.y - latticeMin.y) / latticeSize.y : 0;
             float u = latticeSize.z > 0 ? (latticeLocal.z - latticeMin.z) / latticeSize.z : 0;
 
+            // 范围检测：超出晶格包围盒的顶点不变形
             if (s < -0.01f || s > 1.01f || t < -0.01f || t > 1.01f || u < -0.01f || u > 1.01f)
             {
                 vertCache[v] = srcVerts[v];
@@ -707,6 +747,14 @@ public class LatticeModifier : MonoBehaviour
             s = Mathf.Clamp01(s);
             t = Mathf.Clamp01(t);
             u = Mathf.Clamp01(u);
+
+            // 边缘羽化：从晶格中心向边缘衰减
+            float featherWeight = 1f;
+            if (feather > 0f)
+            {
+                float fw = FeatherFactor(s, feather) * FeatherFactor(t, feather) * FeatherFactor(u, feather);
+                featherWeight = fw;
+            }
 
             for (int ix = 0; ix < nx; ix++) bxArr[ix] = Bernstein(ix, l, s);
             for (int iy = 0; iy < ny; iy++) byArr[iy] = Bernstein(iy, m, t);
@@ -731,15 +779,17 @@ public class LatticeModifier : MonoBehaviour
                 }
             }
 
+            // 偏移量在当前晶格本地空间中计算，然后转换到世界空间再到目标本地空间
             Vector3 offset = deformedPos - initPos;
             Vector3 worldOffset = transform.TransformVector(offset);
             Vector3 localOffset = targetT.InverseTransformVector(worldOffset);
-            vertCache[v] = srcVerts[v] + localOffset;
+            vertCache[v] = srcVerts[v] + localOffset * featherWeight;
         }
 
         dstMesh.vertices = vertCache;
         dstMesh.RecalculateBounds();
     }
+
 
     private bool EnsureDeformMeshesValid()
     {

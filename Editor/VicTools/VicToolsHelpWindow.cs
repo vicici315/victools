@@ -66,10 +66,15 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.10.1",
+"- 主菜单使用AdvancedDropdown菜单系统支持图标，添加相关菜单图标。",
+"- LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。",
+"- LatticeModifier 3.3 修复轴心旋转后变形方向错位：统一使用当前晶格变换计算参数坐标，轴心操作同步更新内部数据；修复Undo支持（记录子CP Transform）；羽化基于当前晶格包围盒从中心向边缘衰减。",
+"- 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。",
                 "■ v2.10.0",
 "- LatticeModifier 3.0 重构：引入 DeformTarget 封装单 Renderer 变形管线，消除 Single/Multi 大量重复逻辑，添加【链接选中对象到晶格】功能按钮。",
 "- LatticeModifierEditor 3.1 新增多目标模式【修复丢失绑定】按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer。",
-"- SmoothMeshNormal_1.6 优化【选择描边对象】按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件。",
+"- SmoothMeshNormal_1.6 优化【选择描边对象】按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件，固定平滑mesh后缀名。",
 "- 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh。",
                 "■ v2.9.8",
 "- TextureGaussianBlur_HLSL v1.0 — 高斯模糊材质 Shader。",

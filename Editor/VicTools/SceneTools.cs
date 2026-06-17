@@ -568,7 +568,7 @@ namespace VicTools
                         var renderer = gameObject.GetComponent<Renderer>();
                         if (renderer != null)
                         {
-                            // 检查材质球是否丢失（材质为null或材质名称为"Default-Material"等默认材质）
+                            // 检查材质球是否丢失（材质为null）
                             var materials = renderer.sharedMaterials;
                             bool hasMissingMaterial = false;
                             
@@ -578,19 +578,17 @@ namespace VicTools
                             }
                             else
                             {
-                                foreach (var material in materials)
+                                // 对于ParticleSystemRenderer，只检查主材质（index 0），
+                                // 跳过Trail Material槽位（index 1），因为未启用Trail时该槽位为null是正常的
+                                int materialCountToCheck = materials.Length;
+                                if (renderer is ParticleSystemRenderer)
                                 {
-                                    if (material == null)
-                                    {
-                                        hasMissingMaterial = true;
-                                        break;
-                                    }
-                                    
-                                    // 检查是否是默认材质（常见的默认材质名称）
-                                    var materialName = material.name.ToLower();
-                                    if (materialName.Contains("default") || 
-                                        materialName.Contains("default-material") ||
-                                        materialName == "material")
+                                    materialCountToCheck = System.Math.Min(1, materials.Length);
+                                }
+                                
+                                for (int i = 0; i < materialCountToCheck; i++)
+                                {
+                                    if (materials[i] == null)
                                     {
                                         hasMissingMaterial = true;
                                         break;

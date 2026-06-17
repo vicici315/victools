@@ -18,7 +18,9 @@
 // LatticeModifierEditor 2.8 晶格体背面控制点压暗显示
 // LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序
 // LatticeModifierEditor 3.0 配合 Runtime v3.0 重构验证通过，公共 API 完全兼容无需修改
+// LatticeModifierEditor 3.1 SingleRenderer模式【修复晶格链接】按钮（无需选中对象直接修复）；轴心操作同步initLattice矩阵；晶格点背面压暗改为基于控制点实际位置计算面法线；Undo记录子CP Transform防止撤销失效
 // LatticeModifierEditor 3.1 多目标模式新增"修复丢失绑定"按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer
+// LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -119,6 +121,15 @@ public class LatticeModifierEditor : Editor
         EditorApplication.delayCall += () =>
         {
             if (lattice == null || !lattice.IsInitialized) return;
+
+            // Undo 后同步控制点 Transform 位置（如果存在），防止缓存不一致
+            if (lattice.HasControlPointTransforms)
+            {
+                lattice.SyncToTransforms();
+                // 重置位置快照缓存，避免 EditorUpdate 误判为外部修改
+                _lastCpPositions = null;
+            }
+
             lattice.MarkDirty();
             lattice.ApplyDeformation();
             SceneView.RepaintAll();
@@ -290,6 +301,7 @@ public class LatticeModifierEditor : Editor
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsX"), new GUIContent("X 段数"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsY"), new GUIContent("Y 段数"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsZ"), new GUIContent("Z 段数"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("feather"), new GUIContent("边缘羽化", "控制晶格边界的变形衰减带宽度。0 = 无羽化（硬切），0.5 = 最大羽化（整个范围平滑过渡）"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("liveUpdate"), new GUIContent("实时更新"));
         serializedObject.ApplyModifiedProperties();
 
@@ -545,16 +557,32 @@ public class LatticeModifierEditor : Editor
                 MessageType.Info);
             EditorGUILayout.BeginHorizontal();
             GUI.backgroundColor = new Color(0.5f, 0.9f, 1f);
-            if (GUILayout.Button(new GUIContent("链接选中对象到晶格",
-                "将 Hierarchy 中选中的模型对象追加为当前晶格的变形目标。可以先将晶格对象参数窗口独立出来（Alt + P）\n\n" +
-                "操作方法：\n" +
-                "1. 在 Hierarchy 中选中要变形的模型（支持 Ctrl+多选）\n" +
-                "2. 再 Ctrl+点击选中晶格体（保持多选）\n" +
-                "3. 点击此按钮完成链接\n\n" +
-                "链接后模型会立即受晶格控制点影响。"),
-                GUILayout.Height(24)))
+            if (isSingle)
             {
-                LinkSelectedObjectsToLattice();
+                if (GUILayout.Button(new GUIContent("修复晶格链接",
+                    "重新将「目标对象」字段中的 Renderer 链接到当前晶格。\n\n" +
+                    "适用场景：\n" +
+                    "• Prefab 实例化后绑定丢失\n" +
+                    "• 撤销/重做导致目标断开连接\n" +
+                    "• 更换了目标对象后同步绑定"),
+                    GUILayout.Height(24)))
+                {
+                    RepairSingleRendererLink();
+                }
+            }
+            else
+            {
+                if (GUILayout.Button(new GUIContent("链接选中对象到晶格",
+                    "将 Hierarchy 中选中的模型对象追加为当前晶格的变形目标。可以先将晶格对象参数窗口独立出来（Alt + P）\n\n" +
+                    "操作方法：\n" +
+                    "1. 在 Hierarchy 中选中要变形的模型（支持 Ctrl+多选）\n" +
+                    "2. 再 Ctrl+点击选中晶格体（保持多选）\n" +
+                    "3. 点击此按钮完成链接\n\n" +
+                    "链接后模型会立即受晶格控制点影响。"),
+                    GUILayout.Height(24)))
+                {
+                    LinkSelectedObjectsToLattice();
+                }
             }
             GUI.backgroundColor = new Color(1f, 0.6f, 0.4f);
             if (GUILayout.Button("清除动画控制点", GUILayout.Height(24)))
@@ -567,7 +595,364 @@ public class LatticeModifierEditor : Editor
             EditorGUILayout.EndHorizontal();
         }
 
+        // ── 轴心设置 ──
+        EditorGUILayout.Space(5);
+        EditorGUILayout.LabelField("轴心设置", EditorStyles.boldLabel);
+        EditorGUILayout.BeginHorizontal();
+
+        GUI.backgroundColor = new Color(0.9f, 0.85f, 1f);
+        if (GUILayout.Button(new GUIContent("轴心居中",
+            "将晶格物体的轴心（Transform.position）移到所有控制点的中心位置。\n" +
+            "控制点的世界位置不变，仅改变局部坐标系原点。"),
+            GUILayout.Height(26)))
+        {
+            CenterPivot();
+        }
+        if (GUILayout.Button(new GUIContent("重置轴心旋转",
+            "将晶格物体的旋转归零（世界对齐），保持位置不变。\n" +
+            "控制点的世界位置不变，仅重新计算局部坐标。"),
+            GUILayout.Height(26)))
+        {
+            ResetPivotRotation();
+        }
+
+        GUI.backgroundColor = new Color(0.85f, 1f, 0.9f);
+        if (GUILayout.Button(new GUIContent("继承对象轴心",
+            "将晶格物体的轴心移到第一个变形目标对象的位置和旋转。\n" +
+            "控制点的世界位置不变，晶格坐标系与目标对象对齐。"),
+            GUILayout.Height(26)))
+        {
+            InheritTargetPivot();
+        }
+
+
+        if (GUILayout.Button(new GUIContent("继承对象轴心旋转",
+            "将晶格物体的旋转设为第一个变形目标的旋转，位置不变。\n" +
+            "控制点的世界位置不变，仅改变局部坐标系朝向。"),
+            GUILayout.Height(26)))
+        {
+            InheritTargetRotation();
+        }
+
+        EditorGUILayout.EndHorizontal();
+
         GUI.backgroundColor = Color.white;
+    }
+
+    // ═══════════════════════════════════════════
+    //  轴心操作
+    // ═══════════════════════════════════════════
+
+    /// 将晶格物体轴心移到所有控制点的中心，控制点世界位置不变。
+    private void CenterPivot()
+    {
+        if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null) return;
+
+        Transform t = lattice.transform;
+
+        // 计算控制点的局部空间中心
+        Vector3 localCenter = Vector3.zero;
+        for (int i = 0; i < lattice.controlPoints.Length; i++)
+            localCenter += lattice.controlPoints[i];
+        localCenter /= lattice.controlPoints.Length;
+
+        // 世界空间中心
+        Vector3 worldCenter = t.TransformPoint(localCenter);
+
+        Undo.RecordObject(lattice, "轴心居中");
+        Undo.RecordObject(t, "轴心居中");
+
+        // 偏移所有控制点（保持世界位置不变）
+        Vector3 offset = localCenter;
+        for (int i = 0; i < lattice.controlPoints.Length; i++)
+            lattice.controlPoints[i] -= offset;
+
+        // 同步 initialControlPoints
+        var initField = typeof(LatticeModifier).GetField("initialControlPoints",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (initField != null)
+        {
+            var initPts = (Vector3[])initField.GetValue(lattice);
+            if (initPts != null && initPts.Length == lattice.controlPoints.Length)
+            {
+                for (int i = 0; i < initPts.Length; i++)
+                    initPts[i] -= offset;
+            }
+        }
+
+        // 同步 latticeMin
+        var minField = typeof(LatticeModifier).GetField("latticeMin",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (minField != null)
+        {
+            Vector3 oldMin = (Vector3)minField.GetValue(lattice);
+            minField.SetValue(lattice, oldMin - offset);
+        }
+
+        // 移动 Transform 到新位置
+        t.position = worldCenter;
+
+        // 更新初始化矩阵（因为控制点和包围盒已经重新映射到新坐标系）
+        var initL2WField = typeof(LatticeModifier).GetField("initLatticeLocalToWorld",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var initW2LField = typeof(LatticeModifier).GetField("initLatticeWorldToLocal",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (initL2WField != null && initW2LField != null)
+        {
+            initL2WField.SetValue(lattice, t.localToWorldMatrix);
+            initW2LField.SetValue(lattice, t.worldToLocalMatrix);
+        }
+
+        // 同步子物体控制点 Transform
+        if (lattice.HasControlPointTransforms)
+            lattice.SyncToTransforms();
+
+        lattice.MarkDirty();
+        lattice.ApplyDeformation();
+        EditorUtility.SetDirty(lattice);
+        EditorUtility.SetDirty(t);
+        SceneView.RepaintAll();
+    }
+
+    /// 将晶格物体的轴心移到第一个变形目标的位置和旋转，控制点世界位置不变。
+    private void InheritTargetPivot()
+    {
+        if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null) return;
+
+        var renderers = lattice.GetActiveRenderers();
+        if (renderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "没有变形目标对象", "确定");
+            return;
+        }
+
+        Transform targetT = renderers[0].transform;
+        Transform t = lattice.transform;
+
+        // 目标的世界位置和旋转
+        Vector3 newWorldPos = targetT.position;
+        Quaternion newWorldRot = targetT.rotation;
+
+        Undo.RecordObject(lattice, "继承变形对象轴心");
+        Undo.RecordObject(t, "继承变形对象轴心");
+
+        // 先计算新坐标系下所有控制点的局部坐标
+        // 当前控制点世界位置 = t.TransformPoint(cp[i])
+        // 新的局部坐标 = 逆变换(newWorldPos, newWorldRot, t.lossyScale) * 世界位置
+        Matrix4x4 newLocalToWorld = Matrix4x4.TRS(newWorldPos, newWorldRot, t.lossyScale);
+        Matrix4x4 newWorldToLocal = newLocalToWorld.inverse;
+
+        for (int i = 0; i < lattice.controlPoints.Length; i++)
+        {
+            Vector3 worldPos = t.TransformPoint(lattice.controlPoints[i]);
+            lattice.controlPoints[i] = newWorldToLocal.MultiplyPoint3x4(worldPos);
+        }
+
+        // 同步 initialControlPoints
+        var initField = typeof(LatticeModifier).GetField("initialControlPoints",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (initField != null)
+        {
+            var initPts = (Vector3[])initField.GetValue(lattice);
+            if (initPts != null && initPts.Length == lattice.controlPoints.Length)
+            {
+                for (int i = 0; i < initPts.Length; i++)
+                {
+                    Vector3 worldPos = t.TransformPoint(initPts[i]);
+                    initPts[i] = newWorldToLocal.MultiplyPoint3x4(worldPos);
+                }
+            }
+        }
+
+        // 同步 latticeMin 和 latticeSize
+        var minField = typeof(LatticeModifier).GetField("latticeMin",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var sizeField = typeof(LatticeModifier).GetField("latticeSize",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (minField != null && sizeField != null)
+        {
+            Vector3 oldMin = (Vector3)minField.GetValue(lattice);
+            Vector3 oldSize = (Vector3)sizeField.GetValue(lattice);
+            Vector3 oldMax = oldMin + oldSize;
+
+            // 转换包围盒的 8 个角点到新坐标系，重新计算 AABB
+            Vector3[] corners = new Vector3[8];
+            corners[0] = new Vector3(oldMin.x, oldMin.y, oldMin.z);
+            corners[1] = new Vector3(oldMax.x, oldMin.y, oldMin.z);
+            corners[2] = new Vector3(oldMin.x, oldMax.y, oldMin.z);
+            corners[3] = new Vector3(oldMax.x, oldMax.y, oldMin.z);
+            corners[4] = new Vector3(oldMin.x, oldMin.y, oldMax.z);
+            corners[5] = new Vector3(oldMax.x, oldMin.y, oldMax.z);
+            corners[6] = new Vector3(oldMin.x, oldMax.y, oldMax.z);
+            corners[7] = new Vector3(oldMax.x, oldMax.y, oldMax.z);
+
+            Vector3 newMin = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            Vector3 newMax = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 wp = t.TransformPoint(corners[i]);
+                Vector3 lp = newWorldToLocal.MultiplyPoint3x4(wp);
+                newMin = Vector3.Min(newMin, lp);
+                newMax = Vector3.Max(newMax, lp);
+            }
+
+            minField.SetValue(lattice, newMin);
+            sizeField.SetValue(lattice, newMax - newMin);
+        }
+
+        // 设置新的 Transform
+        t.position = newWorldPos;
+        t.rotation = newWorldRot;
+
+        // 更新初始化矩阵（因为控制点和包围盒已经重新映射到新坐标系）
+        var initL2WField = typeof(LatticeModifier).GetField("initLatticeLocalToWorld",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var initW2LField = typeof(LatticeModifier).GetField("initLatticeWorldToLocal",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (initL2WField != null && initW2LField != null)
+        {
+            initL2WField.SetValue(lattice, t.localToWorldMatrix);
+            initW2LField.SetValue(lattice, t.worldToLocalMatrix);
+        }
+
+        // 同步子物体控制点 Transform
+        if (lattice.HasControlPointTransforms)
+            lattice.SyncToTransforms();
+
+        lattice.MarkDirty();
+        lattice.ApplyDeformation();
+        EditorUtility.SetDirty(lattice);
+        EditorUtility.SetDirty(t);
+        SceneView.RepaintAll();
+    }
+
+    /// 将晶格物体旋转归零（世界对齐），位置不变，控制点世界位置不变。
+    private void ResetPivotRotation()
+    {
+        if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null) return;
+
+        Transform t = lattice.transform;
+        if (t.rotation == Quaternion.identity) return;
+
+        Undo.RecordObject(lattice, "重置轴心旋转");
+        Undo.RecordObject(t, "重置轴心旋转");
+
+        SetPivotRotation(Quaternion.identity);
+    }
+
+    /// 将晶格物体旋转设为第一个变形目标的旋转，位置不变，控制点世界位置不变。
+    private void InheritTargetRotation()
+    {
+        if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null) return;
+
+        var renderers = lattice.GetActiveRenderers();
+        if (renderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "没有变形目标对象", "确定");
+            return;
+        }
+
+        Quaternion targetRot = renderers[0].transform.rotation;
+        Transform t = lattice.transform;
+        if (t.rotation == targetRot) return;
+
+        Undo.RecordObject(lattice, "继承对象旋转");
+        Undo.RecordObject(t, "继承对象旋转");
+
+        SetPivotRotation(targetRot);
+    }
+
+    /// 通用：仅改变晶格旋转，位置不变，控制点世界位置不变。
+    private void SetPivotRotation(Quaternion newWorldRot)
+    {
+        Transform t = lattice.transform;
+        Vector3 pos = t.position;
+
+        // 新的局部坐标系矩阵（位置不变，旋转改变）
+        Matrix4x4 newLocalToWorld = Matrix4x4.TRS(pos, newWorldRot, t.lossyScale);
+        Matrix4x4 newWorldToLocal = newLocalToWorld.inverse;
+
+        // 重新计算控制点在新坐标系下的局部坐标
+        for (int i = 0; i < lattice.controlPoints.Length; i++)
+        {
+            Vector3 worldPos = t.TransformPoint(lattice.controlPoints[i]);
+            lattice.controlPoints[i] = newWorldToLocal.MultiplyPoint3x4(worldPos);
+        }
+
+        // 同步 initialControlPoints
+        var initField = typeof(LatticeModifier).GetField("initialControlPoints",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (initField != null)
+        {
+            var initPts = (Vector3[])initField.GetValue(lattice);
+            if (initPts != null && initPts.Length == lattice.controlPoints.Length)
+            {
+                for (int i = 0; i < initPts.Length; i++)
+                {
+                    Vector3 worldPos = t.TransformPoint(initPts[i]);
+                    initPts[i] = newWorldToLocal.MultiplyPoint3x4(worldPos);
+                }
+            }
+        }
+
+        // 同步 latticeMin / latticeSize
+        var minField = typeof(LatticeModifier).GetField("latticeMin",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var sizeField = typeof(LatticeModifier).GetField("latticeSize",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (minField != null && sizeField != null)
+        {
+            Vector3 oldMin = (Vector3)minField.GetValue(lattice);
+            Vector3 oldSize = (Vector3)sizeField.GetValue(lattice);
+            Vector3 oldMax = oldMin + oldSize;
+
+            Vector3[] corners = new Vector3[8];
+            corners[0] = new Vector3(oldMin.x, oldMin.y, oldMin.z);
+            corners[1] = new Vector3(oldMax.x, oldMin.y, oldMin.z);
+            corners[2] = new Vector3(oldMin.x, oldMax.y, oldMin.z);
+            corners[3] = new Vector3(oldMax.x, oldMax.y, oldMin.z);
+            corners[4] = new Vector3(oldMin.x, oldMin.y, oldMax.z);
+            corners[5] = new Vector3(oldMax.x, oldMin.y, oldMax.z);
+            corners[6] = new Vector3(oldMin.x, oldMax.y, oldMax.z);
+            corners[7] = new Vector3(oldMax.x, oldMax.y, oldMax.z);
+
+            Vector3 newMin = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
+            Vector3 newMax = new Vector3(float.MinValue, float.MinValue, float.MinValue);
+            for (int i = 0; i < 8; i++)
+            {
+                Vector3 wp = t.TransformPoint(corners[i]);
+                Vector3 lp = newWorldToLocal.MultiplyPoint3x4(wp);
+                newMin = Vector3.Min(newMin, lp);
+                newMax = Vector3.Max(newMax, lp);
+            }
+
+            minField.SetValue(lattice, newMin);
+            sizeField.SetValue(lattice, newMax - newMin);
+        }
+
+        // 应用新旋转
+        t.rotation = newWorldRot;
+
+        // 更新初始化矩阵（因为控制点和包围盒已经重新映射到新坐标系）
+        var initL2WField = typeof(LatticeModifier).GetField("initLatticeLocalToWorld",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var initW2LField = typeof(LatticeModifier).GetField("initLatticeWorldToLocal",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (initL2WField != null && initW2LField != null)
+        {
+            initL2WField.SetValue(lattice, t.localToWorldMatrix);
+            initW2LField.SetValue(lattice, t.worldToLocalMatrix);
+        }
+
+        // 同步子物体控制点 Transform
+        if (lattice.HasControlPointTransforms)
+            lattice.SyncToTransforms();
+
+        lattice.MarkDirty();
+        lattice.ApplyDeformation();
+        EditorUtility.SetDirty(lattice);
+        EditorUtility.SetDirty(t);
+        SceneView.RepaintAll();
     }
 
     // ═══════════════════════════════════════════
@@ -642,6 +1027,66 @@ public class LatticeModifierEditor : Editor
     // ═══════════════════════════════════════════
     //  SceneView 绘制 & 交互
     // ═══════════════════════════════════════════
+
+    /// <summary>
+    /// 根据控制点实际位置计算指定面的法线方向。
+    /// faceAxis 指明面的朝向轴：(-1,0,0)=X轴负方向面，(1,0,0)=X轴正方向面 等。
+    /// 通过该点与同面相邻控制点的叉积得到实际法线，不依赖晶格 Transform 轴向。
+    /// </summary>
+    private static Vector3 ComputeFaceNormal(LatticeModifier lat, Transform t, int pix, int piy, int piz, int nx, int ny, int nz, int faceAxisX, int faceAxisY, int faceAxisZ)
+    {
+        Vector3 center = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(pix, piy, piz)]);
+
+        // 确定面上两个切线方向的邻居索引
+        int t1ix = pix, t1iy = piy, t1iz = piz;
+        int t2ix = pix, t2iy = piy, t2iz = piz;
+
+        if (faceAxisX != 0)
+        {
+            // YZ 面：沿 Y 和 Z 方向取邻居
+            t1iy = Mathf.Clamp(piy + 1, 0, ny - 1);
+            if (t1iy == piy) t1iy = Mathf.Clamp(piy - 1, 0, ny - 1);
+            t2iz = Mathf.Clamp(piz + 1, 0, nz - 1);
+            if (t2iz == piz) t2iz = Mathf.Clamp(piz - 1, 0, nz - 1);
+        }
+        else if (faceAxisY != 0)
+        {
+            // XZ 面：沿 X 和 Z 方向取邻居
+            t1ix = Mathf.Clamp(pix + 1, 0, nx - 1);
+            if (t1ix == pix) t1ix = Mathf.Clamp(pix - 1, 0, nx - 1);
+            t2iz = Mathf.Clamp(piz + 1, 0, nz - 1);
+            if (t2iz == piz) t2iz = Mathf.Clamp(piz - 1, 0, nz - 1);
+        }
+        else
+        {
+            // XY 面：沿 X 和 Y 方向取邻居
+            t1ix = Mathf.Clamp(pix + 1, 0, nx - 1);
+            if (t1ix == pix) t1ix = Mathf.Clamp(pix - 1, 0, nx - 1);
+            t2iy = Mathf.Clamp(piy + 1, 0, ny - 1);
+            if (t2iy == piy) t2iy = Mathf.Clamp(piy - 1, 0, ny - 1);
+        }
+
+        Vector3 neighbor1 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(t1ix, t1iy, t1iz)]);
+        Vector3 neighbor2 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(t2ix, t2iy, t2iz)]);
+
+        Vector3 edge1 = neighbor1 - center;
+        Vector3 edge2 = neighbor2 - center;
+        Vector3 normal = Vector3.Cross(edge1, edge2).normalized;
+
+        // 确保法线朝向面的外侧：用 faceAxis 的预期方向做参考
+        // 取初始控制点的中心作为内部参考点
+        Vector3 latticeCenter = Vector3.zero;
+        for (int i = 0; i < lat.controlPoints.Length; i++)
+            latticeCenter += lat.controlPoints[i];
+        latticeCenter = t.TransformPoint(latticeCenter / lat.controlPoints.Length);
+
+        Vector3 outward = center - latticeCenter;
+        if (Vector3.Dot(normal, outward) < 0)
+            normal = -normal;
+
+        return normal;
+    }
+
     private static void DrawLatticeAndHandles(LatticeModifier lat, HashSet<int> selPts, SceneView sceneView, bool isInstance)
     {
         if (lat == null || !lat.IsInitialized || lat.controlPoints == null) return;
@@ -677,6 +1122,7 @@ public class LatticeModifierEditor : Editor
 
         // ── 按深度排序：从远到近绘制，近处控制点覆盖远处（实现遮挡效果） ──
         int totalPts = lat.controlPoints.Length;
+
         // 构建索引+深度数组，按深度从远到近排序
         var depthOrder = new int[totalPts];
         var depths = new float[totalPts];
@@ -715,19 +1161,43 @@ public class LatticeModifierEditor : Editor
             // 透视模式下使用逐点视线方向，正交模式下使用统一相机朝向
             Vector3 viewDir = isOrtho ? camForward : (worldPos - camPos).normalized;
 
-            // 基于控制点所在面的法线判断是否为背面
-            // 一个控制点可能属于多个面（边缘/角点），只要有任一面朝向相机就不算背面
+            // 基于控制点实际位置计算面法线判断是否为背面
+            // 不依赖晶格 Transform 的方向，而是从相邻控制点推导表面朝向
             bool isBackFacing = false;
             if (isOnSurface)
             {
                 bool anyFaceFront = false;
-                // 检查该点所在的每个面的法线
-                if (pix == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.left), viewDir) < 0) anyFaceFront = true; }
-                if (pix == nx - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.right), viewDir) < 0) anyFaceFront = true; }
-                if (piy == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.down), viewDir) < 0) anyFaceFront = true; }
-                if (piy == ny - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.up), viewDir) < 0) anyFaceFront = true; }
-                if (piz == 0)       { if (Vector3.Dot(t.TransformDirection(Vector3.back), viewDir) < 0) anyFaceFront = true; }
-                if (piz == nz - 1)  { if (Vector3.Dot(t.TransformDirection(Vector3.forward), viewDir) < 0) anyFaceFront = true; }
+                // 对该点所在的每个外表面，用相邻控制点叉积计算实际法线方向
+                if (pix == 0)
+                {
+                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, -1, 0, 0);
+                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                }
+                if (pix == nx - 1)
+                {
+                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 1, 0, 0);
+                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                }
+                if (piy == 0)
+                {
+                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, -1, 0);
+                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                }
+                if (piy == ny - 1)
+                {
+                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, 1, 0);
+                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                }
+                if (piz == 0)
+                {
+                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, 0, -1);
+                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                }
+                if (piz == nz - 1)
+                {
+                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, 0, 1);
+                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                }
                 isBackFacing = !anyFaceFront;
             }
 
@@ -770,6 +1240,15 @@ public class LatticeModifierEditor : Editor
             }
             SyncSelectionToHierarchy();
             sceneView.Repaint();
+        }
+
+        // ── Esc 取消选择 ──
+        if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape && selPts != null && selPts.Count > 0)
+        {
+            selPts.Clear();
+            SyncSelectionToHierarchy();
+            sceneView.Repaint();
+            e.Use();
         }
 
         // ── Shift+拖拽框选 ──
@@ -920,6 +1399,15 @@ public class LatticeModifierEditor : Editor
                     }
 
                     Undo.RecordObject(lat, "旋转晶格控制点");
+                    // 记录子控制点 Transform 以支持 Undo
+                    if (lat.HasControlPointTransforms)
+                    {
+                        foreach (int i in selPts)
+                        {
+                            Transform cp = lat.GetControlPointTransform(i);
+                            if (cp != null) Undo.RecordObject(cp, "旋转晶格控制点");
+                        }
+                    }
                     foreach (int i in selPts)
                     {
                         Vector3 startWp = s_handleStartPositions[i];
@@ -947,6 +1435,15 @@ public class LatticeModifierEditor : Editor
                 if (EditorGUI.EndChangeCheck())
                 {
                     Undo.RecordObject(lat, "移动晶格控制点");
+                    // 记录子控制点 Transform 以支持 Undo
+                    if (lat.HasControlPointTransforms)
+                    {
+                        foreach (int i in selPts)
+                        {
+                            Transform cp = lat.GetControlPointTransform(i);
+                            if (cp != null) Undo.RecordObject(cp, "移动晶格控制点");
+                        }
+                    }
                     Vector3 delta = newCenter - center;
                     foreach (int i in selPts)
                     {
@@ -1169,6 +1666,31 @@ public class LatticeModifierEditor : Editor
 
         // 链接后重新选中晶格体
         Selection.activeGameObject = lattice.gameObject;
+    }
+
+    private void RepairSingleRendererLink()
+    {
+        if (lattice.targetRenderer == null)
+        {
+            EditorUtility.DisplayDialog("提示",
+                "「目标对象」字段为空，请先将要变形的模型拖入该字段。", "确定");
+            return;
+        }
+
+        Undo.RecordObject(lattice, "修复晶格链接");
+        bool linked = lattice.LinkRenderer(lattice.targetRenderer);
+
+        if (linked)
+        {
+            EditorUtility.SetDirty(lattice);
+            SceneView.RepaintAll();
+            Debug.Log($"[LatticeModifier] 已修复链接：{lattice.targetRenderer.name}");
+        }
+        else
+        {
+            EditorUtility.DisplayDialog("提示",
+                "目标对象已处于链接状态，无需修复。", "确定");
+        }
     }
 
     private void CreateStandaloneLattice()

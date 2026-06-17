@@ -3,7 +3,7 @@
 // SmoothMeshNormal_1.3 添加<选择父对象>按钮，优化模型列表"选择"按钮只选中相应对象
 // SmoothMeshNormal_1.4 添加<创建描边模型>按钮，自动克隆 _OL 描边对象并生成平滑网格，添加描边材质预置接口
 // SmoothMeshNormal_1.5 添加<统一法线>按钮，将选中对象的 Mesh 法线重新计算为统一平滑法线
-// SmoothMeshNormal_1.6 优化"选择描边对象"按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件
+// SmoothMeshNormal_1.6 优化"选择描边对象"按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件，固定平滑mesh后缀名。
 
 using System;
 using System.Collections;
@@ -30,7 +30,7 @@ public class SmoothedNormalsUtility : EditorWindow
 
     private string mFilePath = "";
 
-	private string mExtraFileName = "_SmoothNormal";
+	private const string SmoothNormalSuffix = "_SmoothNormal";
 
 	// 覆盖模式开关，通过 EditorPrefs 持久化存储，关闭窗口或重启 Unity 后状态自动恢复
 	// 勾选时：直接在原 Mesh 上写入平滑法线数据，不创建新资产文件
@@ -114,8 +114,8 @@ public class SmoothedNormalsUtility : EditorWindow
 				GUILayout.Space(2);
 				GUILayout.BeginHorizontal();
 				var label = sm.mesh.name;
-				if (!string.IsNullOrEmpty(mExtraFileName) && label.Contains(mExtraFileName))
-					label = label.Replace(mExtraFileName, mExtraFileName);
+				if (label.Contains(SmoothNormalSuffix))
+					label = label.Replace(SmoothNormalSuffix, SmoothNormalSuffix);
 				GUILayout.Label(label, EditorStyles.wordWrappedMiniLabel);
 				if (GUILayout.Button("选择", EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
 				{
@@ -772,7 +772,7 @@ public class SmoothedNormalsUtility : EditorWindow
 
 		EditorGUILayout.BeginHorizontal();
 		GUI_SelectSaveChannel();
-		mExtraFileName = EditorGUILayout.TextField("后缀名", mExtraFileName);
+		EditorGUILayout.LabelField("后缀名", SmoothNormalSuffix);
 		if (GUILayout.Button(new GUIContent("获取","先选择Mesh对象，获取选择对象所在路径"), EditorStyles.miniButton, GUILayout.ExpandWidth(false)))
 		{
 			string path = GetSelectedPrefabPath();
@@ -931,7 +931,7 @@ public class SmoothedNormalsUtility : EditorWindow
 						}
 						else
 						{
-							if (renderer.sharedMesh.name.Contains(mExtraFileName))
+							if (renderer.sharedMesh.name.Contains(SmoothNormalSuffix))
 							{
 								meshDict.Add(renderer.sharedMesh, new SelectedMesh(renderer.sharedMesh, false));
 							}
@@ -960,7 +960,7 @@ public class SmoothedNormalsUtility : EditorWindow
 						}
 						else
 						{
-							if (filter.sharedMesh.name.Contains(mExtraFileName))
+							if (filter.sharedMesh.name.Contains(SmoothNormalSuffix))
 							{
 								meshDict.Add(filter.sharedMesh, new SelectedMesh(filter.sharedMesh, false));
 							}
@@ -1034,8 +1034,8 @@ public class SmoothedNormalsUtility : EditorWindow
 			Directory.CreateDirectory(savePath);
 		string assetPath = "Assets/" + mFilePath + "/";
 		string originalMeshName = originalMesh.Name;
-		string newAssetName = originalMeshName + mExtraFileName + ".asset";
-		if (originalMeshName.Contains(mExtraFileName))
+		string newAssetName = originalMeshName + SmoothNormalSuffix + ".asset";
+		if (originalMeshName.Contains(SmoothNormalSuffix))
 		{
 			newAssetName = originalMeshName + ".asset";
 		}

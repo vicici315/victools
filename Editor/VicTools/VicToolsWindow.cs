@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.IMGUI.Controls;
 using System.Collections.Generic;
 using System.Linq;
 using System;
@@ -1437,16 +1438,19 @@ namespace VicTools
             EditorGUILayout.BeginHorizontal();
             if (GUILayout.Button(new GUIContent("Menu ▾", "辅助工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
             {
-                ShowMenuDropdown();
+                var rect = GUILayoutUtility.GetLastRect();
+                ShowMenuDropdown(rect);
             }
             if (GUILayout.Button(new GUIContent("Tools ▾", "其它工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
             {
-                ShowToolsDropdown();
+                var rect = GUILayoutUtility.GetLastRect();
+                ShowToolsDropdown(rect);
             }
             GUI.backgroundColor = Color.green;
             if (GUILayout.Button(new GUIContent("Material:URP ▾", "创建\\更换 材质（+ Ctrl 点击更换材质）"), GUILayout.Width(94), GUILayout.Height(20)))
             {
-                ShowMaterialDropdown();
+                var rect = GUILayoutUtility.GetLastRect();
+                ShowMaterialDropdown(rect);
             }
             GUI.backgroundColor = Color.white;
             GUILayout.FlexibleSpace(); // 将按钮推到右侧
@@ -1646,25 +1650,76 @@ namespace VicTools
         }
 
         /// 显示 Tools 下拉菜单
-        private void ShowToolsDropdown()
+        private void ShowToolsDropdown(Rect buttonRect)
         {
-            GenericMenu menu = new GenericMenu();
-            menu.AddItem(new GUIContent("■ 主材质自定义灯光工具: ComputeBuffer"), false, () =>
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Tools", BuildToolsItems());
+            dropdown.Show(buttonRect);
+        }
+
+        // ═══════════════════════════════════════════
+        //  AdvancedDropdown 菜单项构建
+        //  图标路径替换说明：将 LoadItemIcon("xxx") 中的路径替换为你的图标 png 路径
+        //  例如: "Packages/com.youdoo.victools/Editor/Icons/lattice.png"
+        //  路径支持 Assets/ 或 Packages/ 下的图片资源
+        // ═══════════════════════════════════════════
+
+        private List<VicDropdownItemData> BuildToolsItems()
+        {
+            return new List<VicDropdownItemData>
             {
-                EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/CustomLightTool: ComputeBufferTool");
-            });
-            menu.AddItem(new GUIContent("■ 轮廓描边辅助工具: SmoothedNormal"), false, () =>
+                new VicDropdownItemData("主材质自定义灯光工具: ComputeBuffer", LoadItemIcon(""), () =>
+                    EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/CustomLightTool: ComputeBufferTool")),
+                new VicDropdownItemData("轮廓描边辅助工具: SmoothedNormal", LoadItemIcon(""), () =>
+                    EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("创建 晶格变形控制器（Lattice）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/icon_SelectLattIcon.png"), CreateLatticeController),
+                new VicDropdownItemData("创建 混合变形控制（BlendShape）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/BlendShape.png"), CreateBlendShapeAni),
+                new VicDropdownItemData("创建 主材质自发光闪烁控制（EmissionFlicker）", LoadItemIcon(""), CreateEmissionFlicker),
+                new VicDropdownItemData("创建 旋转动画控制组件（RotationController）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/RotationController.png"), CreateRotationController),
+                new VicDropdownItemData("创建 探照灯体积雾（SpotLightVolume）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/SpotLightVolume.png"), CreateSpotLightVolume),
+            };
+        }
+
+        private List<VicDropdownItemData> BuildMenuItems()
+        {
+            return new List<VicDropdownItemData>
             {
-                EditorApplication.ExecuteMenuItem("Tools/VicTools(YD)/OutlineTool: SmoothedNormal");
-            });
-            menu.AddSeparator("");
-            menu.AddItem(new GUIContent("创建 晶格变形控制器（Lattice）"), false, CreateLatticeController);
-            // menu.AddSeparator("");
-            menu.AddItem(new GUIContent("创建 混合变形控制（BlendShape）"), false, CreateBlendShapeAni);
-            menu.AddItem(new GUIContent("创建 主材质自发光闪烁控制（EmissionFlicker）"), false, CreateEmissionFlicker);
-            menu.AddItem(new GUIContent("创建 旋转动画控制组件（RotationController）"), false, CreateRotationController);
-            menu.AddItem(new GUIContent("创建 探照灯体积雾（SpotLightVolume）"), false, CreateSpotLightVolume);
-            menu.ShowAsContext();
+                new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon(""), SceneTools.ApplyLightDirectionToMaterials),
+                new VicDropdownItemData("校正 PBR_Mobile5.9 高光、反射数值", LoadItemIcon(""), CorrectPBRMobile58Specular),
+            };
+        }
+
+        private List<VicDropdownItemData> BuildMaterialItems()
+        {
+            return new List<VicDropdownItemData>
+            {
+                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
+                new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("AddTrans（透明叠加，可模拟灯光照射）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/AddTrans")),
+                new VicDropdownItemData("Glass_carWindow（玻璃材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Glass_carWindow")),
+                new VicDropdownItemData("Glass_MobileNew（折射效果水、果冻材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Glass_MobileNew")),
+                new VicDropdownItemData("Tree_Trans（植被树叶透明飘动材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Tree_Trans")),
+                new VicDropdownItemData("Grass（草地材质，可交互）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Grass")),
+                new VicDropdownItemData("Texture（纯贴图颜色Alpha透明）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Texture")),
+                new VicDropdownItemData("FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC")),
+                new VicDropdownItemData("Custom_Hair（头发材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Hair")),
+                new VicDropdownItemData("Custom_Toon（卡通材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Toon")),
+                new VicDropdownItemData("Custom_Snow（雪地材质，可交互）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Snow")),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("ShadowReceiver（透明地面接收投影）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/ShadowReceiver")),
+                new VicDropdownItemData("TextureGaussianBlur（ScreenColor高斯模糊材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL")),
+                new VicDropdownItemData("Outline（普通描边材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Outline/Outline")),
+                new VicDropdownItemData("OutlineZOffset（轮廓描边材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
+                new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
+            };
+        }
+
+        /// 加载菜单项图标，传入资源路径（Assets/ 或 Packages/ 下的 png），为空则返回 null
+        private static Texture2D LoadItemIcon(string assetPath)
+        {
+            if (string.IsNullOrEmpty(assetPath)) return null;
+            return AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
         }
 
         private void CreateRotationController()
@@ -1887,39 +1942,16 @@ namespace VicTools
         }
 
         /// 显示Menu下拉菜单
-        private void ShowMenuDropdown()
+        private void ShowMenuDropdown(Rect buttonRect)
         {
-            GenericMenu menu = new GenericMenu();
-
-            menu.AddItem(new GUIContent("● 校正(PBR_Mobile)烘焙高光方向"), false, SceneTools.ApplyLightDirectionToMaterials);
-            menu.AddItem(new GUIContent("○ 校正 PBR_Mobile5.9 高光、反射数值"), false, CorrectPBRMobile58Specular);
-            menu.ShowAsContext();
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Menu", BuildMenuItems());
+            dropdown.Show(buttonRect);
         }
 
-        private void ShowMaterialDropdown()
+        private void ShowMaterialDropdown(Rect buttonRect)
         {
-            GenericMenu menu = new GenericMenu();
-            // ── 创建材质球（Ctrl+点击菜单项 = 直接替换选中对象材质的 Shader） ──
-            menu.AddItem(new GUIContent("PBR_Mobile（自定义PBR主材质）"),           false, () => CreateMaterialFromShader("Custom/PBR_Mobile"));
-            menu.AddItem(new GUIContent("PBR_Mobile_Trans（自定义PBR主材质透明版）"),     false, () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans"));
-            menu.AddSeparator("");   // 二级菜单分割线
-            menu.AddItem(new GUIContent("AddTrans（透明叠加，可模拟灯光照射）"),            false, () => CreateMaterialFromShader("Custom/AddTrans"));
-            menu.AddItem(new GUIContent("Glass_carWindow（玻璃材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_carWindow"));
-            menu.AddItem(new GUIContent("Glass_MobileNew（折射效果水、果冻材质）"),      false, () => CreateMaterialFromShader("Custom/Glass_MobileNew"));
-            menu.AddItem(new GUIContent("Tree_Trans（植被树叶透明飘动材质）"),           false, () => CreateMaterialFromShader("Custom/Tree_Trans"));
-            menu.AddItem(new GUIContent("Grass（草地材质，可交互）"),                false, () => CreateMaterialFromShader("Custom/Grass"));
-            menu.AddItem(new GUIContent("Texture（纯贴图颜色Alpha透明）"),              false, () => CreateMaterialFromShader("Custom/Texture"));
-            menu.AddItem(new GUIContent("FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）"), false, () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC"));
-            menu.AddItem(new GUIContent("Custom_Hair（头发材质）"), false, () => CreateMaterialFromShader("Custom/Hair"));
-            menu.AddItem(new GUIContent("Custom_Toon（卡通材质）"), false, () => CreateMaterialFromShader("Custom/Toon"));
-            menu.AddItem(new GUIContent("Custom_Snow（雪地材质，可交互）"), false, () => CreateMaterialFromShader("Custom/Snow"));
-            menu.AddSeparator("");
-            menu.AddItem(new GUIContent("特殊材质 >/ShadowReceiver（透明地面接收投影）"),       false, () => CreateMaterialFromShader("Custom/ShadowReceiver"));
-            menu.AddItem(new GUIContent("特殊材质 >/TextureGaussianBlur（ScreenColor高斯模糊材质）"),       false, () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL"));
-            menu.AddItem(new GUIContent("Outline（模型描边）>/Outline（普通描边材质）"),      false, () => CreateMaterialFromShader("Custom/Outline/Outline"));
-            menu.AddItem(new GUIContent("Outline（模型描边）>/OutlineZOffset（轮廓描边材质）"), false, () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset"));
-            menu.AddItem(new GUIContent("Fx（特效）>/CustomParticle（带法线粒子材质，水渍效果）"),    false, () => CreateMaterialFromShader("Custom/Fx/CustomParticle"));
-            menu.ShowAsContext();
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Material:URP", BuildMaterialItems());
+            dropdown.Show(buttonRect);
         }
 
         private static void CreateMaterialFromShader(string shaderName, bool ctrlHeld = false)
@@ -2447,5 +2479,85 @@ namespace VicTools
             return texture;
         }
 
+    }
+
+    // ═══════════════════════════════════════════
+    //  AdvancedDropdown 通用实现（支持图标）
+    // ═══════════════════════════════════════════
+
+    /// 下拉菜单项数据
+    internal class VicDropdownItemData
+    {
+        public string name;
+        public Texture2D icon;
+        public Action action;
+        public bool isSeparator;
+
+        public VicDropdownItemData(string name, Texture2D icon, Action action)
+        {
+            this.name = name;
+            this.icon = icon;
+            this.action = action;
+            this.isSeparator = false;
+        }
+
+        public static VicDropdownItemData Separator()
+        {
+            return new VicDropdownItemData("", null, null) { isSeparator = true };
+        }
+    }
+
+    /// 通用 AdvancedDropdown，接收菜单项列表并在选中时执行对应回调
+    internal class VicToolsDropdown : AdvancedDropdown
+    {
+        private readonly string _title;
+        private readonly List<VicDropdownItemData> _items;
+        private readonly List<VicDropdownItemData> _actionableItems;
+
+        public VicToolsDropdown(AdvancedDropdownState state, string title, List<VicDropdownItemData> items)
+            : base(state)
+        {
+            _title = title;
+            _items = items;
+            _actionableItems = new List<VicDropdownItemData>();
+            minimumSize = new Vector2(200, 0);
+        }
+
+        protected override AdvancedDropdownItem BuildRoot()
+        {
+            var root = new AdvancedDropdownItem(_title);
+            _actionableItems.Clear();
+
+            foreach (var data in _items)
+            {
+                if (data.isSeparator)
+                {
+                    root.AddSeparator();
+                }
+                else
+                {
+                    var item = new AdvancedDropdownItem(data.name);
+                    if (data.icon != null)
+                        item.icon = data.icon;
+                    root.AddChild(item);
+                    _actionableItems.Add(data);
+                }
+            }
+
+            return root;
+        }
+
+        protected override void ItemSelected(AdvancedDropdownItem item)
+        {
+            // 通过名称匹配找到对应数据项执行回调
+            foreach (var data in _actionableItems)
+            {
+                if (data.name == item.name)
+                {
+                    data.action?.Invoke();
+                    return;
+                }
+            }
+        }
     }
 }
