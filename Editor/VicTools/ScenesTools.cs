@@ -14,6 +14,12 @@
 // 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh
 // 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。
 //               修复重置旋转按钮显示异常值（清除m_LocalEulerAnglesHint缓存）
+// 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid
+//               标识符改为 ROOT:/SCENE:sceneGuid|sceneName:path:siblingIndex
+//               加载时按 sceneGuid/sceneName 在已加载场景中再次尝试恢复对象
+//               订阅 EditorSceneManager.sceneOpened / activeSceneChangedInEditMode 事件，
+//               场景打开后自动重新尝试恢复 null 对象
+//               【刷新→】按钮合并了按场景信息恢复 null 对象的能力
 
 using System;
 using UnityEngine;
@@ -91,6 +97,7 @@ namespace VicTools
     }
     
 /// 资源箱文件项目序列化类
+/// v2.28 增加 scenePath / sceneName / sceneGuid 以记录场景信息
 [Serializable]
 public class ResourceBoxFileItem
 {
@@ -99,6 +106,22 @@ public class ResourceBoxFileItem
     public string name;
     public bool isAsset;
     public string displayName; // 添加displayName字段，用于保存对象的显示名称
+    public string scenePath;
+    public string sceneName;
+    public string sceneGuid;
+}
+
+/// 资源箱恢复用快照项（不参与 JsonUtility 序列化，仅运行时缓存）
+/// 用于在加载/恢复时统一 ResourceBoxItem 与 ResourceBoxFileItem 的字段访问
+[Serializable]
+public class ResourceBoxRecoveryItem
+{
+    public string guid;
+    public string name;
+    public bool isAsset;
+    public string scenePath;
+    public string sceneName;
+    public string sceneGuid;
 }
 
     /// 场景工具子窗口
@@ -109,6 +132,8 @@ public class ResourceBoxFileItem
         private readonly Dictionary<int, string> _nullObjectDisplayNames = new Dictionary<int, string>(); // 用于存储null对象的displayName，使用索引作为键
         private readonly Dictionary<int, int> _resourceBoxInstanceIDs = new Dictionary<int, int>(); // 存储资源箱索引到对象InstanceID的映射
         private readonly Dictionary<int, string> _instanceIDToDisplayName = new Dictionary<int, string>(); // 存储InstanceID到displayName的映射
+        // v2.28 缓存 null 对象的原始项快照（sceneGuid/sceneName/origGuid），用于场景重载后恢复
+        private readonly Dictionary<int, ResourceBoxRecoveryItem> _nullObjectRawItems = new Dictionary<int, ResourceBoxRecoveryItem>();
         
         // 静态实例引用，用于打包前保存
         internal static ScenesTools ActiveInstance { get; private set; }
@@ -149,7 +174,7 @@ public class ResourceBoxFileItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.27]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.28]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -165,6 +190,10 @@ public class ResourceBoxFileItem
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
             // 注册选择变化事件
             Selection.selectionChanged += OnSelectionChanged;
+            // v2.28 注册场景事件 - 用于场景打开时自动恢复资源箱对象
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened += OnSceneOpened;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneClosed += OnSceneClosed;
+            UnityEditor.SceneManagement.EditorSceneManager.activeSceneChangedInEditMode += OnActiveSceneChangedInEditMode;
 
             // 加载上次搜索文本
             _searchText = _searchHistoryManager.LoadLastSearchText();
@@ -246,6 +275,10 @@ public class ResourceBoxFileItem
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             // 取消注册选择变化事件
             Selection.selectionChanged -= OnSelectionChanged;
+            // v2.28 取消注册场景事件
+            UnityEditor.SceneManagement.EditorSceneManager.sceneOpened -= OnSceneOpened;
+            UnityEditor.SceneManagement.EditorSceneManager.sceneClosed -= OnSceneClosed;
+            UnityEditor.SceneManagement.EditorSceneManager.activeSceneChangedInEditMode -= OnActiveSceneChangedInEditMode;
 
             // 保存当前搜索文本
             _searchHistoryManager.SaveLastSearchText(_searchText);
@@ -305,6 +338,197 @@ public class ResourceBoxFileItem
         private void OnSelectionChanged()
         {
             UpdateSelectedObjectsInResourceBox();
+        }
+
+        // v2.28 场景事件回调：场景打开时自动尝试恢复资源箱中丢失的对象
+        private void OnSceneOpened(UnityEngine.SceneManagement.Scene scene, UnityEditor.SceneManagement.OpenSceneMode mode)
+        {
+            // 延迟一帧执行，确保场景完全加载
+            EditorApplication.delayCall += () =>
+            {
+                if (this == null) return;
+                if (_resourceBox == null || _resourceBox.Count == 0) return;
+                int recovered = TryRecoverNullItemsBySceneInfo();
+                if (recovered > 0)
+                {
+                    Debug.Log($"[ResourceBox] 场景打开后自动恢复了 {recovered} 个对象");
+                    SaveResourceBox(false);
+                    if (Parent) Parent.Repaint();
+                }
+            };
+        }
+
+        // v2.28 场景事件回调：场景关闭时仅记录（不删除已加载场景中的对象）
+        private void OnSceneClosed(UnityEngine.SceneManagement.Scene scene)
+        {
+            // 不主动删除；因为只要对象存在于已加载场景即可保留引用
+        }
+
+        // v2.28 场景事件回调：激活场景变化时尝试恢复
+        private void OnActiveSceneChangedInEditMode(UnityEngine.SceneManagement.Scene previous, UnityEngine.SceneManagement.Scene current)
+        {
+            EditorApplication.delayCall += () =>
+            {
+                if (this == null) return;
+                if (_resourceBox == null || _resourceBox.Count == 0) return;
+                int recovered = TryRecoverNullItemsBySceneInfo();
+                if (recovered > 0)
+                {
+                    Debug.Log($"[ResourceBox] 激活场景变化后自动恢复了 {recovered} 个对象");
+                    SaveResourceBox(false);
+                    if (Parent) Parent.Repaint();
+                }
+            };
+        }
+
+        /// v2.28 重新尝试恢复资源箱中所有 null 对象
+        /// 使用全局存储的 sceneGuid/sceneName/guid 在已加载场景中按优先级匹配：
+        /// 1) 原 GameObject 标识符 (ROOT:/SCENE:)
+        /// 2) sceneGuid 匹配的已加载场景中按名称
+        /// 3) sceneName 匹配的已加载场景中按名称
+        /// 找不到时保留 null，不删除
+        private int TryRecoverNullItemsBySceneInfo()
+        {
+            if (_resourceBox == null || _resourceBox.Count == 0) return 0;
+            int recovered = 0;
+            var existing = new HashSet<int>();
+            for (int i = 0; i < _resourceBox.Count; i++)
+            {
+                var ex = _resourceBox[i];
+                if (ex) existing.Add(ex.GetInstanceID());
+            }
+
+            // 加载原始 JSON 缓存（仅首次调用读取）
+            if (_recoveryRawItems == null)
+            {
+                _recoveryRawItems = LoadRawResourceBoxItems();
+            }
+            var rawItems = _recoveryRawItems;
+
+            for (int i = 0; i < _resourceBox.Count; i++)
+            {
+                if (_resourceBox[i]) continue;
+
+                ResourceBoxRecoveryItem raw = null;
+                // 优先使用 _nullObjectRawItems 缓存
+                if (_nullObjectRawItems != null && _nullObjectRawItems.TryGetValue(i, out var cachedRaw) && cachedRaw != null)
+                {
+                    raw = cachedRaw;
+                }
+                else if (rawItems != null && i < rawItems.Count)
+                {
+                    raw = rawItems[i];
+                }
+                if (raw == null) continue;
+                if (raw.isAsset) continue;
+                if (string.IsNullOrEmpty(raw.name)) continue;
+
+                Object found = null;
+
+                // 1) 先用原 GUID 标识符精确匹配
+                if (!string.IsNullOrEmpty(raw.guid) &&
+                    (raw.guid.StartsWith("ROOT:") || raw.guid.StartsWith("SCENE:")))
+                {
+                    found = FindGameObjectByIdentifier(raw.guid);
+                }
+
+                // 2) 退到场景信息 + 名称匹配
+                if (found == null)
+                {
+                    TryFindGameObjectBySceneInfo(false, raw.sceneGuid, raw.sceneName, raw.name, out found);
+                }
+
+                if (found == null) continue;
+                if (existing.Contains(found.GetInstanceID())) continue;
+                if (_resourceBox.Contains(found)) continue;
+
+                _resourceBox[i] = found;
+                existing.Add(found.GetInstanceID());
+
+                // 恢复 displayName
+                if (_nullObjectDisplayNames.TryGetValue(i, out var dn))
+                {
+                    _resourceBoxDisplayNames[found] = dn;
+                    _nullObjectDisplayNames.Remove(i);
+                }
+                // v2.28: 清除 _nullObjectRawItems 中对应项
+                _nullObjectRawItems.Remove(i);
+                recovered++;
+            }
+
+            return recovered;
+        }
+
+        // v2.28 缓存：用于恢复时的原始项快照（统一 ResourceBoxItem / ResourceBoxFileItem 字段访问）
+        private List<ResourceBoxRecoveryItem> _recoveryRawItems;
+
+        // v2.28 从全局文件加载原始项快照
+        private List<ResourceBoxRecoveryItem> LoadRawResourceBoxItems()
+        {
+            var path = PathHelper.GetGlobalResourceBoxPath();
+            if (!System.IO.File.Exists(path)) return null;
+            try
+            {
+                var json = System.IO.File.ReadAllText(path);
+                if (string.IsNullOrEmpty(json)) return null;
+                var data = JsonUtility.FromJson<ResourceBoxData>(json);
+                if (data?.items == null) return null;
+                var list = new List<ResourceBoxRecoveryItem>(data.items.Count);
+                foreach (var it in data.items) list.Add(ConvertToRecoveryItem(it));
+                return list;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        // v2.28 把 ResourceBoxItem 转为快照项
+        private static ResourceBoxRecoveryItem ConvertToRecoveryItem(ResourceBoxItem it)
+        {
+            if (it == null) return null;
+            return new ResourceBoxRecoveryItem
+            {
+                guid = it.guid,
+                name = it.name,
+                isAsset = it.isAsset,
+                scenePath = it.scenePath,
+                sceneName = it.sceneName,
+                sceneGuid = it.sceneGuid
+            };
+        }
+
+        // v2.28 把 ResourceBoxFileItem 转为快照项
+        private static ResourceBoxRecoveryItem ConvertToRecoveryItem(ResourceBoxFileItem it)
+        {
+            if (it == null) return null;
+            return new ResourceBoxRecoveryItem
+            {
+                guid = it.guid,
+                name = it.name,
+                isAsset = it.isAsset,
+                scenePath = it.scenePath,
+                sceneName = it.sceneName,
+                sceneGuid = it.sceneGuid
+            };
+        }
+
+        // v2.28 把 ResourceBoxItem 列表转为快照列表
+        private static List<ResourceBoxRecoveryItem> ConvertToRecoveryList(List<ResourceBoxItem> src)
+        {
+            if (src == null) return null;
+            var list = new List<ResourceBoxRecoveryItem>(src.Count);
+            foreach (var it in src) list.Add(ConvertToRecoveryItem(it));
+            return list;
+        }
+
+        // v2.28 把 ResourceBoxFileItem 列表转为快照列表
+        private static List<ResourceBoxRecoveryItem> ConvertToRecoveryList(List<ResourceBoxFileItem> src)
+        {
+            if (src == null) return null;
+            var list = new List<ResourceBoxRecoveryItem>(src.Count);
+            foreach (var it in src) list.Add(ConvertToRecoveryItem(it));
+            return list;
         }
 
         /// 更新资源箱中选中对象的状态
@@ -736,12 +960,19 @@ public class ResourceBoxFileItem
             
             // 刷新文件列表按钮
             GUI.backgroundColor = Color.yellow;
-            if (GUILayout.Button("刷新→", GUILayout.Width(50)))
+            if (GUILayout.Button("刷新↻", GUILayout.Width(50)))
             {
                 RefreshAvailableFiles();
                 LoadResourceBox();
                 // 重新检查null对象，尝试在当前场景中重新加载它们
                 RecheckNullObjectsInResourceBox();
+                // v2.28: 同步按场景信息恢复 null 场景对象
+                int recovered = TryRecoverNullItemsBySceneInfo();
+                if (recovered > 0)
+                {
+                    Debug.Log($"[ResourceBox] 刷新时按场景信息恢复了 {recovered} 个对象");
+                    SaveResourceBox(false);
+                }
             }
             // GUI.backgroundColor = Color.white;
             // 文件选择下拉列表
@@ -1122,7 +1353,17 @@ public class ResourceBoxFileItem
                         {
                             _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
                         }
-                        
+
+                        // v2.28: 同步重建 _nullObjectRawItems
+                        var tempRawItems = new Dictionary<int, ResourceBoxRecoveryItem>();
+                        foreach (var kvp in _nullObjectRawItems)
+                        {
+                            if (kvp.Key < i) tempRawItems[kvp.Key] = kvp.Value;
+                            else if (kvp.Key > i) tempRawItems[kvp.Key - 1] = kvp.Value;
+                        }
+                        _nullObjectRawItems.Clear();
+                        foreach (var kvp in tempRawItems) _nullObjectRawItems[kvp.Key] = kvp.Value;
+
                         // 立即保存资源箱数据
                         SaveResourceBox(false);
                         
@@ -1167,7 +1408,7 @@ public class ResourceBoxFileItem
             _selMeshObj = base.CreateToggleWithStyle(new GUIContent("isMesh", "挑选 模型 对象"), _selMeshObj, null, null, null, null, 50, 20);
             _selParticleObj = base.CreateToggleWithStyle(new GUIContent("Particle", "挑选 粒子 对象"), _selParticleObj, null, null, null, null, 55, 20);
             _selParent = base.CreateToggleWithStyle(new GUIContent("Parent", "选中 父对象"), _selParent, null, null, null, null, 50, 20);
-            if (GUILayout.Button("Reset", GUILayout.Width(45), GUILayout.ExpandWidth(false)))
+            if (GUILayout.Button("Reset", GUILayout.Width(45), GUILayout.Height(22), GUILayout.ExpandWidth(false)))
             {
                 _selPrefab = false;
                 _selMesh = false;
@@ -1181,7 +1422,7 @@ public class ResourceBoxFileItem
                 _selAct = true;
             }
             GUI.backgroundColor = new Color(0.6f, 0.8f, 0.6f);
-            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象\n\n按住 Ctrl+点击：只在当前选中对象的父级范围内挑选"), GUILayout.Width(70), GUILayout.Height(22)))
+            if (GUILayout.Button(new GUIContent("挑选", "根据选项选择场景中的对象\n按住 Ctrl+点击：只在当前选中对象的父级范围内挑选"), GUILayout.Width(70), GUILayout.Height(22)))
             {
                 // 按住 Ctrl 时只在选中对象的父级范围内挑选，并自动忽略 selParent 选项
                 bool localScope = Event.current.control;
@@ -1251,11 +1492,6 @@ public class ResourceBoxFileItem
                 }
             }
             
-            GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f);
-            if (GUILayout.Button(new GUIContent(_findMesh, "对丢失Mesh的模型对象尝试自动找回Mesh"), GUILayout.Height(35), GUILayout.Width(38)))
-            {
-                SceneTools.FindMissMeshs();
-            }
             GUI.backgroundColor = Color.black;
             if (_lightDirIcon != null)
             {
@@ -1307,6 +1543,24 @@ public class ResourceBoxFileItem
                         foreach (var go in selected)
                             go.transform.localScale = Vector3.one;
                     }
+                }
+            }
+
+            GUI.backgroundColor = new Color(0.66f, 0.66f, 0.66f);
+            // 仅当选中对象中存在丢失Mesh时显示找回按钮
+            bool hasSelMissingMesh = false;
+            foreach (var go in Selection.gameObjects)
+            {
+                var mf = go.GetComponent<MeshFilter>();
+                if (mf != null && mf.sharedMesh == null) { hasSelMissingMesh = true; break; }
+                var smr = go.GetComponent<SkinnedMeshRenderer>();
+                if (smr != null && smr.sharedMesh == null) { hasSelMissingMesh = true; break; }
+            }
+            if (hasSelMissingMesh)
+            {
+                if (GUILayout.Button(new GUIContent(_findMesh, "对丢失Mesh的模型对象尝试自动找回Mesh"), GUILayout.Height(35), GUILayout.Width(38)))
+                {
+                    SceneTools.FindMissMeshs();
                 }
             }
             EditorGUILayout.EndHorizontal();
@@ -1612,6 +1866,8 @@ public class ResourceBoxFileItem
             _nullObjectDisplayNames.Clear();
             foreach (var kvp in newInstanceIDs) _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
             foreach (var kvp in newNullDisplayNames) _nullObjectDisplayNames[kvp.Key] = kvp.Value;
+            // v2.28: 重建 null 原始项索引（按当前 _resourceBox 顺序重新映射）
+            RebuildNullObjectRawItemsIndex();
         }
 
         /// 将对象插入资源箱，按类型插入到同类型末尾
@@ -1724,6 +1980,8 @@ public class ResourceBoxFileItem
             _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
             _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
             _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
+            _nullObjectRawItems.Clear(); // v2.28 清空 null 原始项缓存
+            _recoveryRawItems = null; // v2.28 重置恢复缓存
             // 清除保存的数据
             EditorPrefs.DeleteKey("VicTools_ScenesTools_ResourceBox");
             // 强制重绘窗口
@@ -2215,11 +2473,16 @@ public class ResourceBoxFileItem
                             Debug.LogWarning($"对象 {obj.name} 具有HideAndDontSave标志，跳过保存");
                             continue;
                         }
-                            
+
                         // 获取对象的全局唯一标识符
                         string guid;
                         var assetPath = AssetDatabase.GetAssetPath(obj);
-                            
+
+                        // v2.28：记录场景对象所属的场景信息，用于场景重载时正确恢复
+                        string scenePath = "";
+                        string sceneName = "";
+                        string sceneGuid = "";
+
                         if (!string.IsNullOrEmpty(assetPath))
                         {
                             // 如果是项目资源，使用GUID（持久化）
@@ -2230,6 +2493,14 @@ public class ResourceBoxFileItem
                             // 如果是场景对象，使用优化的唯一标识符
                             if (obj is GameObject gameObject)
                             {
+                                // 收集场景信息
+                                scenePath = gameObject.scene.path;
+                                sceneName = gameObject.scene.name;
+                                if (!string.IsNullOrEmpty(scenePath))
+                                {
+                                    sceneGuid = AssetDatabase.AssetPathToGUID(scenePath);
+                                }
+
                                 // 使用新的唯一标识符系统
                                 guid = GetGameObjectUniqueIdentifier(gameObject);
                             }
@@ -2246,14 +2517,25 @@ public class ResourceBoxFileItem
                                     // 回退到实例ID（临时，但附带名称用于恢复）
                                     guid = $"INSTANCE:{obj.GetInstanceID()}:{obj.name}";
                                 }
+
+                                // 也尝试记录场景信息（非 GameObject 也可能具有 scene 字段）
+                                if (obj is Component component)
+                                {
+                                    scenePath = component.gameObject.scene.path;
+                                    sceneName = component.gameObject.scene.name;
+                                    if (!string.IsNullOrEmpty(scenePath))
+                                    {
+                                        sceneGuid = AssetDatabase.AssetPathToGUID(scenePath);
+                                    }
+                                }
                             }
                         }
 
                         // 计算displayName（与DrawResourceBoxSection中相同的逻辑）
                         string displayName;
                         var parentName = GetTopLevelParentName(obj);
-                        displayName = !string.IsNullOrEmpty(parentName) 
-                            ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}" 
+                        displayName = !string.IsNullOrEmpty(parentName)
+                            ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}"
                             : $"<{obj.GetType().Name}> {obj.name}";
 
                         resourceBoxData.Add(new ResourceBoxItem
@@ -2262,7 +2544,10 @@ public class ResourceBoxFileItem
                             type = obj.GetType().FullName,
                             name = obj.name,
                             isAsset = !string.IsNullOrEmpty(assetPath),
-                            displayName = displayName  // 保存displayName
+                            displayName = displayName,  // 保存displayName
+                            scenePath = scenePath,
+                            sceneName = sceneName,
+                            sceneGuid = sceneGuid
                         });
                     }
                     else
@@ -2270,6 +2555,9 @@ public class ResourceBoxFileItem
                         // 处理null对象
                         // 尝试从null对象字典中获取displayName
                         string displayName;
+                        string scenePath = "";
+                        string sceneName = "";
+                        string sceneGuid = "";
                         if (_nullObjectDisplayNames.TryGetValue(i, out string savedDisplayName))
                         {
                             displayName = savedDisplayName;
@@ -2279,15 +2567,58 @@ public class ResourceBoxFileItem
                             // 如果没有保存的displayName，使用默认名称
                             displayName = $"<未知类型> 未知对象";
                         }
-                        
+
+                        // 如果之前保存过该索引对应的 InstanceID，尝试反查对应的 scene 信息
+                        if (_resourceBoxInstanceIDs.TryGetValue(i, out int savedIID))
+                        {
+                            // 旧路径：直接通过 InstanceIDToObject 拿到对象（可能已失效），但仍可获取场景
+                            var recoverObj = EditorUtility.InstanceIDToObject(savedIID);
+                            if (recoverObj is GameObject go)
+                            {
+                                scenePath = go.scene.path;
+                                sceneName = go.scene.name;
+                                if (!string.IsNullOrEmpty(scenePath))
+                                {
+                                    sceneGuid = AssetDatabase.AssetPathToGUID(scenePath);
+                                }
+                            }
+                            else if (recoverObj is Component comp)
+                            {
+                                scenePath = comp.gameObject.scene.path;
+                                sceneName = comp.gameObject.scene.name;
+                                if (!string.IsNullOrEmpty(scenePath))
+                                {
+                                    sceneGuid = AssetDatabase.AssetPathToGUID(scenePath);
+                                }
+                            }
+                        }
+
                         // 对于null对象，使用特殊的标识符
+                        // v2.28: 优先从 _nullObjectRawItems 恢复原始场景信息和原始 guid
+                        string nullObjectGuid = "NULL:OBJECT";
+                        if (_nullObjectRawItems.TryGetValue(i, out var nullRaw) && nullRaw != null)
+                        {
+                            if (string.IsNullOrEmpty(sceneGuid))
+                            {
+                                scenePath = nullRaw.scenePath ?? "";
+                                sceneName = nullRaw.sceneName ?? "";
+                                sceneGuid = nullRaw.sceneGuid ?? "";
+                            }
+                            if (!string.IsNullOrEmpty(nullRaw.guid))
+                            {
+                                nullObjectGuid = nullRaw.guid;
+                            }
+                        }
                         resourceBoxData.Add(new ResourceBoxItem
                         {
-                            guid = "NULL:OBJECT",  // 特殊的标识符表示null对象
+                            guid = nullObjectGuid,
                             type = "System.Null",
                             name = "NullObject",
                             isAsset = false,
-                            displayName = displayName  // 保存displayName
+                            displayName = displayName,
+                            scenePath = scenePath,
+                            sceneName = sceneName,
+                            sceneGuid = sceneGuid
                         });
                     }
                 }
@@ -2297,10 +2628,12 @@ public class ResourceBoxFileItem
             var jsonData = JsonUtility.ToJson(new ResourceBoxData { 
                 items = resourceBoxData
             });
-            
+
+            // v2.28: 同步 _recoveryRawItems，确保后续场景事件能正确恢复
+            _recoveryRawItems = ConvertToRecoveryList(resourceBoxData);
+
             // 保存到全局文件
             SaveResourceBoxToGlobalFile(jsonData);
-            // Debug.Log($"资源箱数据已保存到全局文件，包含 {resourceBoxData.Count} 个对象（包括 {resourceBoxData.Count(item => item.guid == "NULL:OBJECT")} 个null对象）");
         }
         
         /// 保存资源箱数据到全局文件
@@ -2383,6 +2716,8 @@ public class ResourceBoxFileItem
                 _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
                 _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
                 _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
+                _nullObjectRawItems.Clear(); // v2.28 清空 null 原始项缓存
+                _recoveryRawItems = null; // v2.28 重置恢复缓存
                 var hasSceneObjectChanges = false; // 标记是否有场景对象变化
                 var hasDataInconsistency = false; // 标记数据不一致（用于内部逻辑）
 
@@ -2449,42 +2784,50 @@ public class ResourceBoxFileItem
                                     
                                 if (obj == null)
                                 {
-                                    // 如果通过标识符找不到，尝试通过实例ID查找
-                                    var parts = item.guid.Split(':');
-                                    if (parts.Length >= 4 && int.TryParse(parts[3], out int instanceID))
+                                    // v2.28：通过场景信息在已加载场景中再次尝试查找
+                                    if (TryFindGameObjectBySceneInfo(item, out obj))
                                     {
-                                        // 使用InstanceIDToObject查找对象
-                                        var instanceObj = EditorUtility.InstanceIDToObject(instanceID);
-                                        if (instanceObj && instanceObj is GameObject gameObject)
-                                        {
-                                            // 验证场景匹配和名称匹配（防止Domain Reload后InstanceID被分配给不同对象）
-                                            var currentScene = SceneManager.GetActiveScene();
-                                            if (gameObject.scene == currentScene && gameObject.name == item.name)
-                                            {
-                                                obj = gameObject;
-                                                debugInfo += $" → 通过实例ID找到: {obj.name} (InstanceID: {instanceID})";
-                                            }
-                                            else if (gameObject.scene == currentScene)
-                                            {
-                                                // 场景匹配但名称不匹配，InstanceID可能已被重新分配
-                                                debugInfo += $" → 实例ID指向不同对象: 期望'{item.name}'，实际'{gameObject.name}'，已忽略";
-                                            }
-                                            else
-                                            {
-                                                debugInfo += $" → 实例ID对象场景不匹配: {instanceID}";
-                                            }
-
-                                            hasDataInconsistency = true;
-                                        }
-                                        else
-                                        {
-                                            debugInfo += $" → 实例ID查找失败: {instanceID}";
-                                            hasDataInconsistency = true;
-                                        }
+                                        debugInfo += $" → 通过场景信息找到: {obj.name} (场景: {item.sceneName})";
                                     }
                                     else
                                     {
-                                        hasDataInconsistency = true;
+                                        // 如果通过标识符找不到，尝试通过实例ID查找
+                                        var parts = item.guid.Split(':');
+                                        if (parts.Length >= 4 && int.TryParse(parts[3], out int instanceID))
+                                        {
+                                            // 使用InstanceIDToObject查找对象
+                                            var instanceObj = EditorUtility.InstanceIDToObject(instanceID);
+                                            if (instanceObj && instanceObj is GameObject gameObject)
+                                            {
+                                                // 验证场景匹配和名称匹配（防止Domain Reload后InstanceID被分配给不同对象）
+                                                var currentScene = SceneManager.GetActiveScene();
+                                                if (gameObject.scene == currentScene && gameObject.name == item.name)
+                                                {
+                                                    obj = gameObject;
+                                                    debugInfo += $" → 通过实例ID找到: {obj.name} (InstanceID: {instanceID})";
+                                                }
+                                                else if (gameObject.scene == currentScene)
+                                                {
+                                                    // 场景匹配但名称不匹配，InstanceID可能已被重新分配
+                                                    debugInfo += $" → 实例ID指向不同对象: 期望'{item.name}'，实际'{gameObject.name}'，已忽略";
+                                                }
+                                                else
+                                                {
+                                                    debugInfo += $" → 实例ID对象场景不匹配: {instanceID}";
+                                                }
+
+                                                hasDataInconsistency = true;
+                                            }
+                                            else
+                                            {
+                                                debugInfo += $" → 实例ID查找失败: {instanceID}";
+                                                hasDataInconsistency = true;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            hasDataInconsistency = true;
+                                        }
                                     }
                                 }
                             }
@@ -2583,6 +2926,12 @@ public class ResourceBoxFileItem
                                 // 处理null对象
                                 obj = null;
                                 debugInfo = $"null对象: {item.displayName}";
+                                // v2.28: 缓存 null 原始项，便于场景打开时再次尝试恢复
+                                if (!item.isAsset && (!string.IsNullOrEmpty(item.sceneGuid) || !string.IsNullOrEmpty(item.sceneName)))
+                                {
+                                    int nullItemIdx = _resourceBox.Count; // 即将添加的索引
+                                    _nullObjectRawItems[nullItemIdx] = ConvertToRecoveryItem(item);
+                                }
                             }
                             else
                             {
@@ -2660,7 +3009,10 @@ public class ResourceBoxFileItem
                 }
 
                 // Debug.Log($"资源箱数据已加载，成功恢复 {loadedCount} 个对象");
-                
+
+                // v2.28: 设置 _recoveryRawItems 为当前加载的 items，便于场景打开时直接恢复
+                _recoveryRawItems = ConvertToRecoveryList(resourceBoxData.items);
+
                 // 检查是否有场景对象变化，如果有则自动保存更新数据
                 // 注意：仅在成功恢复了对象时才保存，避免将null状态覆盖已保存的有效数据
                 if (hasSceneObjectChanges)
@@ -2682,6 +3034,8 @@ public class ResourceBoxFileItem
                 _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
                 _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
                 _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
+                _nullObjectRawItems.Clear(); // v2.28 清空 null 原始项缓存
+                _recoveryRawItems = null;
             }
         }
 
@@ -2742,62 +3096,95 @@ public class ResourceBoxFileItem
         }
 
         /// 获取GameObject的唯一标识符（解决重名问题）
+        /// v2.28：标识符中包含场景路径（scenePath）用于跨场景匹配；未保存场景时使用 sceneName 兜底。
+        /// 格式：
+        ///   根对象：ROOT:scenePath|sceneName:objectName:siblingIndex
+        ///   子对象：SCENE:scenePath|sceneName:fullPath:siblingIndex
         private static string GetGameObjectUniqueIdentifier(GameObject gameObject)
         {
             if (!gameObject) return "";
-            
+
             var fullPath = GetGameObjectFullPath(gameObject);
             var scenePath = gameObject.scene.path;
             var sceneName = gameObject.scene.name;
-            
+            var sceneGuid = AssetDatabase.GUIDFromAssetPath(scenePath).ToString();
+
             if (string.IsNullOrEmpty(sceneName))
                 sceneName = "UnsavedScene";
-            
-            // 使用场景路径+对象完整层级路径作为主标识符
-            // 对于同名对象，附加sibling index区分
-            string sceneKey = !string.IsNullOrEmpty(scenePath) ? scenePath : sceneName;
+
+            // 场景键：优先使用场景路径 GUID（持久化），未保存时使用场景名
+            // 格式: sceneGuid|sceneName，便于在不同场景中通过 GUID 或 name 都能定位
+            string sceneKey;
+            if (!string.IsNullOrEmpty(sceneGuid) && sceneGuid != "00000000000000000000000000000000")
+            {
+                sceneKey = sceneGuid + "|" + sceneName;
+            }
+            else
+            {
+                sceneKey = "|" + sceneName;
+            }
+
             int siblingIndex = gameObject.transform.GetSiblingIndex();
-            
+
             if (!gameObject.transform.parent)
             {
-                // 根对象：使用 ROOT:场景:名称:siblingIndex
+                // 根对象：使用 ROOT:sceneKey:名称:siblingIndex
                 return $"ROOT:{sceneKey}:{gameObject.name}:{siblingIndex}";
             }
-            
-            // 有层级的对象：使用 SCENE:场景:完整路径:siblingIndex
+
+            // 有层级的对象：使用 SCENE:sceneKey:完整路径:siblingIndex
             return $"SCENE:{sceneKey}:{fullPath}:{siblingIndex}";
         }
 
-        /// 通过唯一标识符查找场景中的GameObject（优化版本，解决重名问题）
+        /// 解析唯一标识符中的场景键
+        /// <returns>(sceneGuid, sceneName)</returns>
+        private static (string guid, string name) ParseSceneKey(string sceneKey)
+        {
+            if (string.IsNullOrEmpty(sceneKey)) return ("", "");
+            var idx = sceneKey.IndexOf('|');
+            if (idx < 0) return ("", sceneKey);
+            return (sceneKey.Substring(0, idx), sceneKey.Substring(idx + 1));
+        }
+
+        /// 通过唯一标识符查找场景中的GameObject（v2.28 支持跨场景）
+        /// 查找顺序：
+        /// 1. 优先在保存的场景中精确查找（通过 Scene GUID 或场景名匹配）
+        /// 2. 退而求其次在所有已加载场景中按路径+名称匹配
+        /// 3. 仍找不到返回 null
         private GameObject FindGameObjectByIdentifier(string identifier)
         {
             if (string.IsNullOrEmpty(identifier)) return null;
-            
+
             // 解析标识符
             var parts = identifier.Split(':');
             if (parts.Length < 3) return null;
-            
+
             var identifierType = parts[0];
-            var scenePath = parts[1];
+            var sceneKey = parts[1];
             var objectPath = parts[2];
-            
+
             // 第4部分可能是siblingIndex（新格式）或InstanceID（旧格式）
             int fourthPart = -1;
             bool hasFourthPart = parts.Length >= 4 && int.TryParse(parts[3], out fourthPart);
-            
+
+            // 解析场景键
+            var (savedSceneGuid, savedSceneName) = ParseSceneKey(sceneKey);
+
+            // 构造场景查找顺序
+            var targetScenes = BuildSceneLookupOrder(savedSceneGuid, savedSceneName);
+
             GameObject foundObject = null;
-            var currentScene = SceneManager.GetActiveScene();
-            
-            if (identifierType == "ROOT")
+            GameObject nameMatch = null;
+
+            foreach (var scene in targetScenes)
             {
-                // 查找根对象
-                var rootObjects = currentScene.GetRootGameObjects();
-                GameObject nameMatch = null;
-                
-                foreach (var rootObject in rootObjects)
+                if (identifierType == "ROOT")
                 {
-                    if (rootObject.name == objectPath)
+                    // 查找根对象
+                    var rootObjects = scene.GetRootGameObjects();
+                    foreach (var rootObject in rootObjects)
                     {
+                        if (rootObject.name != objectPath) continue;
                         if (hasFourthPart && fourthPart >= 0)
                         {
                             // 优先通过siblingIndex精确匹配
@@ -2821,115 +3208,248 @@ public class ResourceBoxFileItem
                             break;
                         }
                     }
+                    if (foundObject != null) break;
                 }
-                if (foundObject == null && nameMatch != null)
-                    foundObject = nameMatch;
-            }
-            else if (identifierType == "SCENE")
-            {
-                // 查找有层级路径的对象
-                var rootObjects = currentScene.GetRootGameObjects();
-                GameObject nameMatch = null;
-                
-                foreach (var rootObject in rootObjects)
+                else if (identifierType == "SCENE")
                 {
-                    string rootPrefix = rootObject.name + "/";
-                    string relativePath = null;
-                    
-                    if (objectPath.StartsWith(rootPrefix))
+                    // 查找有层级路径的对象
+                    var rootObjects = scene.GetRootGameObjects();
+                    foreach (var rootObject in rootObjects)
                     {
-                        relativePath = objectPath.Substring(rootPrefix.Length);
-                    }
-                    else if (objectPath == rootObject.name)
-                    {
-                        if (hasFourthPart && fourthPart >= 0)
+                        string rootPrefix = rootObject.name + "/";
+                        string relativePath = null;
+
+                        if (objectPath.StartsWith(rootPrefix))
                         {
-                            if (rootObject.transform.GetSiblingIndex() == fourthPart || rootObject.GetInstanceID() == fourthPart)
+                            relativePath = objectPath.Substring(rootPrefix.Length);
+                        }
+                        else if (objectPath == rootObject.name)
+                        {
+                            if (hasFourthPart && fourthPart >= 0)
+                            {
+                                if (rootObject.transform.GetSiblingIndex() == fourthPart || rootObject.GetInstanceID() == fourthPart)
+                                {
+                                    foundObject = rootObject;
+                                    break;
+                                }
+                                if (nameMatch == null) nameMatch = rootObject;
+                            }
+                            else
                             {
                                 foundObject = rootObject;
                                 break;
                             }
-                            if (nameMatch == null) nameMatch = rootObject;
+                            continue;
                         }
-                        else
+
+                        if (relativePath == null) continue;
+
+                        Transform foundTransform = rootObject.transform.Find(relativePath);
+                        if (foundTransform != null)
                         {
-                            foundObject = rootObject;
-                            break;
-                        }
-                        continue;
-                    }
-                    
-                    if (relativePath == null) continue;
-                    
-                    Transform foundTransform = rootObject.transform.Find(relativePath);
-                    if (foundTransform != null)
-                    {
-                        if (hasFourthPart && fourthPart >= 0)
-                        {
-                            // 优先siblingIndex匹配，兼容InstanceID
-                            if (foundTransform.GetSiblingIndex() == fourthPart || foundTransform.gameObject.GetInstanceID() == fourthPart)
+                            if (hasFourthPart && fourthPart >= 0)
+                            {
+                                // 优先siblingIndex匹配，兼容InstanceID
+                                if (foundTransform.GetSiblingIndex() == fourthPart || foundTransform.gameObject.GetInstanceID() == fourthPart)
+                                {
+                                    foundObject = foundTransform.gameObject;
+                                    break;
+                                }
+                                if (nameMatch == null) nameMatch = foundTransform.gameObject;
+                            }
+                            else
                             {
                                 foundObject = foundTransform.gameObject;
                                 break;
                             }
-                            if (nameMatch == null) nameMatch = foundTransform.gameObject;
-                        }
-                        else
-                        {
-                            foundObject = foundTransform.gameObject;
-                            break;
                         }
                     }
-                }
-                
-                if (foundObject == null && nameMatch != null)
-                    foundObject = nameMatch;
-                
-                // 如果直接路径查找失败，尝试通过完整路径匹配
-                if (foundObject == null)
-                {
-                    var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
-                    foreach (var obj in allObjects)
-                    {
-                        string currentPath = GetGameObjectFullPath(obj);
-                        if (currentPath == objectPath)
-                        {
-                            if (hasFourthPart && fourthPart >= 0)
-                            {
-                                if (obj.transform.GetSiblingIndex() == fourthPart || obj.GetInstanceID() == fourthPart)
-                                {
-                                    foundObject = obj;
-                                    break;
-                                }
-                                if (nameMatch == null) nameMatch = obj;
-                            }
-                            else
-                            {
-                                foundObject = obj;
-                                break;
-                            }
-                        }
-                    }
-                    if (foundObject == null && nameMatch != null)
-                        foundObject = nameMatch;
+                    if (foundObject != null) break;
                 }
             }
-            
-            // 如果仍然找不到，不使用模糊匹配（模糊匹配容易将不同对象错误关联）
-            // 保持为null，等待用户手动刷新或对象重新出现在场景中
-            
+
+            // 如果在目标场景中未找到，按名称+完整路径在所有已加载场景中兜底查找
+            if (foundObject == null)
+            {
+                foundObject = FindByFullPathAcrossAllScenes(objectPath, fourthPart, hasFourthPart, out nameMatch);
+            }
+
+            // 使用名称匹配候选
+            if (foundObject == null && nameMatch != null)
+                foundObject = nameMatch;
+
             return foundObject;
+        }
+
+        /// 根据保存的场景 GUID / 名称构造场景查找顺序
+        private static List<UnityEngine.SceneManagement.Scene> BuildSceneLookupOrder(string savedSceneGuid, string savedSceneName)
+        {
+            var order = new List<UnityEngine.SceneManagement.Scene>();
+            var seen = new HashSet<int>();
+            int activeSceneIndex = SceneManager.GetActiveScene().buildIndex;
+
+            UnityEngine.SceneManagement.Scene? savedScene = null;
+
+            // 1. 优先查找与保存的场景 GUID 或 name 匹配的场景
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var s = SceneManager.GetSceneAt(i);
+                if (!s.IsValid() || !s.isLoaded) continue;
+                if (!string.IsNullOrEmpty(savedSceneGuid))
+                {
+                    var path = s.path;
+                    var guid = AssetDatabase.GUIDFromAssetPath(path).ToString();
+                    if (guid == savedSceneGuid)
+                    {
+                        savedScene = s;
+                        break;
+                    }
+                }
+                if (savedScene == null && !string.IsNullOrEmpty(savedSceneName) && s.name == savedSceneName)
+                {
+                    savedScene = s;
+                }
+            }
+
+            if (savedScene.HasValue && seen.Add(savedScene.Value.handle))
+            {
+                order.Add(savedScene.Value);
+            }
+
+            // 2. 添加当前激活场景（如果与已添加的场景不同）
+            var active = SceneManager.GetActiveScene();
+            if (active.IsValid() && active.isLoaded && seen.Add(active.handle))
+            {
+                order.Add(active);
+            }
+
+            // 3. 添加所有其他已加载场景
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var s = SceneManager.GetSceneAt(i);
+                if (!s.IsValid() || !s.isLoaded) continue;
+                if (seen.Add(s.handle)) order.Add(s);
+            }
+
+            return order;
+        }
+
+        /// 在所有已加载场景中按完整路径查找对象
+        private static GameObject FindByFullPathAcrossAllScenes(string objectPath, int fourthPart, bool hasFourthPart, out GameObject nameMatch)
+        {
+            nameMatch = null;
+            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            // 注：包含 inactive 对象的查找以 GetRootGameObjects().transform.Find() 链为主，这里只用于跨场景兜底
+            foreach (var obj in allObjects)
+            {
+                string currentPath = GetGameObjectFullPath(obj);
+                if (currentPath != objectPath) continue;
+                if (hasFourthPart && fourthPart >= 0)
+                {
+                    if (obj.transform.GetSiblingIndex() == fourthPart || obj.GetInstanceID() == fourthPart)
+                    {
+                        return obj;
+                    }
+                    if (nameMatch == null) nameMatch = obj;
+                }
+                else
+                {
+                    return obj;
+                }
+            }
+            return null;
         }
 
         /// 通过完整路径查找场景中的GameObject
         private GameObject FindGameObjectByPath(string fullPath)
         {
             if (string.IsNullOrEmpty(fullPath)) return null;
-            
+
             var currentScene = SceneManager.GetActiveScene();
             var rootObjects = currentScene.GetRootGameObjects();
 
             return (from rootObject in rootObjects select rootObject.transform.Find(fullPath) into foundTransform where foundTransform select foundTransform.gameObject).FirstOrDefault();
+        }
+
+        /// v2.28：通过保存的 sceneGuid/sceneName 在已加载场景中再次尝试恢复场景对象
+        /// 当 ROOT/SCENE 标识符查找失败时使用。优先匹配 sceneGuid，其次 sceneName，
+        /// 最后退到任意已加载场景中按名称+路径匹配。
+        /// 返回 true 表示成功恢复。
+        private bool TryFindGameObjectBySceneInfo(ResourceBoxItem item, out Object obj)
+        {
+            obj = null;
+            if (item == null) return false;
+            if (item.isAsset) return false;
+            return TryFindGameObjectBySceneInfo(item.isAsset, item.sceneGuid, item.sceneName, item.name, out obj);
+        }
+
+        /// 通用版本：直接传入场景 GUID/名称/对象名
+        private bool TryFindGameObjectBySceneInfo(bool isAsset, string sceneGuid, string sceneName, string objectName, out Object obj)
+        {
+            obj = null;
+            if (isAsset) return false;
+            if (string.IsNullOrEmpty(sceneGuid) && string.IsNullOrEmpty(sceneName)) return false;
+            if (string.IsNullOrEmpty(objectName)) return false;
+
+            UnityEngine.SceneManagement.Scene? targetScene = null;
+            // 1. 通过 sceneGuid 精确匹配已加载场景
+            if (!string.IsNullOrEmpty(sceneGuid))
+            {
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    var s = SceneManager.GetSceneAt(i);
+                    if (!s.IsValid() || !s.isLoaded) continue;
+                    var guid = AssetDatabase.AssetPathToGUID(s.path);
+                    if (string.Equals(guid, sceneGuid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        targetScene = s;
+                        break;
+                    }
+                }
+            }
+
+            // 2. 退到 sceneName 匹配（兼容未保存场景）
+            if (!targetScene.HasValue && !string.IsNullOrEmpty(sceneName))
+            {
+                for (int i = 0; i < SceneManager.sceneCount; i++)
+                {
+                    var s = SceneManager.GetSceneAt(i);
+                    if (!s.IsValid() || !s.isLoaded) continue;
+                    if (s.name == sceneName)
+                    {
+                        targetScene = s;
+                        break;
+                    }
+                }
+            }
+
+            if (!targetScene.HasValue) return false;
+
+            // 在目标场景中按名称+根对象 siblingIndex 模糊匹配
+            var scene = targetScene.Value;
+            var roots = scene.GetRootGameObjects();
+            // 优先匹配同名根对象
+            foreach (var root in roots)
+            {
+                if (root.name == objectName)
+                {
+                    obj = root;
+                    return true;
+                }
+            }
+            // 其次在所有 GameObject 中按名称匹配
+            var allInScene = Object.FindObjectsByType<GameObject>(FindObjectsInactive.Exclude, FindObjectsSortMode.None);
+            foreach (var go in allInScene)
+            {
+                if (go == null) continue;
+                if (go.scene != scene) continue;
+                if (go.name == objectName)
+                {
+                    obj = go;
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// 通过模糊匹配查找场景中的GameObject（最终备用方案）
@@ -2952,6 +3472,8 @@ public class ResourceBoxFileItem
         }
 
         /// 资源箱项目序列化类
+        /// v2.28 增强：记录场景对象所属的场景信息（scenePath/sceneName/sceneGuid），
+        /// 用于在场景重载/未打开等情况下丢失对象时能正确恢复。
         [Serializable]
         private class ResourceBoxItem
         {
@@ -2960,6 +3482,9 @@ public class ResourceBoxFileItem
             public string name;
             public bool isAsset;
             public string displayName; // 添加displayName字段，用于保存对象的显示名称
+            public string scenePath;   // 场景资源路径（Assets/...），如未保存则为空
+            public string sceneName;   // 场景名（与 scenePath 不一致时为当前 name）
+            public string sceneGuid;   // 场景资产 GUID（持久化标识，跨 Domain Reload 仍有效）
         }
 
         #region 资源箱文件管理方法
@@ -3042,7 +3567,10 @@ public class ResourceBoxFileItem
                     
                 string guid;
                 var assetPath = AssetDatabase.GetAssetPath(obj);
-                    
+                string scenePath = "";
+                string sceneName = "";
+                string sceneGuid = "";
+
                 if (!string.IsNullOrEmpty(assetPath))
                 {
                     // 项目资源使用GUID
@@ -3053,11 +3581,28 @@ public class ResourceBoxFileItem
                     // 场景对象使用优化的唯一标识符
                     if (obj is GameObject gameObject)
                     {
+                        // v2.28：收集场景信息
+                        scenePath = gameObject.scene.path;
+                        sceneName = gameObject.scene.name;
+                        if (!string.IsNullOrEmpty(scenePath))
+                        {
+                            sceneGuid = AssetDatabase.AssetPathToGUID(scenePath);
+                        }
+
                         // 使用新的唯一标识符系统
                         guid = GetGameObjectUniqueIdentifier(gameObject);
                     }
                     else
                     {
+                        if (obj is Component comp)
+                        {
+                            scenePath = comp.gameObject.scene.path;
+                            sceneName = comp.gameObject.scene.name;
+                            if (!string.IsNullOrEmpty(scenePath))
+                            {
+                                sceneGuid = AssetDatabase.AssetPathToGUID(scenePath);
+                            }
+                        }
                         guid = $"INSTANCE:{obj.GetInstanceID()}";
                     }
                 }
@@ -3065,8 +3610,8 @@ public class ResourceBoxFileItem
                 // 计算displayName（与DrawResourceBoxSection中相同的逻辑）
                 string displayName;
                 var parentName = GetTopLevelParentName(obj);
-                displayName = !string.IsNullOrEmpty(parentName) 
-                    ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}" 
+                displayName = !string.IsNullOrEmpty(parentName)
+                    ? $"<{obj.GetType().Name}> [{parentName}]← {obj.name}"
                     : $"<{obj.GetType().Name}> {obj.name}";
 
                 fileData.items.Add(new ResourceBoxFileItem
@@ -3075,7 +3620,10 @@ public class ResourceBoxFileItem
                     Type = obj.GetType().FullName,
                     name = obj.name,
                     isAsset = !string.IsNullOrEmpty(assetPath),
-                    displayName = displayName  // 保存displayName
+                    displayName = displayName,  // 保存displayName
+                    scenePath = scenePath,
+                    sceneName = sceneName,
+                    sceneGuid = sceneGuid
                 });
             }
 
@@ -3164,6 +3712,8 @@ public class ResourceBoxFileItem
                 _nullObjectDisplayNames.Clear(); // 清空null对象显示名称字典
                 _resourceBoxInstanceIDs.Clear(); // 清空InstanceID映射
                 _instanceIDToDisplayName.Clear(); // 清空InstanceID到displayName的映射
+                _nullObjectRawItems.Clear(); // v2.28 清空 null 原始项缓存
+                _recoveryRawItems = null; // v2.28 重置恢复缓存
                 var loadedCount = 0;
                 var failedCount = 0;
                 var hasSceneObjectChanges = false; // 标记是否有场景对象变化
@@ -3214,42 +3764,51 @@ public class ResourceBoxFileItem
                             
                             if (!obj)
                             {
-                                // 如果通过标识符找不到，尝试通过实例ID查找
-                                var parts = item.guid.Split(':');
-                                if (parts.Length >= 4 && int.TryParse(parts[3], out int instanceID))
+                                // v2.28：通过场景信息在已加载场景中再次尝试恢复
+                                if (TryFindGameObjectBySceneInfo(false, item.sceneGuid, item.sceneName, item.name, out Object recoveredObj) && recoveredObj)
                                 {
-                                    var instanceObj = EditorUtility.InstanceIDToObject(instanceID);
-                                    if (instanceObj && instanceObj is GameObject gameObject)
+                                    obj = recoveredObj;
+                                    debugInfo += $" → 通过场景信息找到: {obj.name} (场景: {item.sceneName})";
+                                }
+                                else
+                                {
+                                    // 如果通过标识符找不到，尝试通过实例ID查找
+                                    var parts = item.guid.Split(':');
+                                    if (parts.Length >= 4 && int.TryParse(parts[3], out int instanceID))
                                     {
-                                        // 验证场景匹配
-                                        var currentScene = SceneManager.GetActiveScene();
-                                        if (gameObject.scene == currentScene)
+                                        var instanceObj = EditorUtility.InstanceIDToObject(instanceID);
+                                        if (instanceObj && instanceObj is GameObject gameObject)
                                         {
-                                            obj = gameObject;
-                                            debugInfo += $" → 通过实例ID找到: {obj.name} (InstanceID: {instanceID})";
+                                            // 验证场景匹配
+                                            var currentScene = SceneManager.GetActiveScene();
+                                            if (gameObject.scene == currentScene)
+                                            {
+                                                obj = gameObject;
+                                                debugInfo += $" → 通过实例ID找到: {obj.name} (InstanceID: {instanceID})";
+                                            }
+                                            else
+                                            {
+                                                debugInfo += $" → 实例ID对象场景不匹配: {instanceID}";
+                                            }
                                         }
                                         else
                                         {
-                                            debugInfo += $" → 实例ID对象场景不匹配: {instanceID}";
-                                        }
-                                    }
-                                    else
-                                    {
-                                        // 如果InstanceIDToObject失败，尝试在场景中查找具有相同实例ID的对象
-                                        var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
-                                        foreach (var sceneObj in allObjects)
-                                        {
-                                            if (sceneObj.GetInstanceID() != instanceID) continue;
-                                            // 验证场景匹配
-                                            var currentScene = SceneManager.GetActiveScene();
-                                            if (sceneObj.scene != currentScene) continue;
-                                            obj = sceneObj;
-                                            debugInfo += $" → 通过场景遍历找到: {obj.name} (InstanceID: {instanceID})";
-                                            break;
-                                        }
-                                        if (!obj)
-                                        {
-                                            debugInfo += $" → 实例ID查找失败: {instanceID}";
+                                            // 如果InstanceIDToObject失败，尝试在场景中查找具有相同实例ID的对象
+                                            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+                                            foreach (var sceneObj in allObjects)
+                                            {
+                                                if (sceneObj.GetInstanceID() != instanceID) continue;
+                                                // 验证场景匹配
+                                                var currentScene = SceneManager.GetActiveScene();
+                                                if (sceneObj.scene != currentScene) continue;
+                                                obj = sceneObj;
+                                                debugInfo += $" → 通过场景遍历找到: {obj.name} (InstanceID: {instanceID})";
+                                                break;
+                                            }
+                                            if (!obj)
+                                            {
+                                                debugInfo += $" → 实例ID查找失败: {instanceID}";
+                                            }
                                         }
                                     }
                                 }
@@ -3303,10 +3862,19 @@ public class ResourceBoxFileItem
                             }
                             else
                             {
-                                debugInfo = $"未知标识符格式: {item.name} (标识符: {item.guid})";
+                                    debugInfo = $"未知标识符格式: {item.name} (标识符: {item.guid})";
+                                }
                             }
                         }
-                    }
+
+                        // v2.28: 对于 null 对象，缓存原始 item 用于场景重载后恢复
+                        if (obj == null && !item.isAsset &&
+                            (!string.IsNullOrEmpty(item.sceneGuid) || !string.IsNullOrEmpty(item.sceneName)))
+                        {
+                            // 构造一个轻量快照项（沿用 item 的字段）放入 _nullObjectRawItems
+                            int cacheIdx = _resourceBox.Count; // 即将被添加的索引
+                            _nullObjectRawItems[cacheIdx] = ConvertToRecoveryItem(item);
+                        }
 
                     // 即使对象为null，也添加到资源箱，以便显示对象名称
                     if (obj)
@@ -3348,8 +3916,11 @@ public class ResourceBoxFileItem
                 }
 
                 _resourceBoxFileName = fileName;
-                
+
                 Debug.Log($"从文件加载资源箱数据完成: {fileName}.json (成功: {loadedCount}, 失败: {failedCount}, 总计: {fileData.items.Count})");
+
+                // v2.28: 设置 _recoveryRawItems 用于场景打开时恢复
+                _recoveryRawItems = ConvertToRecoveryList(fileData.items);
                 
                 // 检查是否有场景对象变化，如果有则自动保存更新数据
                 if (hasSceneObjectChanges)
@@ -3475,7 +4046,9 @@ public class ResourceBoxFileItem
                             
                             // 从null对象字典中移除
                             _nullObjectDisplayNames.Remove(i);
-                            
+                            // v2.28: 同步从 _nullObjectRawItems 移除
+                            _nullObjectRawItems.Remove(i);
+
                             hasChanges = true;
                         }
                     }
@@ -3514,6 +4087,36 @@ public class ResourceBoxFileItem
             _resourceBoxInstanceIDs.Clear();
             foreach (var kvp in tempInstanceIDs)
                 _resourceBoxInstanceIDs[kvp.Key] = kvp.Value;
+            // v2.28: 同步重建 _nullObjectRawItems 索引
+            var tempRawItems = new Dictionary<int, ResourceBoxRecoveryItem>();
+            foreach (var kvp in _nullObjectRawItems)
+            {
+                if (kvp.Key < removedIndex) tempRawItems[kvp.Key] = kvp.Value;
+                else if (kvp.Key > removedIndex) tempRawItems[kvp.Key - 1] = kvp.Value;
+            }
+            _nullObjectRawItems.Clear();
+            foreach (var kvp in tempRawItems) _nullObjectRawItems[kvp.Key] = kvp.Value;
+        }
+
+        /// v2.28: 按当前 _resourceBox 顺序重建 _nullObjectRawItems 索引（用于按类型排序等场景）
+        private void RebuildNullObjectRawItemsIndex()
+        {
+            _nullObjectRawItems.Clear();
+            // 排序后原键错位，需要从 _recoveryRawItems 重新匹配位置
+            // _recoveryRawItems 已经是当前 null 项的原始列表
+            if (_recoveryRawItems == null) return;
+            int rawIdx = 0;
+            for (int i = 0; i < _resourceBox.Count; i++)
+            {
+                if (!_resourceBox[i])
+                {
+                    if (rawIdx < _recoveryRawItems.Count)
+                    {
+                        _nullObjectRawItems[i] = _recoveryRawItems[rawIdx];
+                        rawIdx++;
+                    }
+                }
+            }
         }
 
         /// 在当前场景中按名称查找对象
@@ -3549,9 +4152,7 @@ public class ResourceBoxFileItem
         
     }
     
-    /// <summary>
     /// 打包前自动保存资源箱数据，防止 Domain Reload 导致数据丢失
-    /// </summary>
     public class ResourceBoxBuildPreprocessor : IPreprocessBuildWithReport
     {
         public int callbackOrder => -100; // 尽早执行

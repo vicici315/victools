@@ -1,30 +1,23 @@
-// LatticeModifierEditor 1.0 晶格变形器编辑器，Inspector 面板与 SceneView 控制点交互
-// LatticeModifierEditor 1.1 支持晶格单独移动，模型经过晶格区域产生变形，离开后恢复
-// LatticeModifierEditor 1.2 添加晶格点动画控制（子物体 CP 节点，支持 Animation/Timeline K帧）
-// LatticeModifierEditor 1.3 选中晶格点时同步选中 Hierarchy 中对应 CP 节点（蓝色高亮，不含父对象）
-// LatticeModifierEditor 1.4 静态 SceneView 回调：选中 CP 后晶格线框持续绘制，可继续点击/框选其他晶格点
-// LatticeModifierEditor 1.5 不重算法线，保持原始 mesh 的法线数据，变形只改顶点位置
-// LatticeModifierEditor 2.0 支持单目标/多目标（整个预设/带蒙皮角色）两种模式，SceneView 绘制逻辑合并
-// LatticeModifierEditor 2.1 添加删除晶格按钮（还原 Mesh 并删除晶格物体），单目标模式自动识别带骨骼角色父级切换多目标
-// LatticeModifierEditor 2.2 添加目标按钮支持多选，显示手动 Renderer 列表字段，运行/停止游戏自动重建晶格，移除每帧 RepaintAll 优化性能
-// LatticeModifierEditor 2.3 支持缩放旋转等工具手柄操作控制点；优化缩放旋转工具操作
-// LatticeModifierEditor 2.4 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示。
-// LatticeModifierEditor 2.5 设置选中控制点显示大小。
-// LatticeModifierEditor 2.6 选中晶格点焦点落在晶格体，添加【创建快照】按钮
-//      Shift + 拖拽：框选添加控制点
-//      Shift + Alt + 拖拽：框选减去控制点
-//      Shift + Ctrl + 拖拽：框选追加（不清除已有选择）。
-// LatticeModifierEditor 2.7 优化控制点显示 // 内部控制点：蓝色
-// LatticeModifierEditor 2.8 晶格体背面控制点压暗显示
-// LatticeModifierEditor 2.9 优化晶格体背面控制点压暗显示（支持透视/正交）；优化控制点显示顺序
-// LatticeModifierEditor 3.0 配合 Runtime v3.0 重构验证通过，公共 API 完全兼容无需修改
-// LatticeModifierEditor 3.1 SingleRenderer模式【修复晶格链接】按钮（无需选中对象直接修复）；轴心操作同步initLattice矩阵；晶格点背面压暗改为基于控制点实际位置计算面法线；Undo记录子CP Transform防止撤销失效
-// LatticeModifierEditor 3.1 多目标模式新增"修复丢失绑定"按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer
-// LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。
+// LatticeModifierEditor —— LatticeModifier 的 Inspector + SceneView 编辑器。
+// 历史版本（v1.0 ~ v3.2）见 git log；当前活跃版本：
+//
+// v3.3 撤销【烘焙到原 Mesh】思路（它会让晶格烘焙后失效无法继续实时控制）。
+//      改为实时变形 + 自动保存时还原：保存场景/打包前自动把所有 Renderer 的 sharedMesh 还原回
+//      originalMesh 资产，让 Build 场景里 Renderer 引用指向带 Asset GUID 的资产。
+//      进入 Play 模式后 OnEnable 重建 deform Mesh 继续实时变形；退出 Play 模式 OnDestroy 自动还原。
+//      用户不再需要任何手动烘焙操作，晶格物体始终保留在场景中，控制点持续实时影响模型。
+//      保留【烘焙变形并移除晶格】按钮用于"不再需要晶格、生成新资产"的场景。
+//
+// v3.4 重构：抽取 LatticeSceneWalker.ForEachInitialized 工具方法，
+//           消除 LatticeModifierBuildPreprocessor / LatticeModifierSaveHook 重复的"遍历所有加载场景的 LatticeModifier"循环。
+
+// LatticeModifierEditor v3.5 修复控制点缩放无法与缩放手柄方向一致，newScale 的 x/y/z 是「手柄局部轴」（由 t.rotation 定向，即屏幕上彩色箭头方向）上的缩放分量
 
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.Build;
+using UnityEditor.Build.Reporting;
 
 [CustomEditor(typeof(LatticeModifier))]
 public class LatticeModifierEditor : Editor
@@ -210,93 +203,13 @@ public class LatticeModifierEditor : Editor
 
     public override void OnInspectorGUI()
     {
-        // ── 模式切换 ──
+        // v3.9：取消目标模式选项，统一使用多目标逻辑
         serializedObject.Update();
-        EditorGUI.BeginChangeCheck();
-        var modeProp = serializedObject.FindProperty("targetMode");
-        EditorGUILayout.PropertyField(modeProp, new GUIContent("目标模式"));
-        if (EditorGUI.EndChangeCheck())
-        {
-            serializedObject.ApplyModifiedProperties();
-        }
 
-        bool isSingle = lattice.targetMode == LatticeModifier.TargetMode.SingleRenderer;
 
-        // ── 根据模式显示对应字段 ──
-        if (isSingle)
-        {
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRenderer"), new GUIContent("目标对象"));
-        }
-        else
-        {
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRoot"), new GUIContent("多目标根节点"));
-            EditorGUILayout.PropertyField(serializedObject.FindProperty("manualRenderers"), new GUIContent("手动指定 Renderer"), true);
-        }
-
-        // ── 添加目标按钮（支持多选） ──
-        // GUI.backgroundColor = new Color(0.5f, 0.9f, 1f);
-        // if (GUILayout.Button("添加目标（选中对象后点此按钮，支持多选）", GUILayout.Height(26)))
-        // {
-        //     // 收集所有选中的非晶格对象
-        //     var selectedObjects = new List<GameObject>();
-        //     foreach (var obj in Selection.gameObjects)
-        //     {
-        //         if (obj != lattice.gameObject)
-        //             selectedObjects.Add(obj);
-        //     }
-
-        //     if (selectedObjects.Count == 0)
-        //     {
-        //         EditorUtility.DisplayDialog("提示",
-        //             "请先在 Hierarchy 中选中目标对象（可 Ctrl+点击多选），或直接将对象拖入上方字段", "确定");
-        //     }
-        //     else
-        //     {
-        //         Undo.RecordObject(lattice, "设置目标");
-
-        //         // 收集所有选中对象的 Renderer（含子物体）
-        //         var allRenderers = new List<Renderer>();
-        //         foreach (var sel in selectedObjects)
-        //         {
-        //             Renderer rend = sel.GetComponent<Renderer>();
-        //             if (rend != null) allRenderers.Add(rend);
-        //             var childRenderers = sel.GetComponentsInChildren<Renderer>(true);
-        //             foreach (var cr in childRenderers)
-        //             {
-        //                 if (!allRenderers.Contains(cr))
-        //                     allRenderers.Add(cr);
-        //             }
-        //         }
-
-        //         if (allRenderers.Count == 0)
-        //         {
-        //             EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
-        //         }
-        //         else if (allRenderers.Count == 1 && isSingle)
-        //         {
-        //             // 单个 Renderer，单目标模式
-        //             lattice.targetRenderer = allRenderers[0];
-        //         }
-        //         else
-        //         {
-        //             // 多个 Renderer 或已是多目标模式 → 切换多目标，添加到手动列表
-        //             lattice.targetMode = LatticeModifier.TargetMode.MultiRenderer;
-        //             // 合并到 manualRenderers（不重复）
-        //             foreach (var r in allRenderers)
-        //             {
-        //                 if (!lattice.manualRenderers.Contains(r))
-        //                     lattice.manualRenderers.Add(r);
-        //             }
-        //         }
-
-        //         serializedObject.Update();
-        //         EditorUtility.SetDirty(lattice);
-        //     }
-        // }
-        // GUI.backgroundColor = Color.white;
-
-        // 模式可能在按钮中被自动切换，重新读取
-        isSingle = lattice.targetMode == LatticeModifier.TargetMode.SingleRenderer;
+        // ── 显示目标字段 ──
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRoot"), new GUIContent("多目标根节点"));
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("manualRenderers"), new GUIContent("手动指定 Renderer"), true);
 
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsX"), new GUIContent("X 段数"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsY"), new GUIContent("Y 段数"));
@@ -309,13 +222,17 @@ public class LatticeModifierEditor : Editor
 
         if (!lattice.IsInitialized)
         {
-            if (isSingle && lattice.targetRenderer == null)
-                EditorGUILayout.HelpBox("请将要变形的模型拖入「目标对象」字段", MessageType.Warning);
-            else if (!isSingle && lattice.targetRoot == null)
-                EditorGUILayout.HelpBox("请将要变形的根节点拖入「多目标根节点」（会自动收集所有子 Renderer）", MessageType.Warning);
+            // 检查是否有任何目标配置
+            bool hasTarget = lattice.targetRoot != null ||
+                             lattice.manualRenderers.Exists(r => r != null);
+
+            if (!hasTarget)
+                EditorGUILayout.HelpBox("请指定目标：拖入「目标对象」或「多目标根节点」或添加到「手动指定 Renderer」列表", MessageType.Warning);
             else
             {
-                Transform checkT = isSingle ? lattice.targetRenderer?.transform : lattice.targetRoot;
+                Transform checkT = lattice.targetRoot;
+                if (checkT == null && lattice.manualRenderers.Count > 0 && lattice.manualRenderers[0] != null)
+                    checkT = lattice.manualRenderers[0].transform;
                 if (checkT != null)
                 {
                     bool isSameOrChild = lattice.transform == checkT ||
@@ -351,87 +268,74 @@ public class LatticeModifierEditor : Editor
         }
         else
         {
-            DrawInitializedUI(isSingle);
+            DrawInitializedUI();
         }
     }
 
-    private void DrawInitializedUI(bool isSingle)
+    private void DrawInitializedUI()
     {
-        string info;
-        if (isSingle)
-        {
-            info = $"晶格：{lattice.PointCountX}×{lattice.PointCountY}×{lattice.PointCountZ} = {lattice.TotalPoints} 个控制点\n" +
-                   "点击选中 | Ctrl+点击加选 | Shift+拖拽框选 | 拖拽手柄变形";
-        }
-        else
-        {
-            var renderers = lattice.GetActiveRenderers();
-            info = $"晶格：{lattice.PointCountX}×{lattice.PointCountY}×{lattice.PointCountZ} = {lattice.TotalPoints} 个控制点\n" +
-                   $"多目标模式：共 {renderers.Count} 个 Renderer\n" +
-                   "点击选中 | Ctrl+点击加选 | Shift+拖拽框选 | 拖拽手柄变形";
-        }
+        var renderers = lattice.GetActiveRenderers();
+        string info = $"晶格：{lattice.PointCountX}×{lattice.PointCountY}×{lattice.PointCountZ} = {lattice.TotalPoints} 个控制点\n" +
+                      $"共 {renderers.Count} 个 Renderer\n" +
+                      "点击选中 | Ctrl+点击加选 | Shift+拖拽框选 | 拖拽手柄变形";
         EditorGUILayout.HelpBox(info, MessageType.Info);
 
-        if (!isSingle)
+        // 目标 Renderer 列表
+        if (renderers.Count > 0)
         {
-            var renderers = lattice.GetActiveRenderers();
-            if (renderers.Count > 0)
+            EditorGUILayout.Space(3);
+            EditorGUILayout.LabelField("目标 Renderer 列表：", EditorStyles.boldLabel);
+            EditorGUI.indentLevel++;
+            for (int i = 0; i < renderers.Count; i++)
             {
-                EditorGUILayout.Space(3);
-                EditorGUILayout.LabelField("目标 Renderer 列表：", EditorStyles.boldLabel);
-                EditorGUI.indentLevel++;
-                for (int i = 0; i < renderers.Count; i++)
-                {
-                    string typeName = renderers[i] is SkinnedMeshRenderer ? "[Skinned]" : "[Mesh]";
-                    EditorGUILayout.LabelField($"{i + 1}. {typeName} {renderers[i].name}", EditorStyles.miniLabel);
-                }
-                EditorGUI.indentLevel--;
+                string typeName = renderers[i] is SkinnedMeshRenderer ? "[Skinned]" : "[Mesh]";
+                EditorGUILayout.LabelField($"{i + 1}. {typeName} {renderers[i].name}", EditorStyles.miniLabel);
             }
+            EditorGUI.indentLevel--;
+        }
 
-            // ── 丢失绑定修复按钮 ──
-            // 检测是否有丢失绑定（manualRenderers 或 targetRoot 子对象中未在 deformTargets 中绑定的）
-            int missingCount = 0;
-            var activeSet = new HashSet<Renderer>(renderers);
-            if (lattice.manualRenderers.Count > 0)
-            {
-                foreach (var r in lattice.manualRenderers)
-                    if (r != null && !activeSet.Contains(r))
-                        missingCount++;
-            }
-            else if (lattice.targetRoot != null)
-            {
-                var allChildRenderers = lattice.targetRoot.GetComponentsInChildren<Renderer>(true);
-                foreach (var r in allChildRenderers)
-                    if (!activeSet.Contains(r))
-                        missingCount++;
-            }
+        // ── 丢失绑定修复按钮 ──
+        int missingCount = 0;
+        var activeSet = new HashSet<Renderer>(renderers);
+        if (lattice.manualRenderers.Count > 0)
+        {
+            foreach (var r in lattice.manualRenderers)
+                if (r != null && !activeSet.Contains(r))
+                    missingCount++;
+        }
+        else if (lattice.targetRoot != null)
+        {
+            var allChildRenderers = lattice.targetRoot.GetComponentsInChildren<Renderer>(true);
+            foreach (var r in allChildRenderers)
+                if (!activeSet.Contains(r))
+                    missingCount++;
+        }
 
-            if (missingCount > 0)
+        if (missingCount > 0)
+        {
+            EditorGUILayout.Space(3);
+            GUI.backgroundColor = new Color(1f, 0.6f, 0.2f);
+            EditorGUILayout.HelpBox(
+                $"检测到 {missingCount} 个目标 Renderer 丢失晶格绑定", MessageType.Warning);
+            if (GUILayout.Button(new GUIContent($"修复丢失绑定（{missingCount} 个）",
+                "重新链接指定列表中未绑定到晶格的 Renderer。\n\n" +
+                "适用场景：\n" +
+                "• Prefab 实例化后部分绑定丢失\n" +
+                "• 撤销/重做导致部分目标断开连接\n" +
+                "• 手动修改了 manualRenderers 列表后同步绑定"),
+                GUILayout.Height(26)))
             {
-                EditorGUILayout.Space(3);
-                GUI.backgroundColor = new Color(1f, 0.6f, 0.2f);
-                EditorGUILayout.HelpBox(
-                    $"检测到 {missingCount} 个目标 Renderer 丢失晶格绑定", MessageType.Warning);
-                if (GUILayout.Button(new GUIContent($"修复丢失绑定（{missingCount} 个）",
-                    "重新链接指定列表中未绑定到晶格的 Renderer。\n\n" +
-                    "适用场景：\n" +
-                    "• Prefab 实例化后部分绑定丢失\n" +
-                    "• 撤销/重做导致部分目标断开连接\n" +
-                    "• 手动修改了 manualRenderers 列表后同步绑定"),
-                    GUILayout.Height(26)))
-                {
-                    Undo.RecordObject(lattice, "修复丢失绑定");
-                    int repaired = lattice.RepairMissingBindings();
-                    EditorUtility.SetDirty(lattice);
-                    SceneView.RepaintAll();
+                Undo.RecordObject(lattice, "修复丢失绑定");
+                int repaired = lattice.RepairMissingBindings();
+                EditorUtility.SetDirty(lattice);
+                SceneView.RepaintAll();
 
-                    if (repaired > 0)
-                        Debug.Log($"[LatticeModifier] 已修复 {repaired} 个丢失绑定");
-                    else
-                        EditorUtility.DisplayDialog("提示", "没有需要修复的绑定", "确定");
-                }
-                GUI.backgroundColor = Color.white;
+                if (repaired > 0)
+                    Debug.Log($"[LatticeModifier] 已修复 {repaired} 个丢失绑定");
+                else
+                    EditorUtility.DisplayDialog("提示", "没有需要修复的绑定", "确定");
             }
+            GUI.backgroundColor = Color.white;
         }
 
         EditorGUILayout.Space(3);
@@ -557,32 +461,16 @@ public class LatticeModifierEditor : Editor
                 MessageType.Info);
             EditorGUILayout.BeginHorizontal();
             GUI.backgroundColor = new Color(0.5f, 0.9f, 1f);
-            if (isSingle)
+            if (GUILayout.Button(new GUIContent("链接选中对象到晶格",
+                "将 Hierarchy 中选中的模型对象追加为当前晶格的变形目标。可以先将晶格对象参数窗口独立出来（Alt + P）\n\n" +
+                "操作方法：\n" +
+                "1. 在 Hierarchy 中选中要变形的模型（支持 Ctrl+多选）\n" +
+                "2. 再 Ctrl+点击选中晶格体（保持多选）\n" +
+                "3. 点击此按钮完成链接\n\n" +
+                "链接后模型会立即受晶格控制点影响。"),
+                GUILayout.Height(24)))
             {
-                if (GUILayout.Button(new GUIContent("修复晶格链接",
-                    "重新将「目标对象」字段中的 Renderer 链接到当前晶格。\n\n" +
-                    "适用场景：\n" +
-                    "• Prefab 实例化后绑定丢失\n" +
-                    "• 撤销/重做导致目标断开连接\n" +
-                    "• 更换了目标对象后同步绑定"),
-                    GUILayout.Height(24)))
-                {
-                    RepairSingleRendererLink();
-                }
-            }
-            else
-            {
-                if (GUILayout.Button(new GUIContent("链接选中对象到晶格",
-                    "将 Hierarchy 中选中的模型对象追加为当前晶格的变形目标。可以先将晶格对象参数窗口独立出来（Alt + P）\n\n" +
-                    "操作方法：\n" +
-                    "1. 在 Hierarchy 中选中要变形的模型（支持 Ctrl+多选）\n" +
-                    "2. 再 Ctrl+点击选中晶格体（保持多选）\n" +
-                    "3. 点击此按钮完成链接\n\n" +
-                    "链接后模型会立即受晶格控制点影响。"),
-                    GUILayout.Height(24)))
-                {
-                    LinkSelectedObjectsToLattice();
-                }
+                LinkSelectedObjectsToLattice();
             }
             GUI.backgroundColor = new Color(1f, 0.6f, 0.4f);
             if (GUILayout.Button("清除动画控制点", GUILayout.Height(24)))
@@ -624,7 +512,6 @@ public class LatticeModifierEditor : Editor
         {
             InheritTargetPivot();
         }
-
 
         if (GUILayout.Button(new GUIContent("继承对象轴心旋转",
             "将晶格物体的旋转设为第一个变形目标的旋转，位置不变。\n" +
@@ -692,16 +579,8 @@ public class LatticeModifierEditor : Editor
         // 移动 Transform 到新位置
         t.position = worldCenter;
 
-        // 更新初始化矩阵（因为控制点和包围盒已经重新映射到新坐标系）
-        var initL2WField = typeof(LatticeModifier).GetField("initLatticeLocalToWorld",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var initW2LField = typeof(LatticeModifier).GetField("initLatticeWorldToLocal",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (initL2WField != null && initW2LField != null)
-        {
-            initL2WField.SetValue(lattice, t.localToWorldMatrix);
-            initW2LField.SetValue(lattice, t.worldToLocalMatrix);
-        }
+        // initLatticeLocalToWorld/initLatticeWorldToLocal 已在 v3.7 删（死代码，DeformVertices 用当前帧 transform），
+        // 这里不再写回这两个字段。控制点和包围盒已在前面重映射过。
 
         // 同步子物体控制点 Transform
         if (lattice.HasControlPointTransforms)
@@ -804,16 +683,8 @@ public class LatticeModifierEditor : Editor
         t.position = newWorldPos;
         t.rotation = newWorldRot;
 
-        // 更新初始化矩阵（因为控制点和包围盒已经重新映射到新坐标系）
-        var initL2WField = typeof(LatticeModifier).GetField("initLatticeLocalToWorld",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var initW2LField = typeof(LatticeModifier).GetField("initLatticeWorldToLocal",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (initL2WField != null && initW2LField != null)
-        {
-            initL2WField.SetValue(lattice, t.localToWorldMatrix);
-            initW2LField.SetValue(lattice, t.worldToLocalMatrix);
-        }
+        // initLatticeLocalToWorld/initLatticeWorldToLocal 已在 v3.7 删（死代码），
+        // 这里不再写回这两个字段。控制点和包围盒已在前面重映射过。
 
         // 同步子物体控制点 Transform
         if (lattice.HasControlPointTransforms)
@@ -933,16 +804,8 @@ public class LatticeModifierEditor : Editor
         // 应用新旋转
         t.rotation = newWorldRot;
 
-        // 更新初始化矩阵（因为控制点和包围盒已经重新映射到新坐标系）
-        var initL2WField = typeof(LatticeModifier).GetField("initLatticeLocalToWorld",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var initW2LField = typeof(LatticeModifier).GetField("initLatticeWorldToLocal",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (initL2WField != null && initW2LField != null)
-        {
-            initL2WField.SetValue(lattice, t.localToWorldMatrix);
-            initW2LField.SetValue(lattice, t.worldToLocalMatrix);
-        }
+        // initLatticeLocalToWorld/initLatticeWorldToLocal 已在 v3.7 删（死代码），
+        // 这里不再写回这两个字段。控制点和包围盒已在前面重映射过。
 
         // 同步子物体控制点 Transform
         if (lattice.HasControlPointTransforms)
@@ -1028,11 +891,9 @@ public class LatticeModifierEditor : Editor
     //  SceneView 绘制 & 交互
     // ═══════════════════════════════════════════
 
-    /// <summary>
     /// 根据控制点实际位置计算指定面的法线方向。
     /// faceAxis 指明面的朝向轴：(-1,0,0)=X轴负方向面，(1,0,0)=X轴正方向面 等。
     /// 通过该点与同面相邻控制点的叉积得到实际法线，不依赖晶格 Transform 轴向。
-    /// </summary>
     private static Vector3 ComputeFaceNormal(LatticeModifier lat, Transform t, int pix, int piy, int piz, int nx, int ny, int nz, int faceAxisX, int faceAxisY, int faceAxisZ)
     {
         Vector3 center = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(pix, piy, piz)]);
@@ -1359,14 +1220,22 @@ public class LatticeModifierEditor : Editor
                     }
 
                     Undo.RecordObject(lat, "缩放晶格控制点");
+                    // 关键修复：newScale 的 x/y/z 是「手柄局部轴」（由 t.rotation 定向，
+                    // 即屏幕上彩色箭头方向）上的缩放分量，不是世界轴分量。
+                    // 必须先把世界偏移转换到手柄旋转坐标系，按轴缩放后再转回世界，
+                    // 否则晶格带旋转时，沿某个箭头缩放会作用到错误的世界轴 → 表现为偏移而非缩放。
+                    Quaternion handleRot = t.rotation;
+                    Quaternion invHandleRot = Quaternion.Inverse(handleRot);
                     foreach (int i in selPts)
                     {
                         Vector3 startWp = s_handleStartPositions[i];
-                        Vector3 offset = startWp - handleCenter;
-                        offset.x *= newScale.x;
-                        offset.y *= newScale.y;
-                        offset.z *= newScale.z;
-                        lat.controlPoints[i] = t.InverseTransformPoint(handleCenter + offset);
+                        Vector3 worldOffset = startWp - handleCenter;
+                        Vector3 axisOffset = invHandleRot * worldOffset; // 转入手柄局部轴
+                        axisOffset.x *= newScale.x;
+                        axisOffset.y *= newScale.y;
+                        axisOffset.z *= newScale.z;
+                        worldOffset = handleRot * axisOffset;            // 转回世界
+                        lat.controlPoints[i] = t.InverseTransformPoint(handleCenter + worldOffset);
                     }
                     if (lat.HasControlPointTransforms)
                         lat.SyncToTransforms();
@@ -1622,6 +1491,7 @@ public class LatticeModifierEditor : Editor
         else
             Debug.Log($"[LatticeModifier] 烘焙完成，共保存 {savedMeshes.Count} 个 Mesh Asset 到 {relativeDir}");
     }
+
     private void LinkSelectedObjectsToLattice()
     {
         // 收集选中的非晶格对象的所有 Renderer
@@ -1668,48 +1538,19 @@ public class LatticeModifierEditor : Editor
         Selection.activeGameObject = lattice.gameObject;
     }
 
-    private void RepairSingleRendererLink()
-    {
-        if (lattice.targetRenderer == null)
-        {
-            EditorUtility.DisplayDialog("提示",
-                "「目标对象」字段为空，请先将要变形的模型拖入该字段。", "确定");
-            return;
-        }
-
-        Undo.RecordObject(lattice, "修复晶格链接");
-        bool linked = lattice.LinkRenderer(lattice.targetRenderer);
-
-        if (linked)
-        {
-            EditorUtility.SetDirty(lattice);
-            SceneView.RepaintAll();
-            Debug.Log($"[LatticeModifier] 已修复链接：{lattice.targetRenderer.name}");
-        }
-        else
-        {
-            EditorUtility.DisplayDialog("提示",
-                "目标对象已处于链接状态，无需修复。", "确定");
-        }
-    }
-
     private void CreateStandaloneLattice()
     {
-        bool isSingle = lattice.targetMode == LatticeModifier.TargetMode.SingleRenderer;
-        Renderer targetRend = lattice.targetRenderer;
         Transform targetRt = lattice.targetRoot;
         int dx = lattice.divisionsX, dy = lattice.divisionsY, dz = lattice.divisionsZ;
         bool live = lattice.liveUpdate;
         var manualRends = new List<Renderer>(lattice.manualRenderers);
 
-        Transform refT = isSingle ? targetRend?.transform : targetRt;
+        Transform refT = targetRt;
 
-        // 如果 targetRoot 为空，从选中对象或 targetRenderer 推断根节点
+        // 如果 targetRoot 为空，从 manualRenderers 推断
         if (refT == null)
         {
-            if (targetRend != null)
-                refT = targetRend.transform;
-            else if (manualRends.Count > 0 && manualRends[0] != null)
+            if (manualRends.Count > 0 && manualRends[0] != null)
                 refT = manualRends[0].transform;
         }
 
@@ -1732,9 +1573,7 @@ public class LatticeModifierEditor : Editor
         }
 
         LatticeModifier newLattice = latticeObj.AddComponent<LatticeModifier>();
-        newLattice.targetMode = LatticeModifier.TargetMode.MultiRenderer;
         newLattice.targetRoot = autoRoot;
-        newLattice.targetRenderer = targetRend;
         newLattice.manualRenderers = manualRends;
         newLattice.divisionsX = dx;
         newLattice.divisionsY = dy;
@@ -1746,5 +1585,373 @@ public class LatticeModifierEditor : Editor
 
         Selection.activeGameObject = latticeObj;
         SceneView.RepaintAll();
+    }
+}
+
+// ═══════════════════════════════════════════
+//  打包前自动还原：扫描所有加载场景中所有 LatticeModifier，
+//  把所有 Renderer 的 sharedMesh 引用还原回 originalMesh 资产，
+//  保证 Build 场景中 Renderer 引用指向带 Asset GUID 的资产，模型可见。
+//  晶格组件本身保留在场景里，进入 Play 模式后 OnEnable 会重建 deform Mesh 继续实时变形。
+//  同样的还原也在保存场景时触发（避免 Build 场景里 Renderer 引用指向无 GUID 的运行时 Mesh）。
+//  本类不再抛任何异常、不会拦截打包——所有 LatticeModifier 状态都直接放行。
+// ═══════════════════════════════════════════
+
+/// 遍历所有加载场景中已初始化的 LatticeModifier 并执行 action。
+/// 之前 LatticeModifierBuildPreprocessor / LatticeModifierSaveHook 各写一份"遍历场景"的循环，
+/// 抽到这里。
+internal static class LatticeSceneWalker
+{
+    public static int ForEachInitialized(System.Action<LatticeModifier> action)
+    {
+        if (action == null) return 0;
+        int n = 0;
+        for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+        {
+            var scn = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+            if (!scn.isLoaded) continue;
+            foreach (var root in scn.GetRootGameObjects())
+            {
+                foreach (var lm in root.GetComponentsInChildren<LatticeModifier>(true))
+                {
+                    if (lm == null || !lm.IsInitialized) continue;
+                    action(lm);
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+}
+
+// 打包前还原（Build 时触发）
+internal class LatticeModifierBuildPreprocessor : IPreprocessBuildWithReport
+{
+    public int callbackOrder => 0;
+
+    public void OnPreprocessBuild(BuildReport report)
+    {
+        try
+        {
+            int count = LatticeSceneWalker.ForEachInitialized(lm =>
+            {
+                // v3.10：先迁移修复（清理污染的 originalMesh + 重新缓存可序列化拓扑），
+                // 再还原 Renderer 引用，避免把污染的 deform Mesh 写回 Renderer。
+                lm.MigrateAndRepair();
+
+                // 不走 Undo 栈：避免用户在 Build 前后按 Ctrl+Z 把引用撤销回 deformedMeshA
+                // （运行时 Mesh，无 Asset GUID，打包后不可见）。
+                // 只标脏，让 Build 序列化的就是 originalMesh 资产引用。
+                EditorUtility.SetDirty(lm);
+                lm.RestoreRenderersToOriginal();
+
+                // v3.9 关键修复：还原的是 Renderer/MeshFilter 上的 sharedMesh 引用，
+                // 必须对它们也标脏，否则 Unity 场景序列化可能仍然写出旧引用（deformedMeshA）。
+                foreach (var rend in lm.GetActiveRenderers())
+                {
+                    if (rend == null) continue;
+                    EditorUtility.SetDirty(rend);
+                    var mf = rend.GetComponent<MeshFilter>();
+                    if (mf != null) EditorUtility.SetDirty(mf);
+                }
+            });
+            if (count > 0)
+            {
+                // 把所有修改过的 Renderer 标记为脏，触发场景重新序列化
+                UnityEditor.SceneManagement.EditorSceneManager.MarkAllScenesDirty();
+                Debug.Log($"[LatticeModifier] 打包前已自动还原 {count} 个 Renderer 的 sharedMesh 引用回原 Mesh 资产。");
+
+                // 关键：把内存里的修改强制写入磁盘。
+                // 否则 Unity Build 序列化的可能是"磁盘上的旧 .unity + 内存 delta"，
+                // 而磁盘上的 .unity 仍然是 deformedMeshA 引用（用户从未 Ctrl+S），
+                // 导致 Build 场景里 Renderer 引用还是 deformedMeshA（无 GUID）→ 玩家端不可见。
+                // 跳过 untitled / 新建未保存的路径（会弹"另存为"对话框，破坏 Build 流程）。
+                // prefab 也跳过：prefab 不能在 build 流程中保存，依赖 OnWillSaveAssets 已经处理。
+                int saved = 0;
+                for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+                {
+                    var scn = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                    if (!scn.isLoaded || !scn.isDirty) continue;
+                    if (string.IsNullOrEmpty(scn.path)) continue;       // untitled 场景
+                    if (scn.path.EndsWith(".prefab")) continue;        // prefab 跳过
+                    if (UnityEditor.SceneManagement.EditorSceneManager.SaveScene(scn))
+                        saved++;
+                }
+                if (saved > 0)
+                    Debug.Log($"[LatticeModifier] 打包前已强制保存 {saved} 个场景到磁盘，确保 Build 序列化时拿到 originalMesh 引用。");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            // 任何意外都不应阻断打包流程
+            Debug.LogWarning($"[LatticeModifier] 打包前还原 Renderer 引用时出现异常，已忽略: {ex.Message}");
+        }
+    }
+}
+
+// 保存场景或 Prefab 时还原（避免 Build 场景 / Prefab 中 Renderer 引用指向无 GUID 的运行时 Mesh）
+internal class LatticeModifierSaveHook : UnityEditor.AssetModificationProcessor
+{
+    private static string[] OnWillSaveAssets(string[] paths)
+    {
+        // 介入条件：保存的是场景（.unity）或 Prefab Asset（.prefab）
+        // 关键：晶格组件如果挂在 Prefab 里，保存 Prefab Asset 时也要还原
+        // 否则 Build 阶段序列化场景时，Prefab 实例的 Renderer 引用会同步为
+        // Prefab Asset 里保存的 deformedMeshA（运行时 Mesh，无 GUID）→ 玩家端不可见
+        bool anyRelevant = false;
+        foreach (var p in paths)
+        {
+            if (p.EndsWith(".unity") || p.EndsWith(".prefab")) { anyRelevant = true; break; }
+        }
+        if (!anyRelevant) return paths;
+
+        try
+        {
+            int n = LatticeSceneWalker.ForEachInitialized(lm =>
+            {
+                // v3.10：保存前先迁移修复，把可序列化拓扑 + 干净的 originalMesh 写入场景
+                lm.MigrateAndRepair();
+
+                // v3.9 修复：不仅记录 LatticeModifier，还需对 Renderer/MeshFilter 标脏，
+                // 否则 Unity 保存时仍然序列化旧的 sharedMesh 引用（deformedMeshA）。
+                Undo.RecordObject(lm, "保存前还原晶格 Renderer 引用");
+                lm.RestoreRenderersToOriginal();
+                foreach (var rend in lm.GetActiveRenderers())
+                {
+                    if (rend == null) continue;
+                    EditorUtility.SetDirty(rend);
+                    var mf = rend.GetComponent<MeshFilter>();
+                    if (mf != null) EditorUtility.SetDirty(mf);
+                }
+            });
+            if (n > 0)
+            {
+                Debug.Log($"[LatticeModifier] 保存场景/Prefab 时已自动还原 {n} 个 Renderer 的 sharedMesh 引用回原 Mesh 资产。");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[LatticeModifier] 保存场景/Prefab 时还原 Renderer 引用出现异常，已忽略: {ex.Message}");
+        }
+        return paths;
+    }
+}
+
+// ═══════════════════════════════════════════
+//  LatticeModifierInitOnLoad —— Editor 启动 / 域重载后自动执行
+//
+// 职责 A：启动时扫描所有已加载场景中的 LatticeModifier，把 Renderer 引用
+//         统一还原回 originalMesh 资产 —— 避免"上次编辑时挂在 deformedMeshA"、
+//         "打开工程后立刻 Build 漏过 OnPreprocessBuild"等场景下打包后模型不可见。
+//
+// 职责 B：清理 v3.7 之前已删除的旧字段（initLatticeLocalToWorld / initLatticeWorldToLocal）。
+//         Unity 反序列化时遇到序列化数据中存在但当前类已删除的字段会输出警告，
+//         且这些数据会持续占用场景文件大小。用 SerializedObject 找到并清除。
+//
+// 触发时机：[InitializeOnLoad] 静态构造 → EditorApplication.delayCall 延后一帧
+//           （避免 InitializeOnLoad 静态构造时场景还没完全加载完，
+//            同时和 IPrefabStage 等其他 Editor 启动逻辑错开）。
+//
+// 防止重复：SessionState 标记本次 Editor 会话已执行过；域重载后会重置 SessionState，
+//           域重载后再跑一次（覆盖上次崩溃前未保存的修改）。
+// ═══════════════════════════════════════════
+[InitializeOnLoad]
+internal static class LatticeModifierInitOnLoad
+{
+    // SessionState key：本次 Editor 会话是否已执行过自动修复
+    private const string SessionKey_RanOnce = "VicTools.LatticeModifier.InitOnLoad.RanOnce";
+
+    static LatticeModifierInitOnLoad()
+    {
+        // 延后到下一帧执行：此时场景已加载、AssetDatabase 已就绪、IPrefabStage 不会冲突
+        EditorApplication.delayCall += RunOnce;
+    }
+
+    private static void RunOnce()
+    {
+        // 防止 Editor 多次调用 delayCall 时重复执行
+        if (SessionState.GetBool(SessionKey_RanOnce, false))
+        {
+            // 域重载会重置 SessionState，所以这里命中"已执行"意味着确实是本次会话重复调用
+            return;
+        }
+        SessionState.SetBool(SessionKey_RanOnce, true);
+
+        try
+        {
+            int restoredRenderers = FixRendererReferences();
+            int cleanedFields = CleanObsoleteFields();
+
+            if (restoredRenderers > 0 || cleanedFields > 0)
+            {
+                Debug.Log(
+                    $"[LatticeModifier] 启动时自动维护完成：" +
+                    $"还原 Renderer 引用 {restoredRenderers} 个，清理旧字段 {cleanedFields} 处。" +
+                    (restoredRenderers > 0 ? " 建议按 Ctrl+S 保存场景。" : ""));
+            }
+        }
+        catch (System.Exception ex)
+        {
+            // 任何意外都不应阻塞 Editor 启动
+            Debug.LogWarning($"[LatticeModifier] 启动时自动维护出现异常，已忽略: {ex.Message}");
+        }
+    }
+
+    /// 职责 A：扫描所有已加载场景中已初始化的晶格，把 Renderer.sharedMesh 还原为 originalMesh。
+    /// 复用 LatticeSceneWalker.ForEachInitialized，逻辑和 OnPreprocessBuild / OnWillSaveAssets 一致。
+    private static int FixRendererReferences()
+    {
+        int n = LatticeSceneWalker.ForEachInitialized(lm =>
+        {
+            // v3.10：启动时先迁移修复旧晶格（清理污染 originalMesh + 重新缓存可序列化拓扑）
+            lm.MigrateAndRepair();
+
+            // 启动时不走 Undo 栈（和 OnPreprocessBuild 一致）：自动维护动作不应被 Ctrl+Z 撤销
+            EditorUtility.SetDirty(lm);
+            lm.RestoreRenderersToOriginal();
+            // v3.9：对 Renderer/MeshFilter 也标脏，确保场景序列化拿到还原后的引用
+            foreach (var rend in lm.GetActiveRenderers())
+            {
+                if (rend == null) continue;
+                EditorUtility.SetDirty(rend);
+                var mf = rend.GetComponent<MeshFilter>();
+                if (mf != null) EditorUtility.SetDirty(mf);
+            }
+        });
+        return n;
+    }
+
+    /// 职责 B：检测并诊断 v3.7 之前旧版本残留 + 异常状态。
+    ///
+    /// 重要限制：SerializedObject.FindProperty 只能找到"当前类声明的字段"，
+    /// 对于"已删除的字段"（如 initLatticeLocalToWorld）它返回 null —— Unity 不会
+    /// 通过 SerializedObject API 提供"清除 yaml 里残留但类里没声明的字段"的能力。
+    /// 那些残留数据会被 Unity 反序列化时静默忽略并产生 warning（"field X not found"），
+    /// 占据场景文件少量字节，不会导致运行错误。
+    ///
+    /// 因此职责 B 的实际作用是：
+    /// 1. 扫描每个晶格，检测其"实际状态"是否健康（已初始化、Renderer 引用正常、控制点数组长度匹配）
+    /// 2. 对不健康的晶格打 LogWarning，提示用户在哪个场景的哪个物体需要手动检查
+    /// 3. 累计统计，作为 Editor 启动诊断报告的一部分
+    private static int CleanObsoleteFields()
+    {
+        int issueCount = 0;
+        var issues = new System.Text.StringBuilder();
+
+        for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+        {
+            var scn = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+            if (!scn.isLoaded) continue;
+
+            foreach (var root in scn.GetRootGameObjects())
+            {
+                var lattices = root.GetComponentsInChildren<LatticeModifier>(true);
+                foreach (var lm in lattices)
+                {
+                    if (lm == null) continue;
+                    var issues2 = DiagnoseInstance(lm, scn.name);
+                    if (issues2 != null)
+                    {
+                        issues.AppendLine(issues2);
+                        issueCount++;
+                    }
+                }
+            }
+        }
+
+        if (issueCount > 0)
+        {
+            Debug.LogWarning(
+                "[LatticeModifier] 启动诊断：检测到以下晶格存在潜在问题，建议在 Inspector 中检查：\n" +
+                issues.ToString() +
+                "\n（如果模型在 Editor 中正常显示但打包后不显示，请参考 README 中的 v3.8 修复说明。）");
+        }
+
+        return issueCount;
+    }
+
+    /// 对单个 LatticeModifier 实例做健康检查。返回 null 表示健康；否则返回问题描述文本。
+    /// 检查项：
+    /// 1. controlPoints 数组长度是否匹配当前 divisions（段数修改后未重新初始化）
+    /// 2. deformTargets 里的 renderer 引用是否还有效
+    /// 3. 任何 dt 的 originalVertices 是否为空（说明源 Mesh 不可读且 Instantiate/BakeMesh 都失败）
+    /// 4. 任何 dt 的 originalMesh 是否指向 _LatticeDeform_ 后缀的运行时 Mesh（说明拍快照时机错误）
+    private static string DiagnoseInstance(LatticeModifier lm, string sceneName)
+    {
+        if (lm == null) return null;
+        var problems = new System.Text.StringBuilder();
+
+        try
+        {
+            // 1. 段数修改后未重新初始化
+            if (lm.IsInitialized && lm.controlPoints != null)
+            {
+                int expected = lm.PointCountX * lm.PointCountY * lm.PointCountZ;
+                if (lm.controlPoints.Length != expected)
+                {
+                    problems.AppendLine(
+                        $"  - 场景 [{sceneName}] 中 '{lm.name}' 的 controlPoints 长度 {lm.controlPoints.Length} " +
+                        $"与段数配置 {lm.divisionsX}×{lm.divisionsY}×{lm.divisionsZ} (期望 {expected}) 不匹配。" +
+                        $"建议：在 Inspector 中点击「重新初始化」按钮。");
+                }
+            }
+
+            // 通过反射读取 deformTargets（private 字段），不需要为了诊断破坏封装
+            var dtField = typeof(LatticeModifier).GetField("deformTargets",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (dtField != null)
+            {
+                var dts = dtField.GetValue(lm) as System.Collections.IList;
+                if (dts != null)
+                {
+                    for (int i = 0; i < dts.Count; i++)
+                    {
+                        var dt = dts[i];
+                        if (dt == null) continue;
+
+                        // 反射读 renderer / originalMesh / originalVertices
+                        var rendField = dt.GetType().GetField("renderer");
+                        var origMeshField = dt.GetType().GetField("originalMesh");
+                        var origVertsField = dt.GetType().GetField("originalVertices");
+
+                        var rend = rendField?.GetValue(dt) as Renderer;
+                        var origMesh = origMeshField?.GetValue(dt) as Mesh;
+                        var origVerts = origVertsField?.GetValue(dt) as Vector3[];
+
+                        string targetName = rend != null ? rend.name : "<null>";
+
+                        // 2. renderer 引用丢失
+                        if (rend == null)
+                        {
+                            problems.AppendLine(
+                                $"  - 场景 [{sceneName}] 中 '{lm.name}' 的变形目标 #{i} Renderer 引用已丢失（目标对象被删除？）。");
+                            continue;
+                        }
+
+                        // 3. originalVertices 为空
+                        if (origVerts == null || origVerts.Length == 0)
+                        {
+                            problems.AppendLine(
+                                $"  - 场景 [{sceneName}] 中 '{lm.name}' → '{targetName}' 的 originalVertices 为空。" +
+                                $"说明源 Mesh 不可读且 Instantiate/BakeMesh 都失败。建议：在 FBX 导入设置中勾选 Read/Write Enabled。");
+                        }
+
+                        // 4. originalMesh 指向运行时 deform Mesh（拍快照时机错误）
+                        if (origMesh != null && origMesh.name.Contains("_LatticeDeform_"))
+                        {
+                            problems.AppendLine(
+                                $"  - 场景 [{sceneName}] 中 '{lm.name}' → '{targetName}' 的 originalMesh 引用指向运行时变形 Mesh。" +
+                                $"说明原始资产引用丢失。建议：选中晶格 → 点击「重新初始化」按钮。");
+                        }
+                    }
+                }
+            }
+        }
+        catch (System.Exception ex)
+        {
+            problems.AppendLine($"  - 场景 [{sceneName}] 中 '{lm.name}' 诊断时异常: {ex.Message}");
+        }
+
+        return problems.Length > 0 ? problems.ToString() : null;
     }
 }

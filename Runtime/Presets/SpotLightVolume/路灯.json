@@ -1,12 +1,15 @@
 {
     "lightSourceRadius": 0.3199999928474426,
     "fallOffStart": 0.0,
-    "maxDistance": 3.799999952316284,
-    "edgeFade": 0.3440000116825104,
-    "endFade": 0.9580000042915344,
-    "glareFrontal": 0.5,
-    "glareBehind": 0.30000001192092898,
-    "intensity": 1.9299999475479127,
+    "maxDistance": 4.139999866485596,
+    "edgeFade": 1.003999948501587,
+    "endFade": 0.7960000038146973,
+    "glareFrontal": 0.5640000104904175,
+    "glareBehind": 0.5249999761581421,
+    "intensity": 0.7099999785423279,
+    "startBoostIntensity": 0.7599999904632568,
+    "startBoostRange": 1.340000033378601,
+    "centerFade": 0.6000000238418579,
     "colorFromLight": true,
     "volumeColor": [
         0.5842892527580261,
@@ -16,17 +19,20 @@
     ],
     "blendMode": 0,
     "coneSides": 12,
-    "coneSegments": 2,
+    "coneSegments": 1,
     "enableOcclusion": false,
     "occlusionLayerMask": -1,
     "occlusionUpdateInterval": 0.05900000035762787,
     "occlusionDetectTriggers": false,
-    "spotAngle": 79.4151840209961,
-    "innerSpotAngle": 49.11046600341797,
+    "spotAngle": 88.53233337402344,
+    "innerSpotAngle": 58.22761535644531,
     "lightColor": [
         0.9583560228347778,
         1.0,
         0.5801886916160584,
         1.0
-    ]
+    ],
+    "enableMask": false,
+    "maskIntensity": 0.574999988079071,
+    "maskTexturePath": "Assets/Art/UIResource/Icon/ControllerHintSubmit.png"
 }

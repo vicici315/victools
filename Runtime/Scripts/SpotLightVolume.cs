@@ -10,8 +10,10 @@
 /// - 不影响原始光柱衰减、双面显示、深度遮挡等效果
 /// SpotLightVolume v6.0 重构代码，改进重复的GetComponent调用，消除 UpdateGeometry 和 UpdateMaterial 中的重复计算
 /// SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体
+/// SpotLightVolume v6.2 - 蒙版投影：新增maskTexture蒙版纹理模拟窗格光柱投影，沿光轴等比投射到锥体横截面，支持enableMask开关和maskIntensity强度控制
 
 using UnityEngine;
+using System.Collections.Generic;
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -68,6 +70,18 @@ namespace Vic.Runtime
         [Range(0f, 5f)]
         public float intensity = 1f;
 
+        [Tooltip("起始亮度增强幅度: 光柱起始处额外提亮")]
+        [Range(0f, 8f)]
+        public float startBoostIntensity = 1.5f;
+
+        [Tooltip("起始亮度范围: 增亮区域的绝对距离，值越小亮区越短")]
+        [Range(0.01f, 15f)]
+        public float startBoostRange = 1f;
+
+        [Tooltip("中心渐变距离: 控制中心高亮向外扩散的范围，值越小高亮越集中")]
+        [Range(0.01f, 1f)]
+        public float centerFade = 0.5f;
+
         [Tooltip("跟随灯光颜色")]
         public bool colorFromLight = true;
 
@@ -100,6 +114,17 @@ namespace Vic.Runtime
         [Tooltip("是否检测Trigger碰撞体（角色可能使用Trigger类型的Collider）")]
         public bool occlusionDetectTriggers = false;
 
+        [Header("蒙版投影")]
+        [Tooltip("启用蒙版纹理投影")]
+        public bool enableMask = false;
+
+        [Tooltip("蒙版纹理（模拟窗格光柱投影，黑色区域无光）")]
+        public Texture2D maskTexture;
+
+        [Tooltip("蒙版强度: 0=无蒙版效果, 1=完全按蒙版遮挡")]
+        [Range(0f, 1f)]
+        public float maskIntensity = 1f;
+
         #endregion
 
         #region 内部状态
@@ -120,10 +145,10 @@ namespace Vic.Runtime
         private int _cachedSides;
         private int _cachedSegments;
 
-        // 共享归一化Mesh缓存（同sides+segments的beam共享一个mesh）
-        private static Mesh _sharedMesh;
-        private static int _sharedMeshSides;
-        private static int _sharedMeshSegments;
+        // 共享归一化Mesh缓存：按 (sides, segments) 配置缓存，每种配置一份、永久复用。
+        // v6.3：之前用单个静态 _sharedMesh，配置变化时直接覆盖且不销毁旧 Mesh → 泄漏；
+        // 多个不同配置的实例还会反复"抢占"重建。改为字典后每配置一份，不泄漏不抢占。
+        private static readonly Dictionary<long, Mesh> _sharedMeshes = new Dictionary<long, Mesh>();
 
         #endregion
 
@@ -143,6 +168,11 @@ namespace Vic.Runtime
             public static readonly int ConeRadiusEnd = Shader.PropertyToID("_ConeRadiusEnd");
             public static readonly int ConeSlopeCosSin = Shader.PropertyToID("_ConeSlopeCosSin");
             public static readonly int ClipDistance = Shader.PropertyToID("_ClipDistance");
+            public static readonly int StartBoostIntensity = Shader.PropertyToID("_StartBoostIntensity");
+            public static readonly int StartBoostRange = Shader.PropertyToID("_StartBoostRange");
+            public static readonly int CenterFade = Shader.PropertyToID("_CenterFade");
+            public static readonly int MaskTex = Shader.PropertyToID("_MaskTex");
+            public static readonly int MaskIntensity = Shader.PropertyToID("_MaskIntensity");
         }
 
         #endregion
@@ -242,7 +272,7 @@ namespace Vic.Runtime
             }
         }
 
-        /// <summary>更新几何体：使用归一化Mesh + localScale缩放</summary>
+        /// 更新几何体：使用归一化Mesh + localScale缩放
         private void UpdateGeometry()
         {
             if (_light == null || _light.type != LightType.Spot) return;
@@ -261,7 +291,7 @@ namespace Vic.Runtime
                 _volumeChild.transform.localScale = new Vector3(maxRadius, maxRadius, maxDistance);
         }
 
-        /// <summary>更新材质属性</summary>
+        /// 更新材质属性
         private void UpdateMaterial()
         {
             if (_meshRenderer == null || _light == null) return;
@@ -342,13 +372,28 @@ namespace Vic.Runtime
             _material.SetFloat(ShaderIDs.ConeRadiusEnd, radiusEnd);
             _material.SetVector(ShaderIDs.ConeSlopeCosSin, new Vector4(Mathf.Cos(slopeAngle), Mathf.Sin(slopeAngle), 0, 0));
             _material.SetFloat(ShaderIDs.ClipDistance, _clipDistance);
+            _material.SetFloat(ShaderIDs.StartBoostIntensity, startBoostIntensity);
+            _material.SetFloat(ShaderIDs.StartBoostRange, startBoostRange);
+            _material.SetFloat(ShaderIDs.CenterFade, centerFade);
+
+            // 蒙版投影
+            if (enableMask && maskTexture != null)
+            {
+                _material.SetTexture(ShaderIDs.MaskTex, maskTexture);
+                _material.SetFloat(ShaderIDs.MaskIntensity, maskIntensity);
+            }
+            else
+            {
+                _material.SetTexture(ShaderIDs.MaskTex, Texture2D.whiteTexture);
+                _material.SetFloat(ShaderIDs.MaskIntensity, 0f);
+            }
         }
 
         #endregion
 
         #region 几何体辅助
 
-        /// <summary>计算光锥末端半径</summary>
+        /// 计算光锥末端半径
         private float ComputeRadiusEnd()
         {
             return maxDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
@@ -407,20 +452,18 @@ namespace Vic.Runtime
 
         private static Mesh GetSharedNormalizedMesh(int sides, int segments)
         {
-            if (_sharedMesh != null && _sharedMeshSides == sides && _sharedMeshSegments == segments)
-                return _sharedMesh;
+            long key = ((long)sides << 32) | (uint)segments;
+            if (_sharedMeshes.TryGetValue(key, out var mesh) && mesh != null)
+                return mesh;
 
-            _sharedMesh = GenerateNormalizedConeMesh(sides, segments);
-            _sharedMeshSides = sides;
-            _sharedMeshSegments = segments;
-            return _sharedMesh;
+            mesh = GenerateNormalizedConeMesh(sides, segments);
+            _sharedMeshes[key] = mesh;
+            return mesh;
         }
 
-        /// <summary>
         /// 生成归一化锥形Mesh：XY在[-1,1], Z在[0,1]
         /// 包含锥面 + 前Cap(Z=0) + 后Cap(Z=1)
         /// UV.x标记：0=锥面, 1=cap
-        /// </summary>
         private static Mesh GenerateNormalizedConeMesh(int sides, int segments)
         {
             int ringCount = segments + 2;

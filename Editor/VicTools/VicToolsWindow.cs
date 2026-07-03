@@ -1711,6 +1711,7 @@ namespace VicTools
                 new VicDropdownItemData("TextureGaussianBlur（ScreenColor高斯模糊材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL")),
                 new VicDropdownItemData("Outline（普通描边材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Outline/Outline")),
                 new VicDropdownItemData("OutlineZOffset（轮廓描边材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
+                VicDropdownItemData.Separator(),
                 new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
             };
         }
@@ -1878,13 +1879,13 @@ namespace VicTools
                 return;
             }
 
-            // 收集所有选中对象的 Renderer（含子物体）
+            // 收集所有选中对象的 Renderer（含激活的子物体，未激活的不纳入）
             var allRenderers = new System.Collections.Generic.List<Renderer>();
             foreach (var sel in selectedObjects)
             {
                 var rend = sel.GetComponent<Renderer>();
-                if (rend != null && !allRenderers.Contains(rend)) allRenderers.Add(rend);
-                var childRenderers = sel.GetComponentsInChildren<Renderer>(true);
+                if (rend != null && rend.gameObject.activeInHierarchy && !allRenderers.Contains(rend)) allRenderers.Add(rend);
+                var childRenderers = sel.GetComponentsInChildren<Renderer>(false);
                 foreach (var cr in childRenderers)
                 {
                     if (!allRenderers.Contains(cr)) allRenderers.Add(cr);
@@ -1895,6 +1896,44 @@ namespace VicTools
             {
                 EditorUtility.DisplayDialog("提示", "选中的对象及其子物体都没有 Renderer 组件", "确定");
                 return;
+            }
+
+            // v3.23.3：自动检测 + 勾选源 FBX 资产的 Read/Write Enabled。
+            // 根因：晶格变形的可写 Mesh 走 Instantiate 路径要求源 Mesh 可读（isReadable=true），
+            // 不可读 Mesh 会改走 CreateDeformMeshFromCache 路径（用缓存的 vertices/triangles/normals
+            // 等通道重建），重建的 Mesh 缺少 boneWeights/bindposes/blendShapes 等完整通道，
+            // SkinnedMeshRenderer 渲染时蒙皮数据不全 → 模型看不到/错位。
+            // 这里遍历所有 Renderer's sharedMesh，向上溯源到 FBX 资产，自动勾选
+            // ModelImporter.isReadable=true 并 SaveAndReimport，最后汇总报告。
+            var report = new System.Text.StringBuilder();
+            var processedPaths = new HashSet<string>();
+            foreach (var rend in allRenderers)
+            {
+                if (rend == null) continue;
+                var sm = (rend is SkinnedMeshRenderer smr) ? smr.sharedMesh
+                       : (rend.TryGetComponent<MeshFilter>(out var mf) ? mf.sharedMesh : null);
+                if (sm == null) continue;
+                string assetPath = AssetDatabase.GetAssetPath(sm);
+                if (string.IsNullOrEmpty(assetPath)) continue;  // 运行时 Mesh，无源资产
+                if (!processedPaths.Add(assetPath)) continue;   // 同源 FBX 只处理一次
+                var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+                if (importer == null) continue;  // 不是 ModelImporter 类型（可能是 .asset Mesh）
+                if (importer.isReadable) continue; // 已勾选，跳过
+                importer.isReadable = true;
+                importer.SaveAndReimport();
+                report.AppendLine($"  ✓ {assetPath}");
+            }
+            if (report.Length > 0)
+            {
+                int n = processedPaths.Count;
+                Debug.Log($"[VicTools] 已自动勾选 {n} 个源 FBX 的 Read/Write Enabled：\n{report}\n" +
+                          "（晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 完整通道）");
+                EditorUtility.DisplayDialog("Read/Write 已自动勾选",
+                    $"已自动勾选 {n} 个源 FBX 的 Read/Write Enabled：\n\n{report}\n\n" +
+                    "原因：晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 等完整通道，\n" +
+                    "否则 SkinnedMeshRenderer 渲染时蒙皮数据不全导致模型不可见。\n\n" +
+                    "提示：如不希望自动修改 FBX 资产，请在创建后手动取消勾选。",
+                    "确定");
             }
 
             // 用第一个选中对象的位置和名称
@@ -1917,22 +1956,17 @@ namespace VicTools
 
             if (latticeType != null)
             {
+                // v3.9：统一使用 manualRenderers 作为唯一目标来源
+                // 流程：只创建空壳 GameObject + 挂 LatticeModifier 组件 + 反射设 manualRenderers/targetRoot。
+                // 故意不调 InitializeLattice / ApplyDeformation — 创建后用户需要先在 Inspector
+                // 设置晶格段数（X/Y/Z 段数）、羽化、实时更新等参数，再手动触发"初始化晶格"按钮。
+                // 立即初始化会跳用户参数设置阶段，模型可能因"未配置控制点"看似消失。
                 var lattice = latticeObj.AddComponent(latticeType);
-
-                if (allRenderers.Count == 1)
+                var manualField = latticeType.GetField("manualRenderers");
+                if (manualField != null) manualField.SetValue(lattice, allRenderers);
+                // targetRoot 仅在多个对象有共同父级时设置（用于 RepairMissingBindings 的 fallback）
+                if (selectedObjects.Length > 1 || allRenderers.Count > 1)
                 {
-                    // 单个 Renderer → 单目标模式
-                    var field = latticeType.GetField("targetRenderer");
-                    if (field != null) field.SetValue(lattice, allRenderers[0]);
-                }
-                else
-                {
-                    // 多个 Renderer → 多目标模式，使用手动列表
-                    var modeField = latticeType.GetField("targetMode");
-                    if (modeField != null) modeField.SetValue(lattice, 1); // MultiRenderer = 1
-                    var manualField = latticeType.GetField("manualRenderers");
-                    if (manualField != null) manualField.SetValue(lattice, allRenderers);
-                    // 自动将选中的第一个对象设为多目标根节点
                     var rootField = latticeType.GetField("targetRoot");
                     if (rootField != null) rootField.SetValue(lattice, primary.transform);
                 }

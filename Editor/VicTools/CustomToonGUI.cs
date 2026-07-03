@@ -43,7 +43,6 @@ public class CustomToonGUI : ShaderGUI
         materialEditor.ShaderProperty(FindProperty("_ToonCompression", properties), "明暗压缩");
         materialEditor.ShaderProperty(FindProperty("_ToonContrast", properties), "明暗对比");
 
-
         // ── 亮部边缘光 ──
         EditorGUILayout.Space(6);
         EditorGUILayout.LabelField("亮部边缘光 (Rim)", EditorStyles.boldLabel);

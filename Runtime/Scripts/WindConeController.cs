@@ -118,7 +118,7 @@ public class WindConeController : MonoBehaviour
         foreach (Renderer renderer in targetRenderers)
         {
             if (renderer == null) continue;
-            renderer.SetPropertyBlock(new MaterialPropertyBlock());
+            renderer.SetPropertyBlock(null); // 清除覆盖，不分配新的 MaterialPropertyBlock
         }
     }
     
@@ -263,7 +263,7 @@ public class WindConeController : MonoBehaviour
                 
                 if (!enableWindCone)
                 {
-                    renderer.SetPropertyBlock(new MaterialPropertyBlock());
+                    renderer.SetPropertyBlock(null); // 每帧调用，用 null 清除，避免每帧分配 MaterialPropertyBlock 泄漏原生内存
                     continue;
                 }
                 

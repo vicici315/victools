@@ -18,6 +18,11 @@ Shader "Hidden/VicTools/SpotLightVolume"
         _ConeRadiusEnd ("锥体末端半径", Float) = 3
         _ConeSlopeCosSin ("锥面斜率CosSin", Vector) = (1, 0, 0, 0)
         _ClipDistance ("射线截断距离", Float) = -1
+        _StartBoostIntensity ("起始亮度", Range(0, 8)) = 1.5
+        _StartBoostRange ("起始亮度范围", Range(0.01, 5)) = 1.0
+        _CenterFade ("中心渐变距离", Range(0.01, 1)) = 0.5
+        _MaskTex ("蒙版纹理", 2D) = "white" {}
+        _MaskIntensity ("蒙版强度", Range(0, 1)) = 1
 
         [HideInInspector] _SrcBlend ("SrcBlend", Int) = 1
         [HideInInspector] _DstBlend ("DstBlend", Int) = 1
@@ -44,7 +49,8 @@ Shader "Hidden/VicTools/SpotLightVolume"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #pragma multi_compile_fog
+            // 体积光柱本身不参与场景雾，避免深度雾在圆锥网格边缘形成硬边界
+            // 移除 #pragma multi_compile_fog，使 URP 不为该 Pass 生成雾效变体
             #pragma shader_feature_local _BLEND_ADDITIVE _BLEND_SOFTADD _BLEND_ALPHA
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"

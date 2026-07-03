@@ -10,6 +10,19 @@
 //      - Raymarching循环中，采样点Z接近_ClipDistance时平滑羽化淡出（30%范围渐变）
 //      - 衰减计算始终基于原始_FallOffEnd，截断不影响光柱亮度分布
 //      - 完整保留v4.1的所有原始效果：双面显示、深度tOut截断、ZTest Always、Cull Off
+// v5.1 射线遮挡截断：
+//      - 添加_ClipDistance参数，用于C#端Physics.Raycast返回的截断距离
+//      - 添加_ClipDistance参数，用于C#端Physics.Raycast返回的截断距离
+//      - 添加_ClipDistance参数，用于C#端Physics.Raycast返回的截断距离
+// v5.2 排除雾影响避免聚光灯体积光模拟边缘在深度雾中出现硬边。
+// v6.2 蒙版投影：新增_MaskTex蒙版纹理和_MaskIntensity，在raymarching中逐步采样实现窗格光柱投影效果
+// v6.3 起始增亮与中心渐变优化：
+//      - 新增_StartBoostIntensity（起始亮度）和_StartBoostRange（起始亮度范围）参数
+//      - 起始增亮基于光轴实际Z深度计算，使用smoothstep实现自然渐变无断层
+//      - 增亮直接融入_Intensity倍率，效果明显可控
+//      - 新增_CenterFade（中心渐变距离）参数，控制光轴中心高亮向外扩散的范围
+//      - 所有新参数纳入存读档系统
+
 
 #ifndef SPOT_LIGHT_VOLUME_CORE_INCLUDED
 #define SPOT_LIGHT_VOLUME_CORE_INCLUDED
@@ -27,7 +40,8 @@ struct Varyings
     float3 cameraPosOS : TEXCOORD1;
     float4 screenPos : TEXCOORD2;
     float3 extraData : TEXCOORD3; // x=eyeDepth
-    float fogFactor : TEXCOORD4;
+    // 体积光柱不参与场景雾，不再输出 fogFactor 插值，
+    // 否则在浓雾下 Mesh 硬边界会出现明显的"圆锥轮廓"伪像
 };
 
 CBUFFER_START(UnityPerMaterial)
@@ -43,7 +57,14 @@ CBUFFER_START(UnityPerMaterial)
     float _ConeRadiusEnd;
     float2 _ConeSlopeCosSin;
     float _ClipDistance;  // C#端射线检测得到的截断距离, -1表示无遮挡
+    half _StartBoostIntensity;  // 起始亮度增强幅度
+    float _StartBoostRange;     // 起始亮度范围（绝对距离）
+    half _CenterFade;           // 中心高亮渐变距离（0=无中心高亮，1=全锥体范围渐变）
+    half _MaskIntensity;  // 蒙版纹理影响强度
 CBUFFER_END
+
+TEXTURE2D(_MaskTex);
+SAMPLER(sampler_MaskTex);
 
 // === Ray-Cone Intersection (Inigo Quilez / VLB) ===
 float rayConeIntersect(float3 rayOrigin, float3 rayDir, float fallOffEnd, float radiusStart, float radiusEnd)
@@ -128,7 +149,7 @@ Varyings vert(Attributes input)
     o.extraData.y = 0;
     o.extraData.z = 0;
 
-    o.fogFactor = ComputeFogFactor(o.positionCS.z);
+    // 不再调用 ComputeFogFactor / MixFog，避免深度雾在圆锥网格硬边界处形成伪像
     return o;
 }
 
@@ -199,8 +220,10 @@ half4 frag(Varyings input) : SV_Target
         float attenLinear = 1.0 - saturate((sampleZ - _FallOffStart) * invRange);
         float atten = attenLinear * attenLinear;
 
-        // 末端羽化
+        // 深度比例
         float depthRatio = sampleZ * invFallOffEnd;
+
+        // 末端羽化
         atten *= 1.0 - saturate((depthRatio - endFadeStart) * invEndFade);
 
         // 径向衰减
@@ -208,7 +231,21 @@ half4 frag(Varyings input) : SV_Target
         float distFromAxis = length(samplePos.xy);
         float radialFade = saturate((radiusAtZ - distFromAxis) * invEdgeFade / max(radiusAtZ, 0.001));
 
-        atten *= radialFade;
+        // 中心高亮渐变：从轴线向外按_CenterFade控制渐变距离
+        float centerRatio = distFromAxis / max(radiusAtZ, 0.001);
+        float centerHighlight = 1.0 + (1.0 - saturate(centerRatio / max(_CenterFade, 0.01)));
+
+        atten *= radialFade * centerHighlight * centerHighlight;
+
+        // 蒙版纹理采样（沿光轴投影，将采样点XY归一化到该深度处的锥体横截面）
+        if (_MaskIntensity > 0.001)
+        {
+            float2 maskUV = samplePos.xy / max(radiusAtZ, 0.001) * 0.5 + 0.5;
+            maskUV = saturate(maskUV); // clamp防止超出范围
+            half maskValue = SAMPLE_TEXTURE2D_LOD(_MaskTex, sampler_MaskTex, maskUV, 0).r;
+            atten *= lerp(1.0, maskValue, _MaskIntensity);
+        }
+
         totalIntensity += atten * valid;
 
         samplePos += stepVec;
@@ -218,13 +255,20 @@ half4 frag(Varyings input) : SV_Target
     float rayLength = tOut - tIn;
     totalIntensity = (totalIntensity / float(STEPS)) * saturate(rayLength / max(rayLength + 1.0, 0.001));
 
+    // 起始增亮：基于射线在光轴上的实际Z深度，使用smoothstep实现自然渐变避免断层
+    float zIn = cameraPosOS.z + rayDir.z * tIn;
+    float zOut = cameraPosOS.z + rayDir.z * tOut;
+    float avgZ = (zIn + zOut) * 0.5;
+    float boostFalloff = 1.0 - smoothstep(0.0, max(_StartBoostRange, 0.01), avgZ);
+    float finalIntensity = _Intensity * (1.0 + boostFalloff * _StartBoostIntensity);
+
     // 正面/背面眩光
     float facingLight = saturate(-rayDir.z);
     float facingAway = saturate(rayDir.z);
     totalIntensity *= (1.0 + facingLight * _GlareFrontal * 2.0 + facingAway * _GlareBehind);
 
     // 最终
-    totalIntensity *= _Intensity;
+    totalIntensity *= finalIntensity;
 
     half4 color = half4(_VolumeColor.rgb, 1.0);
 
@@ -236,7 +280,7 @@ half4 frag(Varyings input) : SV_Target
         color.a = 1.0;
     #endif
 
-    color.rgb = MixFog(color.rgb, input.fogFactor);
+    // 体积光柱不应用场景雾，避免在圆锥 Mesh 硬边界上出现深度雾伪像
     return color;
 }
 

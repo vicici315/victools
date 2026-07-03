@@ -288,7 +288,12 @@ public class ComputeBufferLightManager : MonoBehaviour
         _updateInterval = 1f / updateFrequency;
         _spotLightUpdateInterval = 1f / spotLightUpdateFrequency;
         _editorUpdateInterval = _updateInterval; // 编辑器模式下使用相同的更新间隔
-        
+
+        // ● 关键修复：重建前先释放已存在的缓冲区，避免重复调用 InitializeComputeBuffer
+        // （重新初始化 / 编辑器刷新 / 安全兜底路径）时泄漏旧的 GraphicsBuffer（原生 GPU 内存）。
+        if (_lightsBuffer != null) { _lightsBuffer.Release(); _lightsBuffer = null; }
+        if (_spotLightsBuffer != null) { _spotLightsBuffer.Release(); _spotLightsBuffer = null; }
+
         // ● 计算结构体大小，确保内存对齐
         int pointLightStride = System.Runtime.InteropServices.Marshal.SizeOf<CustomPointLight>();
         int spotLightStride = System.Runtime.InteropServices.Marshal.SizeOf<CustomSpotLight>();

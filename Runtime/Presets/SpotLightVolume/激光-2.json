@@ -1,0 +1,38 @@
+{
+    "lightSourceRadius": 0.07999999821186066,
+    "fallOffStart": 0.0,
+    "maxDistance": 44.4900016784668,
+    "edgeFade": 2.0,
+    "endFade": 0.5419999957084656,
+    "glareFrontal": 0.3400000035762787,
+    "glareBehind": 0.1080000028014183,
+    "intensity": 1.7799999713897706,
+    "startBoostIntensity": 5.420000076293945,
+    "startBoostRange": 0.5600000023841858,
+    "centerFade": 0.07500000298023224,
+    "colorFromLight": true,
+    "volumeColor": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+    ],
+    "blendMode": 0,
+    "coneSides": 12,
+    "coneSegments": 1,
+    "enableOcclusion": true,
+    "occlusionLayerMask": 487,
+    "occlusionUpdateInterval": 0.08500000089406967,
+    "occlusionDetectTriggers": false,
+    "spotAngle": 1.0,
+    "innerSpotAngle": 0.0,
+    "lightColor": [
+        0.0,
+        1.0,
+        0.1076204776763916,
+        1.0
+    ],
+    "enableMask": true,
+    "maskIntensity": 1.0,
+    "maskTexturePath": "Assets/Art/EffectResource/Monster/SmallRobot_02/Textures/43_rider_skill01_guangquan01.tga"
+}

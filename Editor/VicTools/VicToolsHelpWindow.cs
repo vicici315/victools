@@ -66,6 +66,18 @@ namespace VicTools
             
             // 版本信息
             DrawSection("版本信息", new string[] {
+                "■ v2.10.3",
+"- 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid。",
+"- LatticeModifier v3.23 性能 + 内存根治（针对 26 Renderer 共享 LatticeModifier 场景，端到端治理玩家端内存增长）。",
+                "■ v2.10.2",
+"- SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体。",
+"- SpotLightVolume v6.2 - 蒙版投影：新增maskTexture蒙版纹理模拟窗格光柱投影，沿光轴等比投射到锥体横截面，支持enableMask开关和maskIntensity强度控制。",
+"- SpotLightVolumeCore v5.2 解决聚光灯体积光模拟边缘在深度雾中出现硬边问题。",
+"- LatticeModifier v3.10 修复「单个静态对象打包后不可见 / 材质变灰」的真正根因——运行时 Mesh 可读性，取消目标模式（SingleRenderer/MultiRenderer），单/多对象统一处理 + 修复污染。",
+"- LatticeModifier v3.11 修复「目标对象带缩放时晶格变形被放大（叠加）」。",
+"- LatticeModifier v3.12：缓存蒙皮数据（仅当确为带蒙皮目标时有意义；非蒙皮 Mesh 这些为空数组）。",
+"- LatticeModifier v3.13：取消蒙皮双缓冲 + 每帧重新赋值 sharedMesh。",
+"- LatticeModifier v3.14：变形性能优化，修复运行时帧率骤降（修正缓存网格命名避免每帧重建、消除 Mathf.Pow、权重缓存、变更检测改用相对矩阵刚性同移零开销）。",
                 "■ v2.10.1",
 "- 主菜单使用AdvancedDropdown菜单系统支持图标，添加相关菜单图标。",
 "- LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。",

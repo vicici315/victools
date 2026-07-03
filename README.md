@@ -4,10 +4,52 @@
 
 VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的场景管理、材质查找、资源批量处理等功能，能显著提升美术及程序员在 Unity 引擎中的开发效率。该工具集包含自定义着色器 PBR_Mobile 及相关辅助脚本工具。
 
-**类别**: Editor  
+**类别**: Editor
 **文档链接**: [飞书文档](https://my.feishu.cn/wiki/GVDYwV0TFiEPl2kTJzWcwcI6n6d)
 
 ## <更新日志>
+
+### 版本 2.10.2
+
+- SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体。
+
+- SpotLightVolume v6.2 - 蒙版投影：新增maskTexture蒙版纹理模拟窗格光柱投影，沿光轴等比投射到锥体横截面，支持enableMask开关和maskIntensity强度控制。
+  ![image-20260629101349789](./README.assets/image-20260629101349789.png)
+
+- SpotLightVolumeCore v5.2 解决聚光灯体积光模拟边缘在深度雾中出现硬边问题。
+  ![image-20260626134001662](./README.assets/image-20260626134001662.png)
+
+- LatticeModifier v3.10 修复「单个静态对象打包后不可见 / 材质变灰」的真正根因——运行时 Mesh 可读性，取消目标模式（SingleRenderer/MultiRenderer），单/多对象统一处理 + 修复污染。
+- LatticeModifier v3.11 修复「目标对象带缩放时晶格变形被放大（叠加）」。
+- LatticeModifier v3.12：缓存蒙皮数据（仅当确为带蒙皮目标时有意义；非蒙皮 Mesh 这些为空数组）。
+- LatticeModifier v3.13：取消蒙皮双缓冲 + 每帧重新赋值 sharedMesh。
+- LatticeModifier v3.14：变形性能优化，修复运行时帧率骤降（修正缓存网格命名避免每帧重建、消除 Mathf.Pow、权重缓存、变更检测改用相对矩阵刚性同移零开销）。
+
+
+### 版本 2.10.1
+
+- 主菜单使用AdvancedDropdown菜单系统支持图标，添加相关菜单图标，支持菜单搜索。
+  ![image-20260618164421017](./README.assets/image-20260618164421017.png)
+
+- LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。
+
+- LatticeModifier 3.3 修复轴心旋转后变形方向错位：统一使用当前晶格变换计算参数坐标，轴心操作同步更新内部数据；修复Undo支持（记录子CP Transform）；羽化基于当前晶格包围盒从中心向边缘衰减。
+  
+- 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。
+
+
+
+### 版本 2.10.0
+
+- LatticeModifier 3.0 重构：引入 DeformTarget 封装单 Renderer 变形管线，消除 Single/Multi 大量重复逻辑，添加【链接选中对象到晶格】功能按钮。
+
+- LatticeModifierEditor 3.1 新增多目标模式【修复丢失绑定】按钮，自动检测并重新链接列表中未绑定到晶格的 Renderer。
+
+- SmoothMeshNormal_1.6 优化【选择描边对象】按钮：选中 _OL 对象后立即刷新列表，保留所有操作按钮控件，固定平滑mesh后缀名。
+
+- 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh。
+
+
 
 ### 版本 2.9.8
 

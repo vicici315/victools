@@ -844,7 +844,6 @@ public class SmoothedNormalsUtility : EditorWindow
 		// 
 		public bool isAssets;
 
-		
 		private List<Object> _associatedObjects = new List<Object>();
 		public Object[] associatedObjects
 		{

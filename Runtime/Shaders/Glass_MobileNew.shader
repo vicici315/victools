@@ -53,7 +53,6 @@ Shader "Custom/Glass_MobileNew"
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.072
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.2
         
-        
         [Header(Render Settings)]
         [KeywordEnum(Transparent, Opaque)] _RenderMode ("Render Mode", Float) = 0
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2

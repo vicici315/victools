@@ -23,6 +23,9 @@ namespace VicTools
         private SerializedProperty glareBehind;
         // 外观
         private SerializedProperty intensity;
+        private SerializedProperty startBoostIntensity;
+        private SerializedProperty startBoostRange;
+        private SerializedProperty centerFade;
         private SerializedProperty colorFromLight;
         private SerializedProperty volumeColor;
         private SerializedProperty blendMode;
@@ -33,6 +36,10 @@ namespace VicTools
         private SerializedProperty enableOcclusion;
         private SerializedProperty occlusionLayerMask;
         private SerializedProperty occlusionUpdateInterval;
+        // 蒙版投影
+        private SerializedProperty enableMask;
+        private SerializedProperty maskTexture;
+        private SerializedProperty maskIntensity;
 
         private const string SaveFolderBase = "Library/VicTools/SpotLightVolume";
         private const string PresetFolder = "Packages/com.youdoo.victools/Runtime/Presets/SpotLightVolume";
@@ -47,6 +54,9 @@ namespace VicTools
             glareFrontal = serializedObject.FindProperty("glareFrontal");
             glareBehind = serializedObject.FindProperty("glareBehind");
             intensity = serializedObject.FindProperty("intensity");
+            startBoostIntensity = serializedObject.FindProperty("startBoostIntensity");
+            startBoostRange = serializedObject.FindProperty("startBoostRange");
+            centerFade = serializedObject.FindProperty("centerFade");
             colorFromLight = serializedObject.FindProperty("colorFromLight");
             volumeColor = serializedObject.FindProperty("volumeColor");
             blendMode = serializedObject.FindProperty("blendMode");
@@ -55,6 +65,9 @@ namespace VicTools
             enableOcclusion = serializedObject.FindProperty("enableOcclusion");
             occlusionLayerMask = serializedObject.FindProperty("occlusionLayerMask");
             occlusionUpdateInterval = serializedObject.FindProperty("occlusionUpdateInterval");
+            maskTexture = serializedObject.FindProperty("maskTexture");
+            maskIntensity = serializedObject.FindProperty("maskIntensity");
+            enableMask = serializedObject.FindProperty("enableMask");
         }
 
         public override void OnInspectorGUI()
@@ -82,6 +95,9 @@ namespace VicTools
             DrawSection("外观", () =>
             {
                 EditorGUILayout.PropertyField(intensity, new GUIContent("强度"));
+                EditorGUILayout.PropertyField(startBoostIntensity, new GUIContent("起始亮度"));
+                EditorGUILayout.PropertyField(startBoostRange, new GUIContent("起始亮度范围"));
+                EditorGUILayout.PropertyField(centerFade, new GUIContent("中心渐变距离"));
                 EditorGUILayout.PropertyField(blendMode, new GUIContent("混合方式"));
                 EditorGUILayout.PropertyField(colorFromLight, new GUIContent("跟随灯光颜色"));
                 if (!colorFromLight.boolValue)
@@ -105,6 +121,16 @@ namespace VicTools
                 {
                     EditorGUILayout.PropertyField(occlusionLayerMask, new GUIContent("检测层"));
                     EditorGUILayout.PropertyField(occlusionUpdateInterval, new GUIContent("检测间隔(秒)"));
+                }
+            });
+
+            DrawSection("蒙版投影", () =>
+            {
+                EditorGUILayout.PropertyField(enableMask, new GUIContent("启用蒙版"));
+                if (enableMask.boolValue)
+                {
+                    EditorGUILayout.PropertyField(maskTexture, new GUIContent("蒙版纹理", "黑白纹理模拟窗格投影，白色透光黑色遮光"));
+                    EditorGUILayout.PropertyField(maskIntensity, new GUIContent("蒙版强度"));
                 }
             });
 
@@ -186,7 +212,7 @@ namespace VicTools
             Debug.Log("[SpotLightVolume] 参数已保存: " + path);
         }
 
-        /// <summary>通用文件下拉菜单（存档和预设共用）</summary>
+        /// 通用文件下拉菜单（存档和预设共用）
         private void ShowFileDropdown(string folder)
         {
             EnsureDirectory(folder);
@@ -229,6 +255,9 @@ namespace VicTools
                 glareFrontal = vol.glareFrontal,
                 glareBehind = vol.glareBehind,
                 intensity = vol.intensity,
+                startBoostIntensity = vol.startBoostIntensity,
+                startBoostRange = vol.startBoostRange,
+                centerFade = vol.centerFade,
                 colorFromLight = vol.colorFromLight,
                 volumeColor = ColorToArray(vol.volumeColor),
                 blendMode = (int)vol.blendMode,
@@ -240,7 +269,10 @@ namespace VicTools
                 occlusionDetectTriggers = vol.occlusionDetectTriggers,
                 spotAngle = light != null ? light.spotAngle : 30f,
                 innerSpotAngle = light != null ? light.innerSpotAngle : 0f,
-                lightColor = light != null ? ColorToArray(light.color) : new float[] { 1, 1, 1, 1 }
+                lightColor = light != null ? ColorToArray(light.color) : new float[] { 1, 1, 1, 1 },
+                enableMask = vol.enableMask,
+                maskIntensity = vol.maskIntensity,
+                maskTexturePath = vol.maskTexture != null ? AssetDatabase.GetAssetPath(vol.maskTexture) : ""
             };
 
             System.IO.File.WriteAllText(path, JsonUtility.ToJson(data, true));
@@ -306,6 +338,9 @@ namespace VicTools
             public float glareFrontal;
             public float glareBehind;
             public float intensity;
+            public float startBoostIntensity;
+            public float startBoostRange;
+            public float centerFade;
             public bool colorFromLight;
             public float[] volumeColor;
             public int blendMode;
@@ -318,6 +353,9 @@ namespace VicTools
             public float spotAngle;
             public float innerSpotAngle;
             public float[] lightColor;
+            public bool enableMask;
+            public float maskIntensity;
+            public string maskTexturePath; // AssetDatabase 路径
 
             public void ApplyTo(SpotLightVolume vol)
             {
@@ -329,6 +367,9 @@ namespace VicTools
                 vol.glareFrontal = glareFrontal;
                 vol.glareBehind = glareBehind;
                 vol.intensity = intensity;
+                vol.startBoostIntensity = startBoostIntensity;
+                vol.startBoostRange = startBoostRange;
+                vol.centerFade = centerFade;
                 vol.colorFromLight = colorFromLight;
                 if (volumeColor != null && volumeColor.Length == 4)
                     vol.volumeColor = new Color(volumeColor[0], volumeColor[1], volumeColor[2], volumeColor[3]);
@@ -339,6 +380,12 @@ namespace VicTools
                 vol.occlusionLayerMask = occlusionLayerMask;
                 vol.occlusionUpdateInterval = occlusionUpdateInterval;
                 vol.occlusionDetectTriggers = occlusionDetectTriggers;
+                vol.enableMask = enableMask;
+                vol.maskIntensity = maskIntensity;
+                if (!string.IsNullOrEmpty(maskTexturePath))
+                    vol.maskTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(maskTexturePath);
+                else
+                    vol.maskTexture = null;
             }
 
             public void ApplyLightTo(Light light)
