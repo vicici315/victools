@@ -1486,7 +1486,7 @@ public class ResourceBoxRecoveryItem
             }
             if (_SelectLattIcon != null)
             {
-                if (GUILayout.Button(new GUIContent(_SelectLattIcon, "选择晶格对象 / 模型对象（双向切换）\n\n• 选中模型 → 点击：选中对应的 Lattice_ 晶格对象\n• 选中晶格 → 点击：反向选中晶格控制的模型\n• Ctrl+点击：加选（不替换当前选择）"), GUILayout.Height(35), GUILayout.Width(38)))
+                if (GUILayout.Button(new GUIContent(_SelectLattIcon, "选择晶格对象 / 模型对象（双向切换）\n[按 Esc 可以选中晶格体]\n• 选中模型 → 点击：选中对应的 Lattice_ 晶格对象\n• 选中晶格 → 点击：反向选中晶格控制的模型\n• Ctrl+点击：加选（不替换当前选择）"), GUILayout.Height(35), GUILayout.Width(38)))
                 {
                     SelectAssociatedLattice();
                 }

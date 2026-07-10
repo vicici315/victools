@@ -12,6 +12,15 @@
 //           消除 LatticeModifierBuildPreprocessor / LatticeModifierSaveHook 重复的"遍历所有加载场景的 LatticeModifier"循环。
 
 // LatticeModifierEditor v3.5 修复控制点缩放无法与缩放手柄方向一致，newScale 的 x/y/z 是「手柄局部轴」（由 t.rotation 定向，即屏幕上彩色箭头方向）上的缩放分量
+// LatticeModifierEditor v3.24 内部点压缩：Inspector 加 surfaceOnly 开关 + 「应用压缩」按钮，
+//                              + 「外壳点 / 全部」统计信息 + 「仅表面 vs 全部」效率对比。
+// LatticeModifierEditor v3.25 优化晶格点正背面着色判断逻辑，晶格线也加入背面压暗判断。
+// LatticeModifierEditor v3.26 解决多 Inspector 窗口下「扩展选择」「取消选择」按钮锁定/失效。
+// LatticeModifierEditor v3.27 Esc 定位优化：FindLatticesByName 增加渲染器目标验证，排除同名但无关联的晶格，解决同名模型选中错误晶格体的问题。
+// LatticeModifierEditor v3.28 切换晶格对象时「扩展选择」错乱修复：SyncLatticeFromTarget 增加 s_activeLattice 三方比对，解决多 Inspector 锁定场景下 static selectedPoints 属于另一个晶格但当前编辑器仍使用其展开操作的问题。
+// LatticeModifierEditor v3.29 选中状态丢失修复：selectedPoints 从 static 改为实例字段，每个 Editor 实例独立维护自己的选中点集合。不再通过 static 共享，彻底避免多 Inspector 窗口间交叉清除选中状态。SyncLatticeFromTarget 简化为只处理 Editor 复用（target 变 lattice 未变）的单一场合。
+// LatticeModifierEditor v3.30 多 Inspector 同步修复：selectedPoints 改为属性，底层按 InstanceID 存储在静态 Dictionary 中。多个 Inspector 窗口显示同一晶格时共享同一份选中数据，切换晶格时自动获取对应晶格的独立选中集（切换回来时自动恢复）。不再交叉清除。
+
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -23,7 +32,35 @@ using UnityEditor.Build.Reporting;
 public class LatticeModifierEditor : Editor
 {
     private LatticeModifier lattice;
-    private HashSet<int> selectedPoints = new HashSet<int>();
+
+    // v3.30：按 InstanceID 存储每晶格的独立选中集，多个 Inspector 显示同一晶格时共享选中。
+    // 切换晶格时自动获取对应晶格的选中集（若首次选中则创建空集），
+    // 每个晶格的选中状态在生命周期内保持独立，不会互相干扰。
+    private static Dictionary<int, HashSet<int>> s_latticeSelections = new Dictionary<int, HashSet<int>>();
+    private static readonly HashSet<int> s_emptySelection = new HashSet<int>();
+
+    private HashSet<int> selectedPoints
+    {
+        get
+        {
+            if (lattice == null) return s_emptySelection;
+            int id = lattice.GetInstanceID();
+            if (!s_latticeSelections.TryGetValue(id, out var set))
+            {
+                set = new HashSet<int>();
+                s_latticeSelections[id] = set;
+            }
+            return set;
+        }
+        set
+        {
+            if (lattice == null) return;
+            int id = lattice.GetInstanceID();
+            s_latticeSelections[id] = value;
+            if (s_activeLattice == lattice)
+                s_activeSelectedPoints = value;
+        }
+    }
 
     private static LatticeModifier s_activeLattice;
     private static HashSet<int> s_activeSelectedPoints;
@@ -48,9 +85,51 @@ public class LatticeModifierEditor : Editor
         s_suppressSelectionChanged = false;
     }
 
+    // 静态构造函数：类被加载时即注册 SceneView 钩子，确保用户从未点过晶格对象时 Esc 切换也能工作
+    static LatticeModifierEditor()
+    {
+        EnsureHookRegistered();
+    }
+
+    /// <summary>
+    /// 显式触发 SceneView 钩子注册。供 LatticeModifierInitOnLoad 在 Editor 启动时
+    /// 主动调用以强制加载本类（CustomEditor 属性本身不会触发静态构造函数）。
+    /// 内部用 s_registered 防重复。
+    /// </summary>
+    internal static void EnsureHookRegistered()
+    {
+        if (s_registered) return;
+        SceneView.duringSceneGui += OnGlobalSceneGUIStatic;
+        s_registered = true;
+    }
+
+
+    /// <summary>
+    /// v3.30：仅处理 Unity 复用 Editor 实例但未调用 OnEnable 的场景（target 变了
+    /// 但 lattice 仍是旧值）。不再清除选中——selectedPoints 属性按 InstanceID
+    /// 自动返回新 lattice 的独立选中集，不会混淆。
+    /// </summary>
+    private void SyncLatticeFromTarget()
+    {
+        var currentTarget = target as LatticeModifier;
+        if (currentTarget == null) return;
+
+        // 一致 → 无需同步
+        if (currentTarget == lattice)
+            return;
+
+        // target 已切换但 lattice 未更新 → Editor 复用，OnEnable 未触发
+        lattice = currentTarget;
+        s_activeLattice = currentTarget;
+        s_activeSelectedPoints = selectedPoints; // 自动获取新 lattice 的选中集
+    }
+
     private void OnEnable()
     {
         lattice = (LatticeModifier)target;
+
+        // v3.30：selectedPoints 按 InstanceID 存储，每个晶格独立维护选中状态。
+        // 不再在切换时清除——切换回来时自动恢复之前的选中状态。
         s_activeLattice = lattice;
         s_activeSelectedPoints = selectedPoints;
         EditorApplication.update += EditorUpdate;
@@ -203,6 +282,9 @@ public class LatticeModifierEditor : Editor
 
     public override void OnInspectorGUI()
     {
+        // v3.28：先同步，确保 lattice/selectedPoints 与当前实际 target 一致
+        SyncLatticeFromTarget();
+
         // v3.9：取消目标模式选项，统一使用多目标逻辑
         serializedObject.Update();
 
@@ -216,7 +298,51 @@ public class LatticeModifierEditor : Editor
         EditorGUILayout.PropertyField(serializedObject.FindProperty("divisionsZ"), new GUIContent("Z 段数"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("feather"), new GUIContent("边缘羽化", "控制晶格边界的变形衰减带宽度。0 = 无羽化（硬切），0.5 = 最大羽化（整个范围平滑过渡）"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("liveUpdate"), new GUIContent("实时更新"));
+
+        // v3.24.1：surfaceOnly 改为 NonSerialized 后不能用 PropertyField，手动 Toggle
+        bool prevSurfaceOnly = lattice.surfaceOnly;
+        bool currSurfaceOnly = EditorGUILayout.Toggle(
+            new GUIContent("v3.24 忽略内部控制点",
+                "开启后控制点只保留 6 个外壳面，去掉立方体内部的点。\n" +
+                "内部点对表面顶点影响极小（Bernstein 基函数趋近 0），\n" +
+                "可大幅减少 FFD 累加计算量。8x8x8 晶格控制点从 512 减到 296（-42%）。"),
+            prevSurfaceOnly);
+        if (currSurfaceOnly != prevSurfaceOnly)
+            lattice.surfaceOnly = currSurfaceOnly;
         serializedObject.ApplyModifiedProperties();
+
+        if (lattice.IsInitialized)
+        {
+            int nx = lattice.PointCountX, ny = lattice.PointCountY, nz = lattice.PointCountZ;
+            int total = nx * ny * nz;
+            int internalCount = (nx - 2) * (ny - 2) * (nz - 2);
+            int surfaceCount = total - internalCount;
+            float savings = total > 0 ? (1f - (float)surfaceCount / total) * 100f : 0f;
+
+            string mode = currSurfaceOnly ? "已开启（FFD 累加跳过内部点）" : "未开启（FFD 累加全部点）";
+            string info = $"v3.24 性能模式：{mode}\n" +
+                          $"全部控制点：{total} | 外壳点：{surfaceCount} | 内部点：{internalCount}\n" +
+                          $"开启时 FFD 累加减少：{savings:F1}%\n" +
+                          $"（数据全部保留，所有 Gizmo/CP Transform 仍按 3D 索引工作）";
+            EditorGUILayout.HelpBox(info, MessageType.None);
+
+            if (prevSurfaceOnly != currSurfaceOnly)
+            {
+                GUI.backgroundColor = new Color(1f, 0.6f, 0.3f);
+                if (GUILayout.Button(new GUIContent($"应用压缩模式（{(currSurfaceOnly ? "开启" : "关闭")}）",
+                    "切换 surfaceOnly 标志位。\n" +
+                    "开启时：DeformVertices 内层累加跳过内部点（性能提升）。\n" +
+                    "关闭时：所有点都参与累加（默认行为）。\n" +
+                    "已编辑的控制点位置全部保留。"), GUILayout.Height(24)))
+                {
+                    Undo.RecordObject(lattice, "切换外壳压缩模式");
+                    lattice.ApplySurfaceOnlyMode();
+                    EditorUtility.SetDirty(lattice);
+                    SceneView.RepaintAll();
+                }
+                GUI.backgroundColor = Color.white;
+            }
+        }
 
         EditorGUILayout.Space(10);
 
@@ -413,6 +539,7 @@ public class LatticeModifierEditor : Editor
                 GameObject latticeGO = lattice.gameObject;
                 lattice.RestoreOriginal();
                 selectedPoints.Clear();
+                s_latticeSelections.Remove(lattice.GetInstanceID()); // v3.30 清理字典
                 s_activeLattice = null;
                 s_activeSelectedPoints = null;
                 Undo.DestroyObjectImmediate(latticeGO);
@@ -831,7 +958,14 @@ public class LatticeModifierEditor : Editor
 
     private void ExpandSelection()
     {
+        // v3.28：先同步，确保 lattice 与当前 target 一致（防止 Editor 复用导致 stale）
+        SyncLatticeFromTarget();
+
         if (lattice == null || !lattice.IsInitialized || selectedPoints.Count == 0) return;
+
+        // v3.27 防御：清理不属于当前晶格的无效索引（切换晶格时静态选择残留）
+        selectedPoints.RemoveWhere(idx => idx < 0 || idx >= lattice.TotalPoints);
+        if (selectedPoints.Count == 0) return;
 
         int nx = lattice.PointCountX, ny = lattice.PointCountY, nz = lattice.PointCountZ;
         var expanded = new HashSet<int>(selectedPoints);
@@ -891,66 +1025,27 @@ public class LatticeModifierEditor : Editor
     //  SceneView 绘制 & 交互
     // ═══════════════════════════════════════════
 
-    /// 根据控制点实际位置计算指定面的法线方向。
-    /// faceAxis 指明面的朝向轴：(-1,0,0)=X轴负方向面，(1,0,0)=X轴正方向面 等。
-    /// 通过该点与同面相邻控制点的叉积得到实际法线，不依赖晶格 Transform 轴向。
-    private static Vector3 ComputeFaceNormal(LatticeModifier lat, Transform t, int pix, int piy, int piz, int nx, int ny, int nz, int faceAxisX, int faceAxisY, int faceAxisZ)
+    /// 计算四边形面的朝外法线。
+    /// 用三角形 (p0→p1→p2) 叉积得原始方向，再基于 outward（晶格本地坐标轴在 world 的投影）
+    /// 做方向校正确保法线指向晶格外部。
+    /// 关键：使用「晶格本地轴向」而非「四边形中心→晶格形心」，避免哑铃/沙漏型晶格
+    /// 中部四边形 outward 接近零向量导致方向校正失败。
+    private static Vector3 ComputeOutwardNormal(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 outward)
     {
-        Vector3 center = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(pix, piy, piz)]);
-
-        // 确定面上两个切线方向的邻居索引
-        int t1ix = pix, t1iy = piy, t1iz = piz;
-        int t2ix = pix, t2iy = piy, t2iz = piz;
-
-        if (faceAxisX != 0)
-        {
-            // YZ 面：沿 Y 和 Z 方向取邻居
-            t1iy = Mathf.Clamp(piy + 1, 0, ny - 1);
-            if (t1iy == piy) t1iy = Mathf.Clamp(piy - 1, 0, ny - 1);
-            t2iz = Mathf.Clamp(piz + 1, 0, nz - 1);
-            if (t2iz == piz) t2iz = Mathf.Clamp(piz - 1, 0, nz - 1);
-        }
-        else if (faceAxisY != 0)
-        {
-            // XZ 面：沿 X 和 Z 方向取邻居
-            t1ix = Mathf.Clamp(pix + 1, 0, nx - 1);
-            if (t1ix == pix) t1ix = Mathf.Clamp(pix - 1, 0, nx - 1);
-            t2iz = Mathf.Clamp(piz + 1, 0, nz - 1);
-            if (t2iz == piz) t2iz = Mathf.Clamp(piz - 1, 0, nz - 1);
-        }
-        else
-        {
-            // XY 面：沿 X 和 Y 方向取邻居
-            t1ix = Mathf.Clamp(pix + 1, 0, nx - 1);
-            if (t1ix == pix) t1ix = Mathf.Clamp(pix - 1, 0, nx - 1);
-            t2iy = Mathf.Clamp(piy + 1, 0, ny - 1);
-            if (t2iy == piy) t2iy = Mathf.Clamp(piy - 1, 0, ny - 1);
-        }
-
-        Vector3 neighbor1 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(t1ix, t1iy, t1iz)]);
-        Vector3 neighbor2 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(t2ix, t2iy, t2iz)]);
-
-        Vector3 edge1 = neighbor1 - center;
-        Vector3 edge2 = neighbor2 - center;
-        Vector3 normal = Vector3.Cross(edge1, edge2).normalized;
-
-        // 确保法线朝向面的外侧：用 faceAxis 的预期方向做参考
-        // 取初始控制点的中心作为内部参考点
-        Vector3 latticeCenter = Vector3.zero;
-        for (int i = 0; i < lat.controlPoints.Length; i++)
-            latticeCenter += lat.controlPoints[i];
-        latticeCenter = t.TransformPoint(latticeCenter / lat.controlPoints.Length);
-
-        Vector3 outward = center - latticeCenter;
-        if (Vector3.Dot(normal, outward) < 0)
-            normal = -normal;
-
-        return normal;
+        Vector3 n = Vector3.Cross(p1 - p0, p2 - p0);
+        if (n.sqrMagnitude < 0.0001f) return Vector3.zero;
+        n.Normalize();
+        if (Vector3.Dot(n, outward) < 0) n = -n;
+        return n;
     }
 
     private static void DrawLatticeAndHandles(LatticeModifier lat, HashSet<int> selPts, SceneView sceneView, bool isInstance)
     {
         if (lat == null || !lat.IsInitialized || lat.controlPoints == null) return;
+
+        // v3.27 防御：清理选中集中不属于当前晶格的点索引（切换晶格时静态选择残留）
+        if (selPts != null && selPts.Count > 0)
+            selPts.RemoveWhere(idx => idx < 0 || idx >= lat.controlPoints.Length);
 
         // 段数被修改后 controlPoints 数组长度与当前 PointCount 不匹配，跳过绘制避免越界
         int expectedTotal = lat.PointCountX * lat.PointCountY * lat.PointCountZ;
@@ -963,26 +1058,137 @@ public class LatticeModifierEditor : Editor
         Transform t = lat.transform;
         int nx = lat.PointCountX, ny = lat.PointCountY, nz = lat.PointCountZ;
 
-        Handles.color = new Color(0.2f, 0.8f, 1f, 0.5f);
-        for (int ix = 0; ix < nx; ix++)
-        for (int iy = 0; iy < ny; iy++)
-        for (int iz = 0; iz < nz; iz++)
-        {
-            int idx = lat.GetFlatIndex(ix, iy, iz);
-            Vector3 p = t.TransformPoint(lat.controlPoints[idx]);
-            if (ix < nx - 1) Handles.DrawLine(p, t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix + 1, iy, iz)]));
-            if (iy < ny - 1) Handles.DrawLine(p, t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix, iy + 1, iz)]));
-            if (iz < nz - 1) Handles.DrawLine(p, t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix, iy, iz + 1)]));
-        }
-
-        // 相机信息，用于判断控制点是否在晶格体背面（支持透视/正交）
+        // 相机信息（提前到此处，供后续线和点的背面判断共用）
         Camera cam = sceneView.camera;
         Vector3 camPos = cam.transform.position;
         Vector3 camForward = cam.transform.forward;
         bool isOrtho = cam.orthographic;
 
-        // ── 按深度排序：从远到近绘制，近处控制点覆盖远处（实现遮挡效果） ──
+        // ── 基于四边形面的可见性预计算 ──
+        // 遍历晶格所有外表面四边形（每个面由 4 个控制点组成），
+        // 计算每个四边形的实际法线方向并判断是否朝向相机（正面）。
+        // 一个控制点只要属于任意一个正面四边形，即为"可见"。
         int totalPts = lat.controlPoints.Length;
+        bool[] isPointFrontFacing = new bool[totalPts]; // 默认 false = 背面/不可见
+
+        // 晶格本地坐标轴在世界空间的方向（用于"朝外"参考，避免依赖形心导致
+        // 哑铃/沙漏型晶格中部四边形 outward 接近零向量的问题）
+        Vector3 axisX = t.TransformDirection(Vector3.right);
+        Vector3 axisY = t.TransformDirection(Vector3.up);
+        Vector3 axisZ = t.TransformDirection(Vector3.forward);
+
+        // 局部函数：判断四边形面是否朝向相机，若是则标记其 4 个顶点为正面可见
+        // outwardWorld: 该表面四边形在世界空间的预期外法线方向（来自晶格本地轴向投影）
+        void MarkQuadVisible(int ix0, int iy0, int iz0, int ix1, int iy1, int iz1,
+                             int ix2, int iy2, int iz2, int ix3, int iy3, int iz3,
+                             Vector3 outwardWorld)
+        {
+            Vector3 p0 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix0, iy0, iz0)]);
+            Vector3 p1 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix1, iy1, iz1)]);
+            Vector3 p2 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix2, iy2, iz2)]);
+            // p3 仅用于计算四边形中心，不参与法线计算（三角形 p0→p1→p2 已足够）
+            Vector3 p3 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(ix3, iy3, iz3)]);
+            Vector3 quadCenter = (p0 + p1 + p2 + p3) * 0.25f;
+
+            // 朝外法线（内部已基于晶格本地轴向校正）
+            Vector3 normal = ComputeOutwardNormal(p0, p1, p2, outwardWorld);
+            if (normal == Vector3.zero) return;
+
+            // 从四边形面指向相机的方向
+            Vector3 toCam = isOrtho ? -camForward : (camPos - quadCenter).normalized;
+
+            // 实体背面判断：朝外法线与 toCam 同向（Dot>0）= 法线指向相机方向 = 该面朝向观察者（正面）
+            if (Vector3.Dot(normal, toCam) > 0)
+            {
+                isPointFrontFacing[lat.GetFlatIndex(ix0, iy0, iz0)] = true;
+                isPointFrontFacing[lat.GetFlatIndex(ix1, iy1, iz1)] = true;
+                isPointFrontFacing[lat.GetFlatIndex(ix2, iy2, iz2)] = true;
+                isPointFrontFacing[lat.GetFlatIndex(ix3, iy3, iz3)] = true;
+            }
+        }
+
+        // 遍历四边形并标记正面顶点
+        if (nx > 1) // X 面（X=0 和 X=nx-1）
+        {
+            for (int iy = 0; iy < ny - 1; iy++)
+            for (int iz = 0; iz < nz - 1; iz++)
+            {
+                MarkQuadVisible(0, iy, iz, 0, iy + 1, iz, 0, iy, iz + 1, 0, iy + 1, iz + 1, -axisX);
+                MarkQuadVisible(nx - 1, iy, iz, nx - 1, iy + 1, iz, nx - 1, iy, iz + 1, nx - 1, iy + 1, iz + 1, axisX);
+            }
+        }
+        if (ny > 1) // Y 面（Y=0 和 Y=ny-1）
+        {
+            for (int ix = 0; ix < nx - 1; ix++)
+            for (int iz = 0; iz < nz - 1; iz++)
+            {
+                MarkQuadVisible(ix, 0, iz, ix + 1, 0, iz, ix, 0, iz + 1, ix + 1, 0, iz + 1, -axisY);
+                MarkQuadVisible(ix, ny - 1, iz, ix + 1, ny - 1, iz, ix, ny - 1, iz + 1, ix + 1, ny - 1, iz + 1, axisY);
+            }
+        }
+        if (nz > 1) // Z 面（Z=0 和 Z=nz-1）
+        {
+            for (int ix = 0; ix < nx - 1; ix++)
+            for (int iy = 0; iy < ny - 1; iy++)
+            {
+                MarkQuadVisible(ix, iy, 0, ix + 1, iy, 0, ix, iy + 1, 0, ix + 1, iy + 1, 0, -axisZ);
+                MarkQuadVisible(ix, iy, nz - 1, ix + 1, iy, nz - 1, ix, iy + 1, nz - 1, ix + 1, iy + 1, nz - 1, axisZ);
+            }
+        }
+
+        // ── 绘制晶格连接线（背面线段压暗）──
+        // 在四边形面可见性计算完成后绘制，利用 isPointFrontFacing 判断线段是否处于背面。
+        // 背面定义：一条线段两端点都在外壳上，且至少一端所属四边形均不朝向相机。
+        // 使用 anyBack 而非 bothBack，使折角处的棱线也能被压暗（角点可能属于正面面片但该棱仍在背面）。
+        Color brightLineColor = new Color(0.2f, 0.8f, 1f, 0.85f);
+        Color dimLineColor = new Color(0.2f * 0.4f, 0.8f * 0.4f, 1f * 0.4f, 0.3f);
+        for (int ix = 0; ix < nx; ix++)
+        for (int iy = 0; iy < ny; iy++)
+        for (int iz = 0; iz < nz; iz++)
+        {
+            int idxA = lat.GetFlatIndex(ix, iy, iz);
+            Vector3 pA = t.TransformPoint(lat.controlPoints[idxA]);
+            bool aOnSurface = (ix == 0 || ix == nx - 1 || iy == 0 || iy == ny - 1 || iz == 0 || iz == nz - 1);
+
+            // X 方向
+            if (ix < nx - 1)
+            {
+                int idxB = lat.GetFlatIndex(ix + 1, iy, iz);
+                bool bOnSurface = (ix + 1 == 0 || ix + 1 == nx - 1 || iy == 0 || iy == ny - 1 || iz == 0 || iz == nz - 1);
+                if (!lat.surfaceOnly || (aOnSurface && bOnSurface))
+                {
+                    bool anyBack = aOnSurface && bOnSurface && (!isPointFrontFacing[idxA] || !isPointFrontFacing[idxB]);
+                    Handles.color = anyBack ? dimLineColor : brightLineColor;
+                    Handles.DrawLine(pA, t.TransformPoint(lat.controlPoints[idxB]));
+                }
+            }
+            // Y 方向
+            if (iy < ny - 1)
+            {
+                int idxB = lat.GetFlatIndex(ix, iy + 1, iz);
+                bool bOnSurface = (ix == 0 || ix == nx - 1 || iy + 1 == 0 || iy + 1 == ny - 1 || iz == 0 || iz == nz - 1);
+                if (!lat.surfaceOnly || (aOnSurface && bOnSurface))
+                {
+                    bool anyBack = aOnSurface && bOnSurface && (!isPointFrontFacing[idxA] || !isPointFrontFacing[idxB]);
+                    Handles.color = anyBack ? dimLineColor : brightLineColor;
+                    Handles.DrawLine(pA, t.TransformPoint(lat.controlPoints[idxB]));
+                }
+            }
+            // Z 方向
+            if (iz < nz - 1)
+            {
+                int idxB = lat.GetFlatIndex(ix, iy, iz + 1);
+                bool bOnSurface = (ix == 0 || ix == nx - 1 || iy == 0 || iy == ny - 1 || iz + 1 == 0 || iz + 1 == nz - 1);
+                if (!lat.surfaceOnly || (aOnSurface && bOnSurface))
+                {
+                    bool anyBack = aOnSurface && bOnSurface && (!isPointFrontFacing[idxA] || !isPointFrontFacing[idxB]);
+                    Handles.color = anyBack ? dimLineColor : brightLineColor;
+                    Handles.DrawLine(pA, t.TransformPoint(lat.controlPoints[idxB]));
+                }
+            }
+        }
+
+        // ── 按深度排序：从远到近绘制，近处控制点覆盖远处（实现遮挡效果） ──
 
         // 构建索引+深度数组，按深度从远到近排序
         var depthOrder = new int[totalPts];
@@ -1019,48 +1225,26 @@ public class LatticeModifierEditor : Editor
                                 (piy == 0 || piy == ny - 1) ||
                                 (piz == 0 || piz == nz - 1);
 
-            // 透视模式下使用逐点视线方向，正交模式下使用统一相机朝向
-            Vector3 viewDir = isOrtho ? camForward : (worldPos - camPos).normalized;
-
-            // 基于控制点实际位置计算面法线判断是否为背面
-            // 不依赖晶格 Transform 的方向，而是从相邻控制点推导表面朝向
-            bool isBackFacing = false;
-            if (isOnSurface)
+            // v3.24.3：surfaceOnly 开启时，内部点（!isOnSurface）直接 skip：
+            //   - 不画 SphereHandle（不显示）
+            //   - 不响应 Handles.Button（无法点击选中）
+            //   - 不参与 depthOrder 的"被点击"判定
+            // 视觉上等价于"内部点不存在"，但 controlPoints 数组里仍有数据用于动画/CP Transform 引用兼容。
+            if (lat.surfaceOnly && !isOnSurface)
             {
-                bool anyFaceFront = false;
-                // 对该点所在的每个外表面，用相邻控制点叉积计算实际法线方向
-                if (pix == 0)
+                // 如果之前选中了内部点（用户已勾选前选中的），现在清掉（避免幽灵选中）
+                if (isSelected && selPts != null)
                 {
-                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, -1, 0, 0);
-                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
+                    selPts.Remove(i);
+                    s_activeSelectedPoints = selPts;
                 }
-                if (pix == nx - 1)
-                {
-                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 1, 0, 0);
-                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
-                }
-                if (piy == 0)
-                {
-                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, -1, 0);
-                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
-                }
-                if (piy == ny - 1)
-                {
-                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, 1, 0);
-                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
-                }
-                if (piz == 0)
-                {
-                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, 0, -1);
-                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
-                }
-                if (piz == nz - 1)
-                {
-                    Vector3 faceNormal = ComputeFaceNormal(lat, t, pix, piy, piz, nx, ny, nz, 0, 0, 1);
-                    if (Vector3.Dot(faceNormal, viewDir) < 0) anyFaceFront = true;
-                }
-                isBackFacing = !anyFaceFront;
+                continue;
             }
+
+            // 基于四边形面可见性判断背面：isPointFrontFacing 已在前置遍历中计算完毕，
+            // 只要该点所在的任一表面四边形朝向相机（正面），则该点可见。
+            // 内部点无表面四边形，视为始终可见（不参与背面判断）。
+            bool isBackFacing = isOnSurface && !isPointFrontFacing[i];
 
             float backDim = isBackFacing ? 0.4f : 1f;
 
@@ -1103,7 +1287,7 @@ public class LatticeModifierEditor : Editor
             sceneView.Repaint();
         }
 
-        // ── Esc 取消选择 ──
+        // ── Esc 取消选择（仅当存在 CP 选中时；模型对象上的 Esc 切换已在 OnGlobalSceneGUIStatic 中处理）──
         if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape && selPts != null && selPts.Count > 0)
         {
             selPts.Clear();
@@ -1331,6 +1515,19 @@ public class LatticeModifierEditor : Editor
 
     private static void OnGlobalSceneGUIStatic(SceneView sceneView)
     {
+        // ── Esc 切换：选中目标模型对象时按 Esc 自动选中对应晶格对象（按命名规则 Lattice_<模型名>）──
+        // 独立于 s_activeLattice，确保从未点过晶格对象时也能生效
+        var escEvt = Event.current;
+        if (escEvt != null && escEvt.type == EventType.KeyDown && escEvt.keyCode == KeyCode.Escape)
+        {
+            if (TrySelectLatticeByEsc())
+            {
+                escEvt.Use();
+                sceneView?.Repaint();
+                return;
+            }
+        }
+
         if (s_activeLattice == null || !s_activeLattice.IsInitialized || s_activeLattice.controlPoints == null)
             return;
         if (Selection.activeGameObject == s_activeLattice.gameObject)
@@ -1338,8 +1535,47 @@ public class LatticeModifierEditor : Editor
         DrawLatticeAndHandles(s_activeLattice, s_activeSelectedPoints, sceneView, false);
     }
 
+    /// <summary>
+    /// Esc 切换：按命名规则（Lattice_ + 模型名）查找匹配晶格对象并选中。
+    /// 匹配范围：模型对象自身名 + 父链名（覆盖多目标模式父节点命名）。
+    /// 返回 true 表示已选中至少一个晶格。
+    /// </summary>
+    private static bool TrySelectLatticeByEsc()
+    {
+        // 文本框/搜索框聚焦时不消费 Esc
+        if (EditorGUIUtility.editingTextField) return false;
+
+        var selected = Selection.gameObjects;
+        if (selected == null || selected.Length == 0) return false;
+
+        // 晶格对象本身按 Esc 不处理（保持 CP-Esc 取消选择原有行为）
+        foreach (var go in selected)
+        {
+            if (go != null && go.name.StartsWith("Lattice_", System.StringComparison.Ordinal))
+                return false;
+        }
+
+        var lattices = new List<GameObject>();
+        foreach (var go in selected)
+        {
+            foreach (var lat in LatticeSceneWalker.FindLatticesByName(go))
+            {
+                if (!lattices.Contains(lat)) lattices.Add(lat);
+            }
+        }
+
+        if (lattices.Count == 0) return false;
+
+        Selection.objects = lattices.ToArray();
+        EditorGUIUtility.PingObject(lattices[0]);
+        return true;
+    }
+
     private void OnSceneGUI()
     {
+        // v3.28：先同步，确保 lattice/selectedPoints 与当前 target 一致
+        SyncLatticeFromTarget();
+
         if (lattice == null || !lattice.IsInitialized || lattice.controlPoints == null) return;
         DrawLatticeAndHandles(lattice, selectedPoints, SceneView.lastActiveSceneView, true);
     }
@@ -1481,6 +1717,7 @@ public class LatticeModifierEditor : Editor
         Undo.RecordObject(lattice, "烘焙晶格变形");
         lattice.BakeAndRemove();
         selectedPoints.Clear();
+        s_latticeSelections.Remove(lattice.GetInstanceID()); // v3.30 清理字典
         s_activeLattice = null;
         s_activeSelectedPoints = null;
         EditorUtility.SetDirty(lattice);
@@ -1621,6 +1858,133 @@ internal static class LatticeSceneWalker
             }
         }
         return n;
+    }
+
+    /// <summary>
+    /// 按命名规则 Lattice_ + 模型名 在所有已加载场景中查找晶格对象。
+    /// 匹配范围：自身名 + 父链名（覆盖多目标模式父节点命名）。
+    /// v3.27：名称匹配后增加渲染器目标验证，排除同名但无关联的晶格；
+    ///        若名称匹配无有效结果，则降级为全场景渲染器目标扫描兜底。
+    /// </summary>
+    public static List<GameObject> FindLatticesByName(GameObject go)
+    {
+        var result = new List<GameObject>();
+        if (go == null) return result;
+
+        // 收集待匹配名称：自身 + 父链
+        var names = new List<string> { go.name };
+        var t = go.transform.parent;
+        while (t != null) { names.Add(t.name); t = t.parent; }
+
+        // 第 1 步：名称匹配（快速筛选）
+        var nameMatches = new List<GameObject>();
+        for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+        {
+            var scn = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+            if (!scn.isLoaded) continue;
+            foreach (var root in scn.GetRootGameObjects())
+            {
+                foreach (var tr in root.GetComponentsInChildren<Transform>(true))
+                {
+                    if (!tr.name.StartsWith("Lattice_", System.StringComparison.Ordinal)) continue;
+                    var baseName = tr.name.Substring("Lattice_".Length);
+                    foreach (var n in names)
+                    {
+                        if (n == baseName && !nameMatches.Contains(tr.gameObject))
+                        {
+                            nameMatches.Add(tr.gameObject);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 第 2 步：渲染器目标验证（过滤同名但无关联的晶格）
+        foreach (var latGo in nameMatches)
+        {
+            var lm = latGo.GetComponent<LatticeModifier>();
+            if (lm != null && IsLatticeTargetingGameObject(lm, go))
+                result.Add(latGo);
+        }
+
+        // 第 3 步：名称匹配无有效结果时，降级为全场景渲染器目标扫描兜底
+        // （例如晶格命名不遵循 Lattice_ 规范但仍引用了该模型）
+        if (result.Count == 0 && nameMatches.Count > 0) return result; // 有名称匹配但不关联，不兜底
+        if (result.Count == 0)
+        {
+            for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCount; i++)
+            {
+                var scn = UnityEngine.SceneManagement.SceneManager.GetSceneAt(i);
+                if (!scn.isLoaded) continue;
+                foreach (var root in scn.GetRootGameObjects())
+                {
+                    foreach (var lm in root.GetComponentsInChildren<LatticeModifier>(true))
+                    {
+                        if (!result.Contains(lm.gameObject) && IsLatticeTargetingGameObject(lm, go))
+                            result.Add(lm.gameObject);
+                    }
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 验证晶格是否实际引用了给定 GameObject 的 Renderer。
+    /// 检查层级：targetRoot 包含关系 → manualRenderers 包含关系 → deformTargets 中的 renderer。
+    /// </summary>
+    private static bool IsLatticeTargetingGameObject(LatticeModifier lattice, GameObject go)
+    {
+        if (lattice == null || go == null) return false;
+
+        // 1. targetRoot：选中对象是否在目标根节点层级下（含自身）
+        if (lattice.targetRoot != null)
+        {
+            var t = go.transform;
+            while (t != null)
+            {
+                if (t == lattice.targetRoot) return true;
+                t = t.parent;
+            }
+            // 也检查 targetRoot 的下级是否包含 go（go 可能是根节点的直接子节点/后代）
+        }
+
+        // 2. manualRenderers：是否包含选中对象自身或其子节点的 Renderer
+        foreach (var rend in lattice.manualRenderers)
+        {
+            if (rend == null) continue;
+            if (rend.gameObject == go) return true;
+            if (rend.transform.IsChildOf(go.transform))
+                return true;
+        }
+
+        // 3. deformTargets 中的 renderer（包含初始化时从 targetRoot 自动收集的）
+        var activeRenderers = lattice.GetActiveRenderers();
+        foreach (var rend in activeRenderers)
+        {
+            if (rend == null) continue;
+            if (rend.gameObject == go) return true;
+            if (rend.transform.IsChildOf(go.transform))
+                return true;
+        }
+
+        // 4. 选中的 go 若带有 Renderer 组件，检查其父 GameObject 是否在 targetRoot 下
+        //    （多目标模式中，父节点为 targetRoot，子节点为各模型）
+        var goRenderer = go.GetComponent<Renderer>();
+        if (goRenderer != null)
+        {
+            // 检查 lattice 的 active renderers 中是否有 renderer 在 go 层级下
+            foreach (var rend in activeRenderers)
+            {
+                if (rend == null) continue;
+                if (go.transform.IsChildOf(rend.transform))
+                    return true;
+            }
+        }
+
+        return false;
     }
 }
 
@@ -1763,6 +2127,10 @@ internal static class LatticeModifierInitOnLoad
 
     static LatticeModifierInitOnLoad()
     {
+        // 主动触发 LatticeModifierEditor 的静态构造函数，注册 SceneView Esc 钩子
+        // 解决"用户从未点过晶格对象 → 类未被加载 → Esc 切换不生效"问题
+        LatticeModifierEditor.EnsureHookRegistered();
+
         // 延后到下一帧执行：此时场景已加载、AssetDatabase 已就绪、IPrefabStage 不会冲突
         EditorApplication.delayCall += RunOnce;
     }

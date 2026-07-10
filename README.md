@@ -9,6 +9,17 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.10.3
+
+- 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid。
+- LatticeModifier v3.23 性能 + 内存根治（针对 26 Renderer 共享 LatticeModifier 场景，端到端治理玩家端内存增长）。
+       “Esc” 快捷键在取消晶格点选择的基础上，支持晶格对象与模型对象快速切换。
+- LatticeModifier v3.24 内部点压缩（surfaceOnly 模式）。
+   ![image-20260707172325638](./README.assets/image-20260707172325638.png)![image-20260707172546545](./README.assets/image-20260707172546545.png)
+- LatticeModifierEditor v3.26 解决多 Inspector 窗口下「扩展选择」「取消选择」按钮锁定/失效。
+- LatticeModifierEditor v3.27 快捷键 Esc 选中晶格体定位优化：FindLatticesByName 增加渲染器目标验证，排除同名但无关联的晶格，解决同名模型选中错误晶格体的问题。
+
+
 ### 版本 2.10.2
 
 - SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体。

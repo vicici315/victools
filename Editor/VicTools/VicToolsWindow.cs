@@ -1903,9 +1903,11 @@ namespace VicTools
             // 不可读 Mesh 会改走 CreateDeformMeshFromCache 路径（用缓存的 vertices/triangles/normals
             // 等通道重建），重建的 Mesh 缺少 boneWeights/bindposes/blendShapes 等完整通道，
             // SkinnedMeshRenderer 渲染时蒙皮数据不全 → 模型看不到/错位。
-            // 这里遍历所有 Renderer's sharedMesh，向上溯源到 FBX 资产，自动勾选
-            // ModelImporter.isReadable=true 并 SaveAndReimport，最后汇总报告。
-            var report = new System.Text.StringBuilder();
+            //
+            // v3.23.4：扫描与勾选分离。先扫出需要勾选的 ModelImporter 列表，弹窗让用户确认；
+            // 选"继续"才真正 SaveAndReimport + 创建晶格；选"取消"则什么都不做（不勾选、不创建）。
+            var pendingImporters = new List<ModelImporter>();
+            var pendingPaths = new List<string>();
             var processedPaths = new HashSet<string>();
             foreach (var rend in allRenderers)
             {
@@ -1919,21 +1921,39 @@ namespace VicTools
                 var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
                 if (importer == null) continue;  // 不是 ModelImporter 类型（可能是 .asset Mesh）
                 if (importer.isReadable) continue; // 已勾选，跳过
-                importer.isReadable = true;
-                importer.SaveAndReimport();
-                report.AppendLine($"  ✓ {assetPath}");
+                pendingImporters.Add(importer);
+                pendingPaths.Add(assetPath);
             }
-            if (report.Length > 0)
+            if (pendingImporters.Count > 0)
             {
-                int n = processedPaths.Count;
-                Debug.Log($"[VicTools] 已自动勾选 {n} 个源 FBX 的 Read/Write Enabled：\n{report}\n" +
-                          "（晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 完整通道）");
-                EditorUtility.DisplayDialog("Read/Write 已自动勾选",
-                    $"已自动勾选 {n} 个源 FBX 的 Read/Write Enabled：\n\n{report}\n\n" +
+                // 构造预览报告（尚未实际修改任何资产）
+                var preview = new System.Text.StringBuilder();
+                foreach (var p in pendingPaths) preview.AppendLine($"  • {p}");
+
+                // 弹窗让用户决定是否勾选 + 创建晶格
+                // 选"取消"则完全不动：不勾选 Read/Write，也不创建晶格
+                bool proceed = EditorUtility.DisplayDialog("检测到源 FBX 未勾选 Read/Write",
+                    $"以下 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled 未勾选：\n\n{preview}\n\n" +
                     "原因：晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 等完整通道，\n" +
                     "否则 SkinnedMeshRenderer 渲染时蒙皮数据不全导致模型不可见。\n\n" +
-                    "提示：如不希望自动修改 FBX 资产，请在创建后手动取消勾选。",
-                    "确定");
+                    "提示：\n• 点【勾选并创建】自动勾选 Read/Write 并创建晶格控制器\n• 点【取消】则不勾选也不创建（保持原状）",
+                    "勾选并创建", "取消");
+                if (!proceed)
+                {
+                    Debug.Log("[VicTools] 用户取消操作：未勾选 Read/Write，也未创建晶格。");
+                    return;
+                }
+
+                // 用户确认后才真正执行勾选 + Reimport
+                var report = new System.Text.StringBuilder();
+                for (int i = 0; i < pendingImporters.Count; i++)
+                {
+                    pendingImporters[i].isReadable = true;
+                    pendingImporters[i].SaveAndReimport();
+                    report.AppendLine($"  ✓ {pendingPaths[i]}");
+                }
+                Debug.Log($"[VicTools] 已自动勾选 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled：\n{report}\n" +
+                          "（晶格变形器需要源 Mesh 可读以保留 boneWeights/bindposes/blendShapes 完整通道）");
             }
 
             // 用第一个选中对象的位置和名称

@@ -1,112 +1,42 @@
-// LatticeModifier 1.0 FFD 晶格变形场，晶格挂在独立空物体上，目标对象拖入 targetRenderer
-// LatticeModifier 1.1 移动晶格或模型时，处于晶格范围内的顶点实时变形，离开后恢复原形
-// LatticeModifier 1.2 支持子物体控制点（CP_x_y_z），可被 Animation/Timeline K帧驱动变形
-// LatticeModifier 1.3 选中晶格点时同步选中 Hierarchy 中对应 CP 节点
-// LatticeModifier 1.4 静态 SceneView 回调，选中 CP 后晶格线框持续绘制；修复打包后动画不生效
-// LatticeModifier 2.0 支持单个模型或整个预设/带蒙皮角色，新增多目标模式自动收集所有子 Renderer
-// LatticeModifier 2.1 添加删除晶格功能（还原 Mesh 并删除晶格物体），添加目标时自动识别带骨骼角色父级
-// LatticeModifier 2.2 支持不可读 Mesh（通过 Instantiate/BakeMesh 自动获取可读副本），修复只收集部分 Renderer 的问题
-// LatticeModifier 2.3 SkinnedMeshRenderer 双缓冲 Mesh 交替赋值，保留骨骼动画；重新初始化可保留晶格编辑恢复控制
-// LatticeModifier 2.4 修复运行时晶格变形失效：OnEnable 自动重建变形 Mesh 管线，保留控制点，动画与晶格叠加生效
-// LatticeModifier 2.5 新增手动指定 Renderer 列表（manualRenderers），支持多选对象创建晶格，严格按列表变形不展开子级
-// LatticeModifier 2.6 重新初始化保留控制点不再重置；运行/停止游戏自动重建 Mesh 管线；脏标记+顶点缓存优化编辑器性能
-// LatticeModifier 2.7 安全 Mesh 销毁机制：只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失
-// LatticeModifier 2.8 重写烘焙晶格变形功能，解决mesh丢失bug
-// LatticeModifier 2.9 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引
-// LatticeModifier 2.10 添加"扩展选择"按钮，可以扩展选择表面晶格控制点
-// LatticeModifier 2.11 修复 Undo 操作可能导致 Renderer 上的 Mesh 引用被恢复为 originalMesh 或 null
-// LatticeModifier 3.0 重构：引入 DeformTarget 封装单 Renderer 变形管线，消除 Single/Multi 大量重复逻辑
-// LatticeModifier 3.1 新增 RepairMissingBindings()：多目标模式下自动检测并修复 manualRenderers/targetRoot 中丢失晶格绑定的 Renderer
-// LatticeModifier 3.2 新增边缘羽化（feather）：晶格边界区域变形通过 smoothstep 平滑衰减到零，消除硬切边缘
-// LatticeModifier 3.3 修复轴心旋转后变形方向错位：统一使用当前晶格变换计算参数坐标，轴心操作同步更新内部数据；修复Undo支持（记录子CP Transform）；羽化基于当前晶格包围盒从中心向边缘衰减
-// LatticeModifier 3.4 实时变形 + 打包可见：
-//      - 撤销 BakeToOriginalMesh 思路（它会让晶格在烘焙后失效、无法继续实时控制）
-//      - 配合 Editor 的 OnWillSaveAssets / IPreprocessBuildWithReport 钩子：
-//        保存场景 / 打包前自动把所有 Renderer 的 sharedMesh 引用还原回 originalMesh 资产
-//        → Build 场景里 Renderer 引用始终指向带 Asset GUID 的资产，打包后正常可见
-//      - 进入 Play 模式后 OnEnable 重建 deformedMeshA 并赋给 Renderer，运行时继续实时变形
-//      - 退出 Play 模式 OnDestroy 自动还原回 originalMesh
-//      - 用户不再需要任何手动烘焙操作，晶格物体保留在场景中，控制点持续实时影响模型
-//
-// v3.5 修复「目标 Renderer 带非均匀缩放时模型轴向被拉伸/压扁」：
-//      - DeformVertices 中 offset 转换由 TransformVector/InverseTransformVector（旋转+缩放）
-//        改为 TransformDirection/InverseTransformDirection（只旋转），
-//        消除链式 S_lattice * S_target⁻¹ 缩放污染。
-//      - ComputeBounds 改用「目标 Renderer local 空间 AABB 的 8 个角点 → 晶格 local 空间」求晶格 AABB，
-//        之前是「所有 world 顶点直接转晶格 local 求 AABB」，目标带旋转时 AABB 会膨胀，
-//        控制点之间距离因此被放大，模型被「轴向拉伸」。
-//
-// v3.6 修复「不可读 Mesh 构建 deform Mesh 时因缺失 UV 通道导致模型不可见」：
-//      - CreateDeformMesh 中所有 GetUVs/GetNormals/GetTangents/GetColors 调用前
-//        用 HasVertexAttribute 守卫；源 Mesh 缺哪条通道就跳过哪条，不再抛异常中断整个构建。
-//      - 之前 GetUVs(1, ...) 在源 Mesh 无 uv2 时抛 "Mesh data does not have TexCoord1 vertex component"，
-//        外层 catch 捕获后整个 try 块终止，导致 SetTriangles 之后的所有属性没赋值、模型没三角形不可见。
-//      - 同时增加 uv3/uv4/colors 通道支持。
-//
-// v3.7 重构：抽取 RecreateDeformMeshesFor / ComputeLocalAABB / TransformBoundsToLocalSpace 工具方法；
-//           OnEnable 拆为 TryRecoverFromBuildScene / InitializeRuntime；
-//           OnDestroy 委托给 RestoreOriginal；删除 initLatticeLocalToWorld/initLatticeWorldToLocal 死代码。
-//
-// v3.8 修复「个别添加了晶格变形器的模型打包后不可见」的 3 个 P0 根因：
-//      - OnPreprocessBuild 改用 EditorUtility.SetDirty 替代 Undo.RecordObject，
-//
-// LatticeModifier v3.9 取消目标模式（SingleRenderer/MultiRenderer），单/多对象统一处理 + 修复污染
-// LatticeModifier v3.10 修复「单个静态对象打包后不可见 / 材质变灰」的真正根因——运行时 Mesh 可读性
-// LatticeModifier v3.11 修复「目标对象带缩放时晶格变形被放大（叠加）」
-// LatticeModifier v3.12：缓存蒙皮数据（仅当确为带蒙皮目标时有意义；非蒙皮 Mesh 这些为空数组）。
-// LatticeModifier v3.13：取消蒙皮双缓冲 + 每帧重新赋值 sharedMesh。
-// LatticeModifier v3.14：变形性能优化，修复运行时帧率骤降（修正缓存网格命名避免每帧重建、消除 Mathf.Pow、权重缓存、变更检测改用相对矩阵刚性同移零开销）。
-//
-// LatticeModifier v3.17 内存管理与重建冷却（修复玩家端内存持续增长、70% OOM 闪退）：
-//      - 关闭 s_enableOrphanMeshGC 默认值，扫描间隔 30s→120s。
-//        原因：Resources.FindObjectsOfTypeAll<Mesh>() 每次返回一个巨大的 Mesh[] 临时数组（数 MB），
-//        长期反复调用会持续推高托管堆压力，疑似玩家端内存缓慢增长的主要来源。
-//        OnDisable / OnDestroy 已经确保 deform Mesh 及时释放，孤儿回收作为可选排查工具更安全。
-//      - EnsureDeformMeshesValid 路径加 dt.lastRebuildTime 冷却（1s）：
-//        防止 SkinnedMeshRenderer.sharedMesh 在玩家端周期性失效时持续 Instantiate 新 Mesh，
-//        旧 Mesh 已被 Destroy 但 Unity 尚未立即 GC 释放，导致临时双倍内存占用并持续累积。
-//      - TryRecoverFromBuildScene 末尾标记 runtimeInitialized=true + 提到 OnEnable 入口处统一去重：
-//        防止 OnEnable 反复触发时（域重载/场景重载）持续重建 Mesh。
-//      - RestoreOriginal 清空实例级缓存数组（cachedControlPoints/cachedCombined/_powA/_powB）。
-//      - LogMemoryDiagnostics 合并 Mesh 池 2 次遍历为 1 次，减少分配。
-//      - OnGUI 的 GUIStyle 改为静态缓存，避免诊断开启时每帧 new GUIStyle。
-//
-// LatticeModifier v3.18 性能优化（针对 15 帧低帧率与持续内存增长）：
-//      - 顶点数据上传改用 NativeArray<Vector3> + Mesh.SetVertices(NativeArray) 零拷贝路径，
-//        替代 mesh.vertices= 数组（后者有额外托管堆分配 + 一次 native 拷贝）。NativeArray 复用避免分配。
-//      - DeformVertices 内层循环累加器用 3 个 float 而非 Vector3（避免拆装 Vector3 的中间 IL 调用）。
-//      - 预乘 targetW2L * latL2W 为 3x3 矩阵并展开为 9 个 float，循环内省一次矩阵乘加（9 次乘加），
-//        替代原来的两次 MultiplyVector 调用（18 次乘加 + 两次方法调用），省约 50% 矩阵计算时间。
-//      - RecalculateBounds 节流：每 4 帧才重算一次 AABB，期间复用旧值，省 75% 该开销。
-//      - LOD 距离剔除：s_enableLODCulling + s_maxDeformDistance=50f，远处对象跳过变形，省 50%+ 整体开销。
-//      - SyncFromTransforms 检测控制点变化时直接 MarkDirty()，避免 CheckDirty 每帧 27 个 Vector3 比较。
-//
-// v3.19 内存优化（在 v3.18 基础上进一步消除泄漏源，玩家端内存增长主嫌疑修复）：
-//      - CreateDeformMesh 不可读分支：法线/切线/UV/颜色 全部改用 NativeArray + Mesh.SetXxx(NativeArray)
-//        零分配上传，替代 .ToArray() 一次性的 O(verts × channels) 托管数组分配。
-//      - GetReadableMesh：不可读 Mesh 不再 Instantiate 整 Mesh 拿顶点（会复制 blendshape/
-//        boneWeights/bindposes，常驻几十 MB），改用 AcquireReadOnlyMeshData 抓顶点。
-//      - 删除 vertCache 死代码字段：v3.18 改造后 vertCache 已无人读取，但占用一份 Vector3[vc] 常驻。
-//      - 重建冷却从 1s 拉到 5s：玩家端 GC 节奏受引擎控制，1s 不够安全，5s 更稳。
-//      - s_activeLattices 在 OnDestroy 多一道 Remove 双保险（域重载/异常路径覆盖）。
-//      - LogMemoryDiagnostics 改用 Profiler.GetTotalAllocatedMemoryLong/GetTotalReservedMemoryLong
-//        替代 4 次 Resources.FindObjectsOfTypeAll（无分配 Profiler API）。
-//      - s_diagText 改用 StringBuilder 复用池，避免每 5s Debug.Log 字符串拼接分配。
-//      - s_warnedMeshBuildFailures 在 OnDestroy 中清理当前 lattice 相关 key，限制长期增长。
-//
-// LatticeModifier v3.23 性能 + 内存根治（针对 26 Renderer 共享 LatticeModifier 场景，端到端治理玩家端内存增长）：
-//      - Per-Renderer 范围跳过：DeformVertices 返回 bool，循环追踪 anyInRange；本 Renderer 无顶点进入
-//        晶格时直接 return false，跳过 SetVertices + RecalculateBounds + SkinnedMeshRenderer 蒙皮 dispatch。
-//        K 帧只动 1-3 控制点时 26 Renderer 中 22+ 个直接跳过循环，CPU/GPU 开销降到 1/6 ~ 1/13。
-//      - LOD 距离剔除默认阈值 50m → 12m（玩家跟随镜头场景下基本不影响可见性）。
-//      - 验证：玩家端 %MEM 从涨到 70% 退出 → 稳定在 18.5% (约 295 MB / 1.6 GB)，无持续增长。
-//      - 内存增长控制靠 v3.17/v3.19 已有机制：5 秒重建冷却、vertCacheNative 零拷贝、AcquireReadOnlyMeshData、
-//        死代码清理、Profiler API 替代 FindObjectsOfTypeAll。
-//
-// v3.23.2 关键回退：v3.23 曾尝试修复"销毁顺序（先切 Renderer 到 originalMesh 再 Destroy 旧 Mesh）"，
-//      实际在 SkinnedMeshRenderer 首次创建场景下导致模型看不到（怀疑切回 originalMesh 后 SkinnedMeshRenderer
-//      蒙皮缓冲未及时重新挂上，渲染前 GPU 端看到的是空 Mesh）。回退到 v3.19 销毁顺序，靠 5 秒冷却 +
-//      上面列出的 v3.17/v3.19 机制共同控制内存增长（已验证 %MEM 18.5% 稳定）。
+// LatticeModifier v1.0 FFD晶格变形场，晶格挂在独立空物体上，目标对象拖入targetRenderer
+// LatticeModifier v1.1 移动晶格或模型时，处于晶格范围内的顶点实时变形，离开后恢复原形
+// LatticeModifier v1.2 支持子物体控制点（CP_x_y_z），可被Animation/Timeline K帧驱动变形
+// LatticeModifier v1.3 选中晶格点时同步选中Hierarchy中对应CP节点
+// LatticeModifier v1.4 静态SceneView回调，选中CP后晶格线框持续绘制；修复打包后动画不生效
+// LatticeModifier v2.0 支持单个模型或整个预设/带蒙皮角色，新增多目标模式自动收集所有子Renderer
+// LatticeModifier v2.1 添加删除晶格功能（还原Mesh并删除晶格物体），添加目标时自动识别带骨骼角色父级
+// LatticeModifier v2.2 支持不可读Mesh（通过Instantiate/BakeMesh自动获取可读副本），修复只收集部分Renderer问题
+// LatticeModifier v2.3 SkinnedMeshRenderer双缓冲Mesh交替赋值保留骨骼动画；重新初始化可保留晶格编辑恢复控制
+// LatticeModifier v2.4 修复运行时晶格变形失效：OnEnable自动重建变形Mesh管线，保留控制点，动画与晶格叠加生效
+// LatticeModifier v2.5 新增手动指定Renderer列表（manualRenderers），支持多选对象创建晶格，严格按列表变形不展开子级
+// LatticeModifier v2.6 重新初始化保留控制点不再重置；运行/停止游戏自动重建Mesh管线；脏标记+顶点缓存优化编辑器性能
+// LatticeModifier v2.7 安全Mesh销毁机制：只销毁_LatticeDeform变形副本，防止共享Mesh资源被误删导致模型消失
+// LatticeModifier v2.8 重写烘焙晶格变形功能，解决mesh丢失bug
+// LatticeModifier v2.9 3D视图选中同步：注册Selection.selectionChanged，选中CP节点时遍历控制点找到对应索引
+// LatticeModifier v2.10 添加"扩展选择"按钮，可以扩展选择表面晶格控制点
+// LatticeModifier v2.11 修复Undo操作可能导致Renderer上的Mesh引用被恢复为originalMesh或null
+// LatticeModifier v3.0 重构：引入DeformTarget封装单Renderer变形管线，消除Single/Multi大量重复逻辑
+// LatticeModifier v3.1 新增RepairMissingBindings()：多目标模式下自动检测并修复manualRenderers/targetRoot中丢失晶格绑定的Renderer
+// LatticeModifier v3.2 新增边缘羽化（feather）：晶格边界区域变形通过smoothstep平滑衰减到零，消除硬切边缘
+// LatticeModifier v3.3 修复轴心旋转后变形方向错位：统一使用当前晶格变换计算参数坐标，轴心操作同步更新内部数据；修复Undo支持（记录子CP Transform）；羽化基于当前晶格包围盒从中心向边缘衰减
+// LatticeModifier v3.4 实时变形+打包可见：撤销BakeToOriginalMesh思路，配合Editor的OnWillSaveAssets/IPreprocessBuildWithReport钩子在保存场景/打包前自动还原sharedMesh引用到originalMesh资产，Build场景Renderer引用始终指向带AssetGUID资产，进入Play后OnEnable重建deformedMeshA并赋给Renderer运行时继续实时变形，退出Play自动还原，无需手动烘焙
+// LatticeModifier v3.5 修复目标Renderer带非均匀缩放时模型轴向被拉伸/压扁：DeformVertices中offset转换由TransformVector/InverseTransformVector改为TransformDirection/InverseTransformDirection（只旋转），消除链式S_lattice*S_target⁻¹缩放污染；ComputeBounds改用目标Renderer local空间AABB的8个角点→晶格local空间求晶格AABB，避免目标带旋转时AABB膨胀导致控制点距离被放大
+// LatticeModifier v3.6 修复不可读Mesh构建deformMesh时因缺失UV通道导致模型不可见：CreateDeformMesh中所有GetUVs/GetNormals/GetTangents/GetColors调用前用HasVertexAttribute守卫，源Mesh缺哪条通道就跳过不抛异常中断构建；同时增加uv3/uv4/colors通道支持
+// LatticeModifier v3.7 重构：抽取RecreateDeformMeshesFor/ComputeLocalAABB/TransformBoundsToLocalSpace工具方法；OnEnable拆为TryRecoverFromBuildScene/InitializeRuntime；OnDestroy委托给RestoreOriginal；删除initLatticeLocalToWorld/initLatticeWorldToLocal死代码
+// LatticeModifier v3.8 修复个别添加了晶格变形器的模型打包后不可见的P0根因：OnPreprocessBuild改用EditorUtility.SetDirty替代Undo.RecordObject
+// LatticeModifier v3.9 取消目标模式（SingleRenderer/MultiRenderer），单/多对象统一处理+修复污染
+// LatticeModifier v3.10 修复单个静态对象打包后不可见/材质变灰的真正根因——运行时Mesh可读性
+// LatticeModifier v3.11 修复目标对象带缩放时晶格变形被放大叠加
+// LatticeModifier v3.12 缓存蒙皮数据（仅当确为带蒙皮目标时有意义；非蒙皮Mesh这些为空数组）
+// LatticeModifier v3.13 取消蒙皮双缓冲+每帧重新赋值sharedMesh
+// LatticeModifier v3.14 变形性能优化，修复运行时帧率骤降（修正缓存网格命名避免每帧重建、消除Mathf.Pow、权重缓存、变更检测改用相对矩阵刚性同移零开销）
+// LatticeModifier v3.17 内存管理与重建冷却（修复玩家端内存持续增长、70% OOM闪退）：关闭s_enableOrphanMeshGC默认值扫描间隔120s（FindObjectsOfTypeAll推高托管堆压力）、EnsureDeformMeshesValid加lastRebuildTime冷却防周期性Instantiate新Mesh、OnEnable入口统一去重防持续重建、RestoreOriginal清空缓存数组、LogMemoryDiagnostics合并遍历、静态GUIStyle缓存
+// LatticeModifier v3.18 性能优化（针对15帧低帧率与持续内存增长）：顶点上传改用NativeArray<Vector3>+Mesh.SetVertices零拷贝路径替代mesh.vertices=数组（省托管堆分配+一次native拷贝）；DeformVertices内层累加器3float替代Vector3避免IL拆装；预乘targetW2L*latL2W展开9float省约50%矩阵乘加；RecalculateBounds每4帧节流省75%；LOD距离剔除s_maxDeformDistance=50f；SyncFromTransforms直接MarkDirty避免每帧27个Vector3比较
+// LatticeModifier v3.19 内存优化（消除泄漏源，玩家端内存增长主嫌疑修复）：CreateDeformMesh不可读分支全部NativeArray+Mesh.SetXxx零分配上传替代.ToArray()；GetReadableMesh改用AcquireReadOnlyMeshData替代Instantiate整Mesh（省blendshape/boneWeights/bindposes常驻几十MB）；删除vertCache死代码字段；重建冷却5s；s_activeLattices在OnDestroy多一道Remove双保险；LogMemoryDiagnostics改用Profiler API无分配；s_diagText用StringBuilder复用池；s_warnedMeshBuildFailures在OnDestroy清理限制增长
+// LatticeModifier v3.23 性能+内存根治（26Renderer共享LatticeModifier场景端到端治理）：Per-Renderer范围跳过（DeformVertices返回bool追踪anyInRange，无顶点进入晶格直接returnfalse跳过SetVertices+RecalculateBounds+蒙皮dispatch，K帧只动1-3控制点时26Renderer中22+跳过CPU/GPU开销降到1/6~1/13）；LOD距离剔除阈值50m→12m；玩家端%MEM稳定18.5%（295MB/1.6GB），无持续增长
+// LatticeModifier v3.23.2 关键回退：v3.23曾尝试修复销毁顺序（先切Renderer到originalMesh再Destroy旧Mesh），实际在SkinnedMeshRenderer首次创建场景下导致模型看不到（怀疑切回originalMesh后蒙皮缓冲未及时挂上），回退v3.19销毁顺序，靠5秒冷却+v3.17/v3.19机制控制内存增长
+// LatticeModifier v3.24 内部点压缩（surfaceOnly模式）：新增surfaceOnly序列化字段，开启时controlPoints只存外壳点（去掉6个内部面以内的点）；内部点对表面顶点影响极小（Bernstein基函数趋近0）可省去提升大晶格性能；PointCountX/Y/Z和TotalPoints仍按完整晶格逻辑；新增SurfacePointCount与3D索引→压缩索引表；DeformVertices内层累加按(ix,iy,iz)跳过内部索引（compressedLut[]查表）；Gizmo/动画CP Transform/轴心操作全按压缩索引走；新增外壳压缩按钮一键生成压缩索引无需重新InitializeLattice
+
 
 
 using System;
@@ -139,6 +69,14 @@ public class LatticeModifier : MonoBehaviour
     [Range(1, 8)] public int divisionsY = 2;
     [Range(1, 8)] public int divisionsZ = 2;
 
+    [Header("v3.24 性能：仅外壳控制点（去除内部控制点）")]
+    [Tooltip("开启后控制点只保留 6 个外壳面，去掉立方体内部的控制点。\n" +
+             "内部点对表面顶点影响极小（Bernstein 基函数趋近 0），可大幅减少 FFD 累加计算量。\n" +
+             "8x8x8 晶格控制点从 512 减到 296（-42%），4x4x4 从 64 减到 56（-12.5%）。\n" +
+             "修改后需要重新初始化晶格。\n" +
+             "v3.24.1 改为 NonSerialized：不再污染旧场景（避免初次启动旧场景时 IndexOutOfRange）。")]
+    [System.NonSerialized] public bool surfaceOnly = true;
+
     [Header("边缘羽化")]
     [Range(0f, 0.5f)] public float feather = 0f;
 
@@ -151,6 +89,15 @@ public class LatticeModifier : MonoBehaviour
     [HideInInspector] [SerializeField] private Vector3 latticeSize;
     [HideInInspector] [SerializeField] private bool initialized;
     [HideInInspector] [SerializeField] private Transform[] controlPointTransforms;
+
+    // v3.24：压缩索引查找表（3D 索引 → controlPoints[] 内的索引）
+    // - surfaceOnly=false：compressedLut[i] = i（恒等）
+    // - surfaceOnly=true：compressedLut[i] = -1（内部点）/ 0..N-1（外壳点）
+    // 长度 = nx * ny * nz = 完整晶格控制点总数
+    // 用 [NonSerialized] 因为 GenerateControlPoints 每次初始化重建，不需持久化
+    [NonSerialized] private int[] compressedLut;
+    // 内部点是否启用压缩（运行时标志，DeformVertices 循环读这个判断是否跳过）
+    [NonSerialized] private bool useCompressedCPL;
 
     [HideInInspector] [SerializeField] private List<DeformTarget> deformTargets = new List<DeformTarget>();
 
@@ -256,6 +203,32 @@ public class LatticeModifier : MonoBehaviour
     public int PointCountZ => divisionsZ + 1;
     public int TotalPoints => PointCountX * PointCountY * PointCountZ;
     public bool IsInitialized => initialized;
+
+    // v3.24：当前 controlPoints 实际长度（混合方案下恒等于 TotalPoints）
+    // 保留这个属性仅供 UI 显示，真正的"外壳点数"由调用方按 (nx-2)(ny-2)(nz-2) 算
+    public int SurfacePointCount => controlPoints != null ? controlPoints.Length : 0;
+
+    /// v3.24：判断 3D 索引 (ix,iy,iz) 是否在晶格外壳（6 个面之一）上
+    public bool IsOnSurface(int ix, int iy, int iz)
+    {
+        int nx = PointCountX, ny = PointCountY, nz = PointCountZ;
+        return ix == 0 || ix == nx - 1 ||
+               iy == 0 || iy == ny - 1 ||
+               iz == 0 || iz == nz - 1;
+    }
+
+    /// v3.24：把完整 3D 索引转外壳点索引（surfaceOnly=false 时返回自身，true 时内部点返回 -1）
+    public int ToCompressedIndex(int flatIndex3D)
+    {
+        if (compressedLut == null || flatIndex3D < 0 || flatIndex3D >= compressedLut.Length)
+            return flatIndex3D; // 退化路径：未构建表或越界时按原索引
+        return compressedLut[flatIndex3D];
+    }
+
+    public int ToCompressedIndex(int ix, int iy, int iz)
+    {
+        return ToCompressedIndex(GetFlatIndex(ix, iy, iz));
+    }
 
     #endregion
 
@@ -964,6 +937,9 @@ public class LatticeModifier : MonoBehaviour
             go.transform.SetParent(transform, false);
             go.transform.localPosition = controlPoints[i];
             controlPointTransforms[i] = go.transform;
+            // v3.24.3：surfaceOnly 开启时，内部点的 CP Transform 隐藏（仍存在以保持索引兼容）
+            if (surfaceOnly && !IsOnSurface(ix, iy, iz))
+                go.SetActive(false);
         }
     }
 
@@ -1282,20 +1258,102 @@ public class LatticeModifier : MonoBehaviour
     private void GenerateControlPoints()
     {
         int total = TotalPoints;
-        controlPoints = new Vector3[total];
-        initialControlPoints = new Vector3[total];
-        for (int ix = 0; ix < PointCountX; ix++)
-        for (int iy = 0; iy < PointCountY; iy++)
-        for (int iz = 0; iz < PointCountZ; iz++)
+        int nx = PointCountX, ny = PointCountY, nz = PointCountZ;
+
+        // v3.24 混合方案：controlPoints 数组保持 TotalPoints 长度不变（保留全部点数据，
+        // 这样所有 Gizmo/CP Transform/索引代码不用改），仅用 compressedLut 标记内部点
+        // 让 DeformVertices 内层累加时跳过它们。
+        // - surfaceOnly=false: compressedLut[i] = i（恒等，全算）
+        // - surfaceOnly=true:  compressedLut[i] = i（保留），useCompressedCPL=true（DeformVertices 读这个判断）
+        Vector3[] allPoints = new Vector3[total];
+        for (int ix = 0; ix < nx; ix++)
+        for (int iy = 0; iy < ny; iy++)
+        for (int iz = 0; iz < nz; iz++)
         {
             int idx = GetFlatIndex(ix, iy, iz);
-            Vector3 p = new Vector3(
+            allPoints[idx] = new Vector3(
                 latticeMin.x + latticeSize.x * ix / divisionsX,
                 latticeMin.y + latticeSize.y * iy / divisionsY,
                 latticeMin.z + latticeSize.z * iz / divisionsZ);
-            controlPoints[idx] = p;
-            initialControlPoints[idx] = p;
         }
+
+        controlPoints = allPoints;
+        initialControlPoints = (Vector3[])allPoints.Clone();
+
+        // 始终填一份 lut（恒等映射）；surfaceOnly 标记位单独控制 DeformVertices 跳过行为
+        compressedLut = new int[total];
+        for (int i = 0; i < total; i++) compressedLut[i] = i;
+        useCompressedCPL = surfaceOnly; // 真正决定是否跳过内部点累加
+    }
+
+    /// v3.24：运行时切换 surfaceOnly 模式。
+    /// 混合方案：controlPoints 数组保持 TotalPoints 长度不变，只切换 useCompressedCPL 标志位，
+    /// DeformVertices 累加时按 (ix,iy,iz) 判断是否在 surface 决定是否跳过。
+    /// 这样所有 Gizmo / 动画 CP Transform / 索引代码无需修改。
+    public void ApplySurfaceOnlyMode()
+    {
+        if (!initialized || controlPoints == null) return;
+
+        // v3.24.4：清除内部控制点数据（仅在切到 surfaceOnly=true 时执行）
+        // 切回 surfaceOnly=false 时不删除内部点数据，避免破坏用户已编辑的内部点位置
+        bool wasCompressed = useCompressedCPL;
+        bool clearingInterior = surfaceOnly && !wasCompressed; // 从全量切到外壳时才清除
+
+        // 重新生成控制点（按 surfaceOnly 标志决定 useCompressedCPL）
+        GenerateControlPoints();
+
+        // 同步动画控制点 Transform
+        if (controlPointTransforms == null)
+        {
+            CreateControlPointTransforms();
+        }
+        else
+        {
+            // v3.24.3：surfaceOnly 切换时同步显隐 CP Transform
+            // (CP Transform 数组长度不变，索引与 controlPoints 一一对应，
+            //  内部点 SetActive(false) 让 Hierarchy 看不到，外部点 SetActive(true))
+            int nx = PointCountX, ny = PointCountY, nz = PointCountZ;
+            for (int i = 0; i < controlPointTransforms.Length && i < controlPoints.Length; i++)
+            {
+                if (controlPointTransforms[i] == null) continue;
+                GetPointIndex3D(i, out int ix, out int iy, out int iz);
+                bool shouldBeActive = !surfaceOnly || IsOnSurface(ix, iy, iz);
+                if (controlPointTransforms[i].gameObject.activeSelf != shouldBeActive)
+                    controlPointTransforms[i].gameObject.SetActive(shouldBeActive);
+            }
+            SyncToTransforms();
+        }
+
+        // v3.24.4：清除内部控制点数据
+        // - controlPoints 内部点位置重置为默认（latticeMin + 按段数等分）
+        // - initialControlPoints 内部点位置也同步重置（保证 FFD 算 initPos 时内部点贡献为 0）
+        // - 对应 CP Transform 的 localPosition 同步重置（保持三者一致）
+        if (clearingInterior)
+        {
+            int nxC = PointCountX, nyC = PointCountY, nzC = PointCountZ;
+            for (int ix = 0; ix < nxC; ix++)
+            for (int iy = 0; iy < nyC; iy++)
+            for (int iz = 0; iz < nzC; iz++)
+            {
+                if (IsOnSurface(ix, iy, iz)) continue; // 只清内部点
+                int idx = GetFlatIndex(ix, iy, iz);
+                Vector3 defaultPos = new Vector3(
+                    latticeMin.x + latticeSize.x * ix / divisionsX,
+                    latticeMin.y + latticeSize.y * iy / divisionsY,
+                    latticeMin.z + latticeSize.z * iz / divisionsZ);
+                if (idx < controlPoints.Length) controlPoints[idx] = defaultPos;
+                if (initialControlPoints != null && idx < initialControlPoints.Length)
+                    initialControlPoints[idx] = defaultPos;
+                if (controlPointTransforms != null && idx < controlPointTransforms.Length
+                    && controlPointTransforms[idx] != null)
+                {
+                    controlPointTransforms[idx].localPosition = defaultPos;
+                }
+            }
+        }
+
+        MarkDirty();
+        ApplyDeformation();
     }
 
     private static int Binomial(int n, int k)
@@ -1375,11 +1433,19 @@ public class LatticeModifier : MonoBehaviour
         }
         NativeArray<Vector3> vertCacheNative = dt.vertCacheNative;
 
-        // 权重缓存是否仍然有效（组合矩阵 + feather + 顶点数 都未变）
+        // 权重缓存是否仍然有效（组合矩阵 + feather + 顶点数 + 数组非空 都未变）
+        // v3.24.1：必须同时校验所有 wc* 数组非 null，否则 RefreshWeightCache 跳过时 DeformVertices
+        // 会读到未初始化的数组（NullReferenceException）。
         bool cacheValid = dt.wcValid
             && dt.wcVertCount == srcVerts.Length
             && dt.wcFeather == feather
-            && dt.wcMatrix == combined;
+            && dt.wcMatrix == combined
+            && dt.wcInRange != null
+            && dt.wcFeatherW != null
+            && dt.wcInitPos != null
+            && dt.wcBx != null
+            && dt.wcBy != null
+            && dt.wcBz != null;
 
         if (!cacheValid)
             RefreshWeightCache(dt, srcVerts, combined, nx, ny, nz, l, m, n);
@@ -1427,21 +1493,31 @@ public class LatticeModifier : MonoBehaviour
 
             // 只重算 deformedPos（initPos 已缓存）：Σ w·controlPoints
             // v3.18 性能：累加用 3 个 float 而非 Vector3（避免 Vector3 内部隐式拆/装）
+            // v3.24 surfaceOnly 模式：useCompressedCPL=true 时按 (ix,iy,iz) 跳过内部点累加
+            // 注意：controlPoints 数组保留全部点，lut 是恒等映射，cpIdx 始终 == fullIdx
+            // 跳过条件直接用 IsOnSurface 三元比较（编译器友好，避免数组越界）
+            bool skipInterior = useCompressedCPL;
+            int nxMinus1 = nx - 1, nyMinus1 = ny - 1, nzMinus1 = nz - 1;
             float deformedX = 0f, deformedY = 0f, deformedZ = 0f;
             for (int ix = 0; ix < nx; ix++)
             {
+                bool ixOnEdge = (ix == 0 || ix == nxMinus1);
                 float bx = bxAll[bxBase + ix];
                 if (bx == 0f) continue;
                 for (int iy = 0; iy < ny; iy++)
                 {
+                    bool iyOnEdge = (iy == 0 || iy == nyMinus1);
                     float bxy = bx * byAll[byBase + iy];
                     if (bxy == 0f) continue;
-                    int idxBase = ix + iy * nx;
                     for (int iz = 0; iz < nz; iz++)
                     {
                         float w = bxy * bzAll[bzBase + iz];
                         if (w == 0f) continue;
-                        Vector3 cp = cpArr[idxBase + iz * nxny];
+                        // v3.24 内部点跳过：至少一个轴在边界上才在 surface
+                        if (skipInterior && !(ixOnEdge || iyOnEdge || (iz == 0 || iz == nzMinus1)))
+                            continue;
+                        int cpIdx = ix + iy * nx + iz * nxny;
+                        Vector3 cp = cpArr[cpIdx];
                         deformedX += w * cp.x;
                         deformedY += w * cp.y;
                         deformedZ += w * cp.z;
@@ -1492,6 +1568,42 @@ public class LatticeModifier : MonoBehaviour
         int nx, int ny, int nz, int l, int m, int n)
     {
         int vc = srcVerts.Length;
+
+        // v3.24.2 数据完整性保护：旧场景里 controlPoints/initialControlPoints 可能是"外壳点长度"
+        // （旧 B 方案生成的短数组，已序列化进场景），新代码按 (nx*ny*nz) 索引 → 越界。
+        // 根因：OnEnable→InitializeRuntime→ApplyDeformation 路径不会调 GenerateControlPoints。
+        // 修复：在入口重建为全量数组（用 latticeMin/latticeSize 按段数等分填默认位置），
+        // 这样旧场景启动后第一次 ApplyDeformation 就能安全走全量。
+        int totalNeeded = nx * ny * nz;
+        if (controlPoints == null || controlPoints.Length != totalNeeded)
+        {
+            controlPoints = new Vector3[totalNeeded];
+            int nxL = nx, nyL = ny, nzL = nz;
+            for (int ix2 = 0; ix2 < nxL; ix2++)
+            for (int iy2 = 0; iy2 < nyL; iy2++)
+            for (int iz2 = 0; iz2 < nzL; iz2++)
+            {
+                controlPoints[ix2 + iy2 * nxL + iz2 * nxL * nyL] = new Vector3(
+                    latticeMin.x + latticeSize.x * ix2 / divisionsX,
+                    latticeMin.y + latticeSize.y * iy2 / divisionsY,
+                    latticeMin.z + latticeSize.z * iz2 / divisionsZ);
+            }
+        }
+        if (initialControlPoints == null || initialControlPoints.Length != totalNeeded)
+        {
+            initialControlPoints = (Vector3[])controlPoints.Clone();
+        }
+        // 强制同步 useCompressedCPL（这是 DeformVertices 累加循环读的实际标志）。
+        // v3.24.3：保留 surfaceOnly 用户的设定，不强行关闭。
+        // - 数组兜底已完成（controlPoints/initialControlPoints 都是 TotalPoints 长度）
+        // - 用户如果勾了 surfaceOnly → useCompressedCPL=true → 内部点跳过累加
+        // - 用户没勾 → useCompressedCPL=false → 走全量累加（与旧版完全一致）
+        useCompressedCPL = surfaceOnly;
+        if (compressedLut == null || compressedLut.Length != totalNeeded)
+        {
+            compressedLut = new int[totalNeeded];
+            for (int i = 0; i < totalNeeded; i++) compressedLut[i] = i;
+        }
         if (dt.wcInRange == null || dt.wcInRange.Length != vc) dt.wcInRange = new bool[vc];
         if (dt.wcFeatherW == null || dt.wcFeatherW.Length != vc) dt.wcFeatherW = new float[vc];
         if (dt.wcInitPos == null || dt.wcInitPos.Length != vc) dt.wcInitPos = new Vector3[vc];
@@ -1543,21 +1655,27 @@ public class LatticeModifier : MonoBehaviour
             FillBasis(u, n, binomZ, dt.wcBz, bzBase, powA, powB);
 
             // initPos = Σ w·initialControlPoints（控制点初始位置恒定，故可缓存）
+            // v3.24 surfaceOnly：useCompressedCPL=true 时跳过内部点累加
+            bool skipInteriorInit = useCompressedCPL;
+            int initNxM1 = nx - 1, initNyM1 = ny - 1, initNzM1 = nz - 1;
             Vector3 initPos = Vector3.zero;
             for (int ix = 0; ix < nx; ix++)
             {
+                bool ixOnEdge = (ix == 0 || ix == initNxM1);
                 float bx = dt.wcBx[bxBase + ix];
                 if (bx == 0f) continue;
                 for (int iy = 0; iy < ny; iy++)
                 {
+                    bool iyOnEdge = (iy == 0 || iy == initNyM1);
                     float bxy = bx * dt.wcBy[byBase + iy];
                     if (bxy == 0f) continue;
-                    int idxBase = ix + iy * nx;
                     for (int iz = 0; iz < nz; iz++)
                     {
                         float w = bxy * dt.wcBz[bzBase + iz];
                         if (w == 0f) continue;
-                        initPos += w * initialControlPoints[idxBase + iz * nxny];
+                        if (skipInteriorInit && !(ixOnEdge || iyOnEdge || (iz == 0 || iz == initNzM1)))
+                            continue;
+                        initPos += w * initialControlPoints[ix + iy * nx + iz * nxny];
                     }
                 }
             }
