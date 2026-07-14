@@ -62,6 +62,9 @@ public class PBR_MobileGUI : ShaderGUI
     private MaterialProperty spotTextureContrast;
     private MaterialProperty spotTextureSize;
     private MaterialProperty spotTextureIntensity;
+    // 性能开关
+    private MaterialProperty disableBakedSpecular;
+    private MaterialProperty disableIndirectSpecular;
     private MaterialProperty cullMode;
     private MaterialProperty _Cutoff;
     private MaterialProperty _SrcBlend;
@@ -181,6 +184,9 @@ public class PBR_MobileGUI : ShaderGUI
         spotTextureContrast = FindProperty("_SpotTextureContrast", m_Properties);
         spotTextureSize = FindProperty("_SpotTextureSize", m_Properties);
         spotTextureIntensity = FindProperty("_SpotTextureIntensity", m_Properties);
+        // 性能开关（仅 PBR_Mobile 声明，Trans 找不到时为 null）
+        disableBakedSpecular = FindProperty("_DisableBakedSpecular", m_Properties, true);
+        disableIndirectSpecular = FindProperty("_DisableIndirectSpecular", m_Properties, true);
         cullMode = FindProperty("_Cull", m_Properties);
         _Cutoff = FindProperty("_Cutoff", m_Properties);
         _SrcBlend = FindProperty("_SrcBlend", m_Properties, false);
@@ -449,8 +455,22 @@ public class PBR_MobileGUI : ShaderGUI
     }
     private void DrawPerformance()
     {
-        // GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
-        m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
+        EditorGUILayout.Space(5);
+        using (new GUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
+            m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
+
+            // 性能开关 - 仅 PBR_Mobile 声明了这些属性，Trans 版本为 null 时自动隐藏
+            if (disableBakedSpecular != null)
+            {
+                m_MaterialEditor.ShaderProperty(disableBakedSpecular, "禁用烘焙高光（省 ALU，仅LIGHTMAP_ON下生效）");
+            }
+            if (disableIndirectSpecular != null)
+            {
+                m_MaterialEditor.ShaderProperty(disableIndirectSpecular, "禁用间接高光近似（省 1 次 fastPow+3次 mad）");
+            }
+        }
     }
 
     /// 获取材质参数存档路径
@@ -871,6 +891,10 @@ public class PBR_MobileGUI : ShaderGUI
         SyncToggle("_UsePointlight",      "_USEPOINTLIGHT");
         SyncToggle("_UseSpotlight",       "_USESPOTLIGHT");
         SyncToggle("_UseSpotTexture",     "_USESPOTTEXTURE");
+        SyncToggle("_DisableBakedSpecular",     "_DISABLEBAKEDSPECULAR");
+        SyncToggle("_DisableIndirectSpecular",  "_DISABLEINDIRECTSPECULAR");
+        // _ZWrite 关键字由 shader 的 [Toggle(_ZWWRITE)] 自动同步，但为保险起见在读档/重置时也手动同步一次
+        SyncToggle("_ZWrite",                  "_ZWWRITE");
     }
 
     /// 从文件加载材质参数（单个材质）

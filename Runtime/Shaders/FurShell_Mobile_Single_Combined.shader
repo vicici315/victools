@@ -76,7 +76,8 @@ Shader "Custom/FurShell_Mobile_SingleC"
         Tags 
         {
             "RenderType" = "Opaque"
-            "Queue" = "Geometry"
+            // "Queue" = "Geometry"
+            "Queue" = "Transparent"
             "RenderPipeline" = "UniversalPipeline" 
             "IgnoreProjector" = "True"
         }

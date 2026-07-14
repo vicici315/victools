@@ -17,7 +17,7 @@ public class CustomToonGUI : ShaderGUI
 
         // ── 基础颜色 ──
         EditorGUILayout.LabelField("基础颜色", EditorStyles.boldLabel);
-        materialEditor.ShaderProperty(FindProperty("_Color", properties), "颜色");
+        materialEditor.ShaderProperty(FindProperty("_BaseColor", properties), "颜色");
         materialEditor.TexturePropertySingleLine(new GUIContent("主贴图"), FindProperty("_BaseMap", properties));
         materialEditor.TextureScaleOffsetProperty(FindProperty("_BaseMap", properties));
         materialEditor.ShaderProperty(FindProperty("_AmbientColor", properties), "环境光颜色");
@@ -25,8 +25,9 @@ public class CustomToonGUI : ShaderGUI
         // ── 法线 ──
         EditorGUILayout.Space(6);
         EditorGUILayout.LabelField("法线贴图", EditorStyles.boldLabel);
-        materialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), FindProperty("_NormalMap", properties));
-        materialEditor.ShaderProperty(FindProperty("_NormalScale", properties), "法线强度");
+        materialEditor.ShaderProperty(FindProperty("_UseNormalMap", properties), "使用法线贴图");
+        materialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), FindProperty("_BumpMap", properties));
+        materialEditor.ShaderProperty(FindProperty("_BumpScale", properties), "法线强度");
 
         // ── 高光 ──
         EditorGUILayout.Space(6);

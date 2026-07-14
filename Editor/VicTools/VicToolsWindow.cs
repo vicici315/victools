@@ -1,6 +1,10 @@
+// 2.10.4 添加新工具菜单：创建 FPS帧率显示（可以自动创建帧率显示脚本相关对象）
+
 using UnityEngine;
+using UnityEngine.UI;
 using UnityEditor;
 using UnityEditor.IMGUI.Controls;
+using UnityEditor.SceneManagement;
 using System.Collections.Generic;
 using System.Linq;
 using System;
@@ -23,7 +27,7 @@ namespace VicTools
         }
 
         /// 性能分析器窗口标签名（包含版本号）
-        public const string PerformanceAnalyzerWindowName = "[性能分析 v1.8]";
+        /// 已移至 ScenePerformanceAnalyzer.WindowName，与 ScenesTools/ProjectTools 等脚本保持一致
     }
     
     /// 子窗口抽象基类 - 参考ES3Window的SubWindow设计
@@ -781,7 +785,7 @@ namespace VicTools
                     "ScenesTools",           // 场景工具 - 最常用
                     "ProjectTools",          // 项目工具
                     "ShaderMaterialFinder",  // 着色器材质查找器
-                    VicToolsConfig.PerformanceAnalyzerWindowName        // 性能分析器 - 重要工具
+                    ScenePerformanceAnalyzer.WindowName        // 性能分析器 - 重要工具
                 };
                 SaveCustomWindowOrder(customOrder);
             }
@@ -927,7 +931,7 @@ namespace VicTools
                     "ScenesTools",
                     "ProjectTools", 
                     "ShaderMaterialFinder",
-                    VicToolsConfig.PerformanceAnalyzerWindowName
+                    ScenePerformanceAnalyzer.WindowName
                 };
                 SaveCustomWindowOrder(defaultOrder);
                 ApplyWindowOrderChanges(); // 应用窗口顺序变化
@@ -1145,7 +1149,7 @@ namespace VicTools
             
             // 在窗口销毁前，如果当前是性能分析窗口，恢复常规窗口尺寸
             // 确保Unity保存的是常规窗口尺寸而不是性能分析窗口尺寸
-            if (_isPerformanceAnalyzerActive && CurrentWindow != null && CurrentWindow.Name == VicToolsConfig.PerformanceAnalyzerWindowName)
+            if (_isPerformanceAnalyzerActive && CurrentWindow != null && CurrentWindow.Name == ScenePerformanceAnalyzer.WindowName)
             {
                 // 恢复之前保存的常规窗口大小
                 if (_previousWindowSize != Vector2.zero)
@@ -1224,6 +1228,11 @@ namespace VicTools
             
             // 延迟执行窗口位置恢复，确保窗口完全初始化后再应用位置
             EditorApplication.delayCall += DelayedWindowRestore;
+
+            // 延迟做一次 TMP 字体健康检查，捕获"刚导入/未导入 TMP Essential"导致的 material 空字段问题
+#if TMP_PRESENT
+            EditorApplication.delayCall += ScheduleTmpFontHealthCheck;
+#endif
         }
         
         /// 延迟窗口恢复 - 确保窗口完全初始化后再应用位置和尺寸
@@ -1349,7 +1358,7 @@ namespace VicTools
             
             // 在窗口禁用前，如果当前是性能分析窗口，恢复常规窗口尺寸
             // 这样Unity保存的将是常规窗口尺寸而不是性能分析窗口尺寸
-            if (_isPerformanceAnalyzerActive && CurrentWindow != null && CurrentWindow.Name == VicToolsConfig.PerformanceAnalyzerWindowName)
+            if (_isPerformanceAnalyzerActive && CurrentWindow != null && CurrentWindow.Name == ScenePerformanceAnalyzer.WindowName)
             {
                 // 恢复之前保存的常规窗口大小
                 if (_previousWindowSize != Vector2.zero)
@@ -1391,7 +1400,7 @@ namespace VicTools
                 _needsWindowSizeUpdate = false;
                 
                 // 强制执行窗口尺寸更新
-                if (CurrentWindow == null || CurrentWindow.Name != VicToolsConfig.PerformanceAnalyzerWindowName)
+                if (CurrentWindow == null || CurrentWindow.Name != ScenePerformanceAnalyzer.WindowName)
                 {
                     // 确保应用保存的常规窗口尺寸
                     Vector2 clampedSize = new Vector2(
@@ -1408,7 +1417,7 @@ namespace VicTools
             }
             
             // 实时检测窗口尺寸变化并保存常规窗口尺寸（仅在停靠式窗口设置关闭时）
-            if (CurrentWindow != null && CurrentWindow.Name != VicToolsConfig.PerformanceAnalyzerWindowName && !_disableDockedWindowAutoSize)
+            if (CurrentWindow != null && CurrentWindow.Name != ScenePerformanceAnalyzer.WindowName && !_disableDockedWindowAutoSize)
             {
                 // 检查窗口尺寸是否发生变化
                 if (position.size != _previousWindowSize)
@@ -1551,7 +1560,7 @@ namespace VicTools
             if (!shouldDisableAutoSize)
             {
                 bool wasPerformanceAnalyzer = _isPerformanceAnalyzerActive;
-                bool isSwitchingToPerformanceAnalyzer = window.Name == VicToolsConfig.PerformanceAnalyzerWindowName;
+                bool isSwitchingToPerformanceAnalyzer = window.Name == ScenePerformanceAnalyzer.WindowName;
                 
                 // 如果之前是性能分析器，现在切换到其他窗口，保存当前大小并恢复之前的大小
                 if (wasPerformanceAnalyzer && !isSwitchingToPerformanceAnalyzer)
@@ -1677,6 +1686,11 @@ namespace VicTools
                 new VicDropdownItemData("创建 主材质自发光闪烁控制（EmissionFlicker）", LoadItemIcon(""), CreateEmissionFlicker),
                 new VicDropdownItemData("创建 旋转动画控制组件（RotationController）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/RotationController.png"), CreateRotationController),
                 new VicDropdownItemData("创建 探照灯体积雾（SpotLightVolume）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/SpotLightVolume.png"), CreateSpotLightVolume),
+                new VicDropdownItemData("创建 FPS帧率显示（当前场景）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/FPS.png"), CreateFPSDisplay),
+                VicDropdownItemData.Separator(),
+#if TMP_PRESENT
+                new VicDropdownItemData("修复 TMP 字体资源（material 字段为空的 TMP_FontAsset）", LoadItemIcon(""), FixTmpFontAssetMaterials),
+#endif
             };
         }
 
@@ -1686,6 +1700,7 @@ namespace VicTools
             {
                 new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon(""), SceneTools.ApplyLightDirectionToMaterials),
                 new VicDropdownItemData("校正 PBR_Mobile5.9 高光、反射数值", LoadItemIcon(""), CorrectPBRMobile58Specular),
+
             };
         }
 
@@ -1797,6 +1812,85 @@ namespace VicTools
                 Debug.LogWarning($"[VicTools] {notSpot} 个选中对象不是Spot Light，已忽略");
             if (count == 0 && skipped == 0)
                 EditorUtility.DisplayDialog("提示", "选中对象中没有可用的Spot Light", "确定");
+        }
+
+        /// 在当前场景创建一个 FPS 帧率显示控件（Packages/com.youdoo.victools/Runtime/Scripts/FPS.cs）。
+        ///   - 自动检测已加载场景中是否有 Canvas；没有则自动创建一个 ScreenSpaceOverlay Canvas + EventSystem
+        ///   - Text/TMP 组件由 FPS 脚本的 [RequireComponent] 自动添加（不再手动创建，避免与脚本冲突）
+        ///   - 文本内容、字号、颜色 等均由 FPS 脚本自己管理（Start / Update），本工具不重复配置
+        private void CreateFPSDisplay()
+        {
+            // 1. 找一个可挂载的 Canvas
+            Canvas canvas = null;
+#if UNITY_2023_1_OR_NEWER
+            var allCanvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var allCanvases = UnityEngine.Object.FindObjectsOfType<Canvas>(true);
+#endif
+            foreach (var c in allCanvases)
+            {
+                if (c != null && c.isActiveAndEnabled) { canvas = c; break; }
+            }
+            if (canvas == null && allCanvases != null && allCanvases.Length > 0)
+                canvas = allCanvases[0];
+
+            // 2. 没有 Canvas → 自动创建 Canvas + EventSystem
+            if (canvas == null)
+            {
+                var canvasGO = new GameObject("Canvas (FPS)");
+                Undo.RegisterCreatedObjectUndo(canvasGO, "Create FPS Canvas");
+                canvas = canvasGO.AddComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.sortingOrder = 32000;
+                canvasGO.AddComponent<CanvasScaler>();
+                canvasGO.AddComponent<GraphicRaycaster>();
+
+#if UNITY_2023_1_OR_NEWER
+                if (UnityEngine.Object.FindObjectsByType<UnityEngine.EventSystems.EventSystem>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length == 0)
+#else
+                if (UnityEngine.Object.FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+#endif
+                {
+                    var es = new GameObject("EventSystem");
+                    Undo.RegisterCreatedObjectUndo(es, "Create EventSystem");
+                    es.AddComponent<UnityEngine.EventSystems.EventSystem>();
+                    es.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+                }
+                Debug.Log("[VicTools] 已自动创建 Canvas + EventSystem（场景中无现有 Canvas）");
+            }
+
+            // 3. 避免重复
+            if (canvas.GetComponent<FPS>() != null)
+            {
+                EditorUtility.DisplayDialog("提示",
+                    $"Canvas [{canvas.name}] 上已存在 FPS 组件。\n请勿重复创建。", "确定");
+                Selection.activeGameObject = canvas.gameObject;
+                return;
+            }
+
+            // 4. 挂载 FPS 组件
+            //    [RequireComponent] 会自动添加 Text/TMP 组件；
+            //    文本的字号 / 颜色 / 内容 均由 FPS.Start() 与 Update() 自己管理。
+            //    本工具不重复配置，避免冲突。
+            var canvasGO2 = canvas.gameObject;
+            try
+            {
+                Undo.AddComponent<FPS>(canvasGO2);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[VicTools] CreateFPSDisplay 失败：{ex.Message}\n{ex.StackTrace}");
+                EditorUtility.DisplayDialog("错误",
+                    $"创建 FPS 显示控件失败：\n{ex.Message}", "确定");
+                return;
+            }
+
+            // 5. 选中 + 标记 dirty
+            Selection.activeGameObject = canvasGO2;
+            EditorUtility.SetDirty(canvasGO2);
+            EditorSceneManager.MarkSceneDirty(canvasGO2.scene);
+
+            Debug.Log($"[VicTools] 已在 Canvas [{canvasGO2.name}] 上挂载 FPS 组件（Text/TMP 由 RequireComponent 自动添加）");
         }
 
         private void CreateEmissionFlicker()
@@ -2132,6 +2226,214 @@ namespace VicTools
             EditorUtility.DisplayDialog("PBR_Mobile5.8 高光校正", message, "确定");
         }
 
+        /// 修复项目里所有 TMP_FontAsset 的 material 字段。
+        /// 现象：TMP_FontAsset 的 material 字段为 null（Asset 上显示 Font Material: None(Material)），
+        ///       Odin Inspector 刷新时调用 FindMaterialReferences 触发 UnassignedReferenceException。
+        /// 根因：TMP Essential Resources 导入不完整，或资源被破坏。
+        /// 修复策略：用 SerializedObject 找到每个 TMP_FontAsset 的 m_Material 字段，
+        ///          从同目录加载 "{name} Material.asset"，写入并保存。
+        private void FixTmpFontAssetMaterials()
+        {
+#if TMP_PRESENT
+            // 1. 收集所有 TMP_FontAsset
+            string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+            if (guids == null || guids.Length == 0)
+            {
+                EditorUtility.DisplayDialog("修复 TMP 字体资源",
+                    "项目中未找到任何 TMP_FontAsset 资源。\n" +
+                    "如需 TextMeshPro，请先通过 Window > TextMeshPro > Import TMP Essential Resources 导入。", "确定");
+                return;
+            }
+
+            int totalCount = guids.Length;
+            int fixedCount = 0;
+            int skippedCount = 0;
+            int failedCount = 0;
+            var failedList = new List<string>();
+
+            // 暂存"已加载的 Material 资产"避免重复加载
+            var materialCache = new Dictionary<string, Material>();
+
+            try
+            {
+                for (int i = 0; i < guids.Length; i++)
+                {
+                    string fontPath = AssetDatabase.GUIDToAssetPath(guids[i]);
+                    var font = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(fontPath);
+                    if (font == null) continue;
+
+                    EditorUtility.DisplayProgressBar("修复 TMP 字体资源",
+                        $"({i + 1}/{totalCount}) {font.name}", (float)i / totalCount);
+
+                    // 2. 如果 material 已经有效，跳过
+                    if (font.material != null)
+                    {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    // 3. 从同目录加载 "{fontName} Material.asset"
+                    string fontName = font.name;
+                    string dir = System.IO.Path.GetDirectoryName(fontPath)?.Replace('\\', '/');
+                    string matPath = $"{dir}/{fontName} Material.asset";
+
+                    Material mat = null;
+                    if (materialCache.TryGetValue(matPath, out var cached))
+                    {
+                        mat = cached;
+                    }
+                    else
+                    {
+                        mat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+                        if (mat != null) materialCache[matPath] = mat;
+                    }
+
+                    if (mat == null)
+                    {
+                        failedCount++;
+                        failedList.Add($"{fontPath}  →  找不到对应 Material 资产（{matPath}）");
+                        continue;
+                    }
+
+                    // 4. 用 SerializedObject 写入 m_Material（绕过只读限制）
+                    var so = new SerializedObject(font);
+                    var matProp = so.FindProperty("m_Material");
+                    if (matProp == null)
+                    {
+                        failedCount++;
+                        failedList.Add($"{fontPath}  →  找不到 m_Material 序列化字段");
+                        continue;
+                    }
+
+                    matProp.objectReferenceValue = mat;
+                    so.ApplyModifiedPropertiesWithoutUndo();
+                    EditorUtility.SetDirty(font);
+                    fixedCount++;
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            // 5. 保存所有修改
+            if (fixedCount > 0)
+            {
+                AssetDatabase.SaveAssets();
+                AssetDatabase.Refresh();
+            }
+
+            // 6. 报告
+            var msg = $"扫描完成：{totalCount} 个 TMP_FontAsset\n" +
+                      $"已修复：{fixedCount} 个\n" +
+                      $"已正常：{skippedCount} 个（material 不为空）\n" +
+                      $"失败：{failedCount} 个\n";
+
+            if (failedList.Count > 0)
+            {
+                msg += "\n失败列表：\n" + string.Join("\n", failedList);
+                msg += "\n\n失败原因：找不到对应的 Material 资产。\n" +
+                       "建议通过 Window > TextMeshPro > Import TMP Essential Resources 重新导入完整资源。";
+            }
+
+            EditorUtility.DisplayDialog("修复 TMP 字体资源", msg, "确定");
+
+            Debug.Log($"[VicTools] TMP_FontAsset 修复完成：扫描 {totalCount}，已修复 {fixedCount}，失败 {failedCount}");
+#endif
+        }
+
+#if TMP_PRESENT
+        // 一次性检查标记，每次窗口开启重置（避免一次窗口内重复弹窗）
+        private bool _tmpFontCheckDone = false;
+
+        /// 调度 TMP 字体健康检查。会话内只检查一次，且仅在用户未永久关闭时执行。
+        /// 入口：OnEnable（窗口打开/域重载）+ AssetPostprocessor（TMP 资源刚导入）。
+        private void ScheduleTmpFontHealthCheck()
+        {
+            if (_tmpFontCheckDone) return;
+            if (EditorPrefs.GetBool("VicTools.TmpFontCheck.disabled", false))
+            {
+                _tmpFontCheckDone = true;
+                return;
+            }
+            _tmpFontCheckDone = true;
+
+            // 额外延迟一拍，确保刚导入/重定向的资源已完成反序列化
+            EditorApplication.delayCall += () =>
+            {
+                if (this == null) return;
+                CheckTmpFontHealthAndNotify();
+            };
+        }
+
+        /// 扫描项目里的 TMP_FontAsset，发现 material 为空时弹窗询问用户。
+        /// 设计为 static 以便 AssetPostprocessor 在窗口未实例化时也能安全调用。
+        private static void CheckTmpFontHealthAndNotify()
+        {
+            try
+            {
+                string[] guids = AssetDatabase.FindAssets("t:TMP_FontAsset");
+                if (guids == null || guids.Length == 0) return;
+
+                int nullMatCount = 0;
+                var brokenPaths = new List<string>();
+
+                for (int i = 0; i < guids.Length; i++)
+                {
+                    string path = AssetDatabase.GUIDToAssetPath(guids[i]);
+                    var font = AssetDatabase.LoadAssetAtPath<TMPro.TMP_FontAsset>(path);
+                    if (font == null) continue;
+                    if (font.material == null)
+                    {
+                        nullMatCount++;
+                        if (brokenPaths.Count < 6) brokenPaths.Add(path);
+                    }
+                }
+
+                if (nullMatCount == 0) return;
+
+                string sample = brokenPaths.Count > 0
+                    ? "\n示例资源：\n  " + string.Join("\n  ", brokenPaths)
+                      + (nullMatCount > brokenPaths.Count ? $"\n  ... 等共 {nullMatCount} 个" : "")
+                    : "";
+
+                string msg = $"检测到 {nullMatCount} 个 TMP_FontAsset 的 material 字段为空。\n\n" +
+                             "可能原因：TMP Essential Resources 导入不完整或被破坏。\n" +
+                             "未修复前，使用 TextMeshProUGUI 的组件可能在 Inspector 刷新时触发 UnassignedReferenceException。\n" +
+                             "若刚执行过 Window > TextMeshPro > Import TMP Essential Resources，可以直接让本工具补齐 material 引用。" +
+                             sample;
+
+                int choice = EditorUtility.DisplayDialogComplex(
+                    "TMP 字体资源异常",
+                    msg,
+                    "立即修复",   // 0
+                    "不再提示",   // 1
+                    "稍后处理");  // 2
+
+                if (choice == 0)
+                {
+                    var win = Resources.FindObjectsOfTypeAll<VicToolsWindow>()?.FirstOrDefault();
+                    if (win != null)
+                    {
+                        win.FixTmpFontAssetMaterials();
+                    }
+                    else
+                    {
+                        Debug.LogWarning("[VicTools] 未找到打开的 VicTools 窗口，请打开后从菜单手动执行'修复 TMP 字体资源'。");
+                    }
+                }
+                else if (choice == 1)
+                {
+                    EditorPrefs.SetBool("VicTools.TmpFontCheck.disabled", true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[VicTools] TMP 字体健康检查失败: {ex.Message}");
+            }
+        }
+#endif
+
         /// 加载保存的常规窗口尺寸
         private void LoadNormalWindowSize()
         {
@@ -2142,7 +2444,7 @@ namespace VicTools
             _normalWindowSize = new Vector2(savedWidth, savedHeight);
             
             // 如果当前不是性能分析窗口，应用保存的常规窗口尺寸
-            if (CurrentWindow != null && CurrentWindow.Name == VicToolsConfig.PerformanceAnalyzerWindowName) return;
+            if (CurrentWindow != null && CurrentWindow.Name == ScenePerformanceAnalyzer.WindowName) return;
             // 确保窗口尺寸在合理范围内
             var clampedSize = new Vector2(
                 Mathf.Clamp(_normalWindowSize.x, minSize.x, maxSize.x),
@@ -2160,7 +2462,7 @@ namespace VicTools
         private void SaveNormalWindowSize()
         {
             // 只有当当前不是性能分析窗口时才保存常规窗口尺寸
-            if (CurrentWindow is { Name: VicToolsConfig.PerformanceAnalyzerWindowName }) return;
+            if (CurrentWindow is { Name: ScenePerformanceAnalyzer.WindowName }) return;
             // 保存当前窗口尺寸作为常规窗口尺寸
             _normalWindowSize = position.size;
                 
@@ -2534,6 +2836,67 @@ namespace VicTools
         }
 
     }
+
+#if TMP_PRESENT
+    // ═══════════════════════════════════════════
+    //  TMP 字体健康检查监听器
+    //  用途：监听 TMP 资源导入（含 Window > TextMeshPro > Import TMP Essential Resources），
+    //        导入完成且本窗口已打开时，弹窗询问是否修复空 material 字段。
+    // ═══════════════════════════════════════════
+
+    /// 监听 TMP 相关资产的导入/移动/删除，触发字体健康检查。
+    /// 内置 1 秒去抖避免批量导入时反复弹窗。
+    internal class TmpFontAssetWatcher : AssetPostprocessor
+    {
+        private const double CheckDebounceSeconds = 1.0;
+        private static double _lastCheckTime = 0;
+        private static bool _scheduled = false;
+
+        private static void OnPostprocessAllAssets(
+            string[] importedAssets,
+            string[] deletedAssets,
+            string[] movedAssets,
+            string[] movedFromAssetPaths)
+        {
+            if (_scheduled) return;
+            if (importedAssets == null || importedAssets.Length == 0) return;
+
+            bool hasTmpChange = false;
+            for (int i = 0; i < importedAssets.Length; i++)
+            {
+                var path = importedAssets[i];
+                if (string.IsNullOrEmpty(path)) continue;
+                if (path.IndexOf("TextMesh Pro", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    path.IndexOf("TMP_", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    hasTmpChange = true;
+                    break;
+                }
+            }
+            if (!hasTmpChange) return;
+
+            double now = EditorApplication.timeSinceStartup;
+            if (now - _lastCheckTime < CheckDebounceSeconds) return;
+            _lastCheckTime = now;
+            _scheduled = true;
+
+            EditorApplication.delayCall += () =>
+            {
+                _scheduled = false;
+                // 用户已永久关闭则跳过
+                if (EditorPrefs.GetBool("VicTools.TmpFontCheck.disabled", false)) return;
+
+                // 反射调用 VicToolsWindow 的私有静态检查方法
+                // 之所以走反射：避免在 TMP 未安装时把方法签名暴露成 public，保持 API 干净
+                var method = typeof(VicToolsWindow).GetMethod(
+                    "CheckTmpFontHealthAndNotify",
+                    System.Reflection.BindingFlags.Static |
+                    System.Reflection.BindingFlags.NonPublic);
+                method?.Invoke(null, null);
+            };
+        }
+    }
+#endif
 
     // ═══════════════════════════════════════════
     //  AdvancedDropdown 通用实现（支持图标）

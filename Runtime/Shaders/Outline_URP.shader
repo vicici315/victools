@@ -143,12 +143,85 @@ Shader "Custom/Outline/Outline"
                 // 直接返回轮廓颜色
                 return _outline_color;
             }
-            
+
             ENDHLSL
         }
-        
+
+        // 用于兼容 URP DepthPrimingMode=Forced：
+        // Forced 模式下 URP 会先把 ZWrite 关掉做 depth pre-pass，没有 DepthOnly pass 的材质在 prepass
+        // 路径下没有深度可参考，导致后续 pass 渲染异常。这里补一个与主 pass 一致的（Cull Front）DepthOnly。
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode"="DepthOnly" }
+            Cull Front
+            ZWrite On
+            ColorMask 0
+            Offset -1, -1
+
+            HLSLPROGRAM
+
+            #pragma vertex DepthOnlyVertex
+            #pragma fragment DepthOnlyFragment
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            CBUFFER_START(UnityPerMaterial)
+                float _outline_scale;
+                float4 _outline_color;
+                float _use_object_center;
+                float4 _center_offset;
+                float _use_edge_detection;
+                float _edge_threshold;
+                float _edge_smooth;
+            CBUFFER_END
+
+            struct DepthAttributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS   : NORMAL;
+            };
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            // 与主 vert 函数一致的"描边外扩"逻辑，得到与主 pass 形状相近的轮廓深度。
+            // DepthOnly pass 只用于写入深度参考，不参与颜色绘制，不计算世界空间等多余变量。
+            DepthVaryings DepthOnlyVertex(DepthAttributes input)
+            {
+                DepthVaryings output;
+
+                float3 outlinePositionOS;
+
+                if (_use_object_center > 0.5)
+                {
+                    // 模式1：使用物体中心作为缩放中心
+                    float3 center = _center_offset.xyz;
+                    outlinePositionOS = center + (input.positionOS.xyz - center) * _outline_scale * 0.94;
+                }
+                else
+                {
+                    // 模式2：使用顶点法线方向偏移
+                    float3 offset = input.normalOS * (_outline_scale - 1.0) * 0.2;
+                    outlinePositionOS = input.positionOS.xyz + offset;
+                }
+
+                output.positionCS = TransformObjectToHClip(outlinePositionOS);
+                return output;
+            }
+
+            half DepthOnlyFragment(DepthVaryings input) : SV_TARGET
+            {
+                return 0;
+            }
+
+            ENDHLSL
+        }
+
     }
-    
+
 //    Fallback "Hidden/Universal Render Pipeline/FallbackError"
 //    CustomEditor "UnityEditor.ShaderGraph.GenericShaderGraphMaterialGUI"
 }

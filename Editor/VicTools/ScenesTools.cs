@@ -20,6 +20,7 @@
 //               订阅 EditorSceneManager.sceneOpened / activeSceneChangedInEditMode 事件，
 //               场景打开后自动重新尝试恢复 null 对象
 //               【刷新→】按钮合并了按场景信息恢复 null 对象的能力
+// 场景工具 v2.29 资源箱添加【场景】按钮，一键将当前打开的所有场景（多场景支持）放入资源箱
 
 using System;
 using UnityEngine;
@@ -174,7 +175,7 @@ public class ResourceBoxRecoveryItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.28]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.29]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -844,7 +845,7 @@ public class ResourceBoxRecoveryItem
                 SelectObjectsMaterial();
             }
             GUI.backgroundColor = Color.green;
-            if (GUILayout.Button(new GUIContent("↓", "选择多个模型，统一使用最后选择对象的材质球"), style.normalButton, GUILayout.Width(25)))
+            if (GUILayout.Button(new GUIContent("←", "选择多个模型，统一使用最后选择对象的材质球"), style.normalButton, GUILayout.Width(25)))
             {
                 GetLastMat();
             }
@@ -927,19 +928,24 @@ public class ResourceBoxRecoveryItem
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField($"资源箱: ( {_resourceBox.Count} )", style.subheading, GUILayout.Height(24));
             GUILayout.FlexibleSpace();
+            // 清除资源箱按钮（带确认）
+            GUI.backgroundColor = Color.red;
+            if (GUILayout.Button(new GUIContent("清空 X", "清空资源箱中所有内容！")))
+            {
+                ClearResourceBoxWithConfirmation();
+            }
             // 按类型排序按钮
             GUI.backgroundColor = Color.yellow;
             if (GUILayout.Button("按类型排序"))
             {
                 SortResourceBoxByType();
             }
-            // 清除资源箱按钮（带确认）
-            GUI.backgroundColor = Color.red;
-            if (GUILayout.Button("清空资源箱 X"))
+            // 一键将当前打开的所有场景放入资源箱
+            GUI.backgroundColor = Color.magenta;
+            if (GUILayout.Button(new GUIContent("场景↓", "将当前打开的所有场景(支持多场景)放入资源箱")))
             {
-                ClearResourceBoxWithConfirmation();
+                AddOpenScenesToResourceBox();
             }
-            GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.EndVertical();
@@ -1957,6 +1963,68 @@ public class ResourceBoxRecoveryItem
             UpdateSelectedObjectsInResourceBox();
             if (Parent) Parent.Repaint();
             SaveResourceBox(false);
+        }
+
+        /// v2.29 一键将当前打开的所有场景（支持多场景）放入资源箱
+        /// 遍历 SceneManager 中已加载的 Scene，按场景路径加载对应的 SceneAsset 并加入资源箱
+        private void AddOpenScenesToResourceBox()
+        {
+            var addedCount = 0;
+            var skippedCount = 0;
+            var notAssetCount = 0;
+            var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // 防止多场景打开同一文件时重复
+
+            for (int i = 0; i < SceneManager.sceneCount; i++)
+            {
+                var scene = SceneManager.GetSceneAt(i);
+                if (!scene.IsValid() || !scene.isLoaded) continue;
+
+                var path = scene.path;
+                if (string.IsNullOrEmpty(path))
+                {
+                    // 未保存的新建场景没有路径，无法取 SceneAsset
+                    notAssetCount++;
+                    continue;
+                }
+
+                if (!seenPaths.Add(path)) continue; // 同路径已处理过
+
+                var sceneAsset = AssetDatabase.LoadAssetAtPath<SceneAsset>(path);
+                if (sceneAsset == null)
+                {
+                    notAssetCount++;
+                    Debug.LogWarning($"无法加载场景资源: {path}");
+                    continue;
+                }
+
+                if (_resourceBox.Contains(sceneAsset))
+                {
+                    skippedCount++;
+                    continue;
+                }
+
+                InsertToResourceBoxByType(sceneAsset);
+                addedCount++;
+            }
+
+            if (addedCount <= 0)
+            {
+                var msg = "没有新场景被加入资源箱";
+                if (skippedCount > 0) msg += $"\n已存在: {skippedCount} 个";
+                if (notAssetCount > 0) msg += $"\n未保存/无法加载: {notAssetCount} 个（请先保存场景）";
+                EditorUtility.DisplayDialog("提示", msg, "确定");
+                return;
+            }
+
+            RebuildIndexMappings();
+            UpdateSelectedObjectsInResourceBox();
+            if (Parent) Parent.Repaint();
+            SaveResourceBox(false);
+
+            var summary = $"已添加 {addedCount} 个场景到资源箱";
+            if (skippedCount > 0) summary += $"\n已存在跳过: {skippedCount} 个";
+            if (notAssetCount > 0) summary += $"\n未保存/无法加载: {notAssetCount} 个";
+            Debug.Log(summary);
         }
 
         /// 带确认的清除资源箱

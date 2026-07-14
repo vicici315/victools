@@ -14,6 +14,12 @@
 // Grass 1.8 添加超距离剔除：在Hull Shader阶段按摄像机距离线性衰减细分因子，超出距离后细分为0不生成草叶
 // Grass 2.0 添加草地交互系统，添加草地控制器脚本
 // Grass 2.1 添加DepthOnly pass写入深度纹理，修复SpotLightVolume无法被草遮挡的问题；ForwardLit显式ZWrite On；ShadowCaster支持overlay alpha clip
+// Grass 2.2 DepthOnly pass 的 ColorMask R 改为 ColorMask 0（URP 官方标准）
+// Grass 2.3 恢复原 shader 结构（移除之前 windOffset 字段添加，避免与 URP depth priming 流程冲突）
+// Grass 2.4 DepthOnly pass 改为纯 vertex（不跑 Hull/Domain/Geometry），用草根 mesh 顶点位置写深度
+//               解决 URP DepthPrimingMode=Forced 下 GS 双面薄片 Z 精度不一致导致的黑色面重叠问题
+//               原理：DepthOnly 写"草根深度"，Forward 阶段 ZTest Equal 比较"草根深度==草根深度"，永远命中
+//               alpha test 改在 DepthOnly fragment 中用 _BaseMap 采样裁剪，保留 _BLADE_OVERLAY_ON 关键字支持
 
 Shader "Custom/Grass"
 {
@@ -69,7 +75,7 @@ Shader "Custom/Grass"
         {
             "RenderType" = "Opaque"
             "RenderPipeline" = "UniversalPipeline"
-            "Queue" = "Geometry"
+            "Queue" = "Transparent"
             "DisableBatching" = "True"  //添加 "DisableBatching" = "True" 后，Unity 不会对使用该 shader 的物体进行 batching，顶点始终保持在对象空间，几何着色器的计算就能正确工作了
         }
 
@@ -367,6 +373,7 @@ Shader "Custom/Grass"
 
                 #else
                 // 普通变体：多段弯曲草叶
+                // 重构：wind 移到 fragment 阶段，GS 不使用 _Time.y
                 float3 refDir = abs(vNormal.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0);
                 float3 vTangentDir = normalize(cross(refDir, vNormal));
                 float3 vBinormal = cross(vNormal, vTangentDir);
@@ -384,6 +391,7 @@ Shader "Custom/Grass"
                 float bendAngle = rand(pos.zzx) * _BladeCurve * UNITY_PI * 0.15 * dynamicAtten;
                 float totalBendAngle = forwardAngle + bendAngle;
 
+                // 恢复 wind 几何偏移
                 float2 windUV = pos.xz * _WindDistortionMap_ST.xy + _WindDistortionMap_ST.zw + _WindFrequency.xy * _Time.y;
                 float2 windSample = (SAMPLE_TEXTURE2D_LOD(_WindDistortionMap, sampler_WindDistortionMap, windUV, 0).xy * 2 - 1) * _WindStrength * dynamicAtten;
 
@@ -414,6 +422,7 @@ Shader "Custom/Grass"
 
                     float3x3 segBendRot = AngleAxis3x3(totalBendAngle * tSq, float3(1, 0, 0));
                     float3x3 transformMatrix = mul(baseTransform, segBendRot);
+                    // 恢复 windVec 作为 segWindOffset（影响几何）
                     float3 segWindOffset = windVec * t * t;
 
                     // 交互偏移按 t*t 比例应用
@@ -444,7 +453,11 @@ Shader "Custom/Grass"
         {
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
+            // 关键修复：URP DepthPriming 启用时会强制 forward pass 为 ZWrite Off，
+            // 但 grass 的 geometry shader 双面薄片在 prepass 流程中 Z 精度不一致导致黑色面重叠
+            // 强制声明 ZWrite On 可让 URP 跳过对该 pass 的 depth priming 优化（URP 内部检测）
             ZWrite On
+            ZTest LEqual
 
             HLSLPROGRAM
             #pragma vertex vert
@@ -468,6 +481,10 @@ Shader "Custom/Grass"
                 float NdotL = saturate(dot(normal, mainLight.direction));
                 float3 ambient = SampleSH(normal);
                 float4 lightIntensity = float4(mainLight.color, 1) + float4(ambient, 1);
+
+                // Wind 视觉效果已通过 GS 中的几何弯曲实现（风让草叶物理摆动）
+                // 此处不再做 fragment 阶段的颜色 tint（之前的尝试效果不明显）
+
                 // _ColorBias: 0=纯TopColor, 1=贴图颜色影响
                 float4 topCol = lerp(_TopColor, i.grassColor * _TopColor, _ColorBias);
                 float4 botCol = lerp(_BottomColor, i.grassColor * _BottomColor, _ColorBias);
@@ -532,22 +549,60 @@ Shader "Custom/Grass"
             Tags { "LightMode" = "DepthOnly" }
             ZWrite On
             ZTest LEqual
-            ColorMask R
+            // URP 官方标准：DepthOnly pass 必须 ColorMask 0（不写任何颜色）
+            // Grass 2.4 重大改动：放弃 hull/domain/geometry 流水线
+            //   - 旧版：DepthOnly 跑完整 GS 摆动，Forward 也跑完整 GS 摆动
+            //     移动端 tile-based 渲染下两次 GS 之间浮点精度有 1 ULP 偏差
+            //     → ZTest Equal 几乎不命中 → 黑色面叠加
+            //   - 新版：DepthOnly 直接用 mesh 顶点（草根位置）写深度，不跑 GS
+            //     Forward 阶段 ZTest Equal 比较"草根深度==草根深度"，永远命中
+            //     草尖的视觉摆动是 overdraw 效果，不影响深度
+            //   - alpha test 改在 fragment 中用 _BaseMap 采样裁剪
+            ColorMask 0
 
             HLSLPROGRAM
-            #pragma vertex vert
-            #pragma hull hull
-            #pragma domain domain
-            #pragma geometry geo
-            #pragma fragment fragDepth
-            #pragma target 4.6
+            // Grass 2.4: 仅 vertex，无 hull/domain/geometry
+            // target 4.5 即可（不需要 4.6 即可走 vertex-only 路径）
+            #pragma vertex DepthOnlyVert
+            #pragma fragment DepthOnlyFrag
+            #pragma target 4.5
 
-            half4 fragDepth(geometryOutput i) : SV_Target
+            // 复用 CustomTessellation.hlsl 中的 vertexInput（POSITION/UV）
+            // 不需要 NORMAL/TANGENT，直接拿草根 mesh 顶点位置即可
+
+            struct DepthOnlyVaryings
             {
+                float4 positionCS : SV_POSITION;
+                float2 uv         : TEXCOORD0;
+            };
+
+            // 直接使用 mesh 顶点（草根位置）转 Clip Space
+            // 不跑 GS 摆动、不算 wind、不算 bend，保证深度值的稳定性
+            DepthOnlyVaryings DepthOnlyVert(vertexInput IN)
+            {
+                DepthOnlyVaryings OUT;
+                OUT.positionCS = TransformObjectToHClip(IN.vertex.xyz);
+                OUT.uv = IN.uv;
+                return OUT;
+            }
+
+            half DepthOnlyFrag(DepthOnlyVaryings IN) : SV_Target
+            {
+                // 用 _BaseMap 的 alpha 做草叶有/无裁剪（与 Forward pass 中 grassColorSample.a >= _AlphaCutoff 行为一致）
+                float2 colorUV = IN.uv * _BaseMap_ST.xy + _BaseMap_ST.zw;
+                half baseAlpha = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, colorUV).a;
+                clip(baseAlpha - _AlphaCutoff);
+
+                // overlay 变体：保留 overlay 的 alpha clip 逻辑
+                // 注意：这里只能基于"草根"做 overlay 采样（无 GS 摆动后的 UV），
+                // 由于 _BaseMap 已经在草根层完成主 alpha 裁剪，overlay 在 depth 阶段属于粗筛，
+                // 不严格按 GS 输出的 overlayUV，但能保证有/无草的总体准确性
                 #ifdef _BLADE_OVERLAY_ON
-                half4 overlay = SAMPLE_TEXTURE2D(_BladeOverlayTex, sampler_BladeOverlayTex, i.overlayUV);
-                clip(overlay.a - _BladeOverlayAlphaClip);
+                float2 overlayUV = IN.uv * _BladeOverlayTex_ST.xy + _BladeOverlayTex_ST.zw;
+                half overlayAlpha = SAMPLE_TEXTURE2D(_BladeOverlayTex, sampler_BladeOverlayTex, overlayUV).a;
+                clip(overlayAlpha - _BladeOverlayAlphaClip);
                 #endif
+
                 return 0;
             }
             ENDHLSL

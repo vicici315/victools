@@ -18,6 +18,7 @@
 //      添加_DisableEnvironment参数 - 支持禁用环境光，只使用实时光照；修复finalColor缺少ambient的bug
 // 继承PBR_Mobile6.0 完善所有效果，继承原始表现效果（支持ShadowMap透明投影）
 // 继承PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
+// 继承PBR_Mobile6.5 P0性能优化：MRA贴图条件采样、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关；_ZWrite改用shader_feature_local关键字化
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
@@ -99,10 +100,12 @@ Shader "Custom/PBR_Mobile_Trans"
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend("Dst Blend", Float) = 0
         
-        [Toggle] _ZWrite("Z Write", Float) = 1
+        [Toggle(_ZWWRITE)] _ZWrite("Z Write", Float) = 1
         
         [Header(#  (Performance))]
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
+        [Toggle(_DISABLEBAKEDSPECULAR)] _DisableBakedSpecular ("Disable Baked Specular (烘焙高光)", Float) = 1
+        [Toggle(_DISABLEINDIRECTSPECULAR)] _DisableIndirectSpecular ("Disable Indirect Specular (间接高光近似)", Float) = 1
     }
 
     SubShader
@@ -112,7 +115,8 @@ Shader "Custom/PBR_Mobile_Trans"
             "RenderType" = "TransparentCutout"
             "RenderPipeline" = "UniversalPipeline"
             "IgnoreProjector" = "True"
-            "Queue" = "AlphaTest"
+            // "Queue" = "AlphaTest"
+            "Queue" = "Transparent"
         }
 
         Pass
@@ -120,6 +124,9 @@ Shader "Custom/PBR_Mobile_Trans"
             Name "ForwardLit"
             Tags { "LightMode" = "UniversalForward" }
             Blend [_SrcBlend] [_DstBlend]
+            // 注意：ShaderLab 的 Pass 状态块不支持 #ifdef 包裹 ZWrite
+            // 改为用 shader_feature_local 关键字，Unity 通过 Properties 中的 [Toggle(_ZWWRITE)] 自动绑定
+            // 这里用属性形式驱动 ZWrite（SRP Batcher 在单 ZWrite 状态下完全兼容）
             ZWrite [_ZWrite]
             Cull[_Cull]
             HLSLPROGRAM
@@ -138,6 +145,9 @@ Shader "Custom/PBR_Mobile_Trans"
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _DISABLEENVIRONMENT
             #pragma shader_feature_local _DISABLELIGHTCOLOR
+            #pragma shader_feature_local _DISABLEBAKEDSPECULAR
+            #pragma shader_feature_local _DISABLEINDIRECTSPECULAR
+            #pragma shader_feature_local _ZWWRITE
             
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             
@@ -565,7 +575,12 @@ Shader "Custom/PBR_Mobile_Trans"
                 #endif
                 
                 // 使用预计算的diffuseColor和specularColor（性能优化）
+                // _DISABLEINDIRECTSPECULAR：关闭环境光中 specularColor*metallic*0.5 的间接高光近似项（与PBR_Mobile保持一致）
+                #ifdef _DISABLEINDIRECTSPECULAR
+                half3 ambient = bakedGI * mat.diffuseColor;
+                #else
                 half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
+                #endif
                 
                 // Subtractive模式特殊处理：让静态物体接收动态物体的实时阴影
                 #if defined(LIGHTMAP_ON) && defined(LIGHTMAP_SHADOW_MIXING)
@@ -584,7 +599,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 // 烘焙高光（保留原来的效果）
                 half3 bakedSpecular = 0;
-                #ifdef LIGHTMAP_ON
+                #if defined(LIGHTMAP_ON) && !defined(_DISABLEBAKEDSPECULAR)
                     bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
                     finalColor += mat.specularColor * bakedSpecular;
                 #endif

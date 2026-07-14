@@ -20,7 +20,7 @@
 // LatticeModifierEditor v3.28 切换晶格对象时「扩展选择」错乱修复：SyncLatticeFromTarget 增加 s_activeLattice 三方比对，解决多 Inspector 锁定场景下 static selectedPoints 属于另一个晶格但当前编辑器仍使用其展开操作的问题。
 // LatticeModifierEditor v3.29 选中状态丢失修复：selectedPoints 从 static 改为实例字段，每个 Editor 实例独立维护自己的选中点集合。不再通过 static 共享，彻底避免多 Inspector 窗口间交叉清除选中状态。SyncLatticeFromTarget 简化为只处理 Editor 复用（target 变 lattice 未变）的单一场合。
 // LatticeModifierEditor v3.30 多 Inspector 同步修复：selectedPoints 改为属性，底层按 InstanceID 存储在静态 Dictionary 中。多个 Inspector 窗口显示同一晶格时共享同一份选中数据，切换晶格时自动获取对应晶格的独立选中集（切换回来时自动恢复）。不再交叉清除。
-
+// LatticeModifierEditor v3.31 扩展选择支持 Undo/Redo：ExpandSelection 通过 Undo.RecordObject 创建撤销点 + undoRedoPerformed 一次性回调实现双向切换，Ctrl+Z 回退 Ctrl+Y 重做。
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -91,11 +91,9 @@ public class LatticeModifierEditor : Editor
         EnsureHookRegistered();
     }
 
-    /// <summary>
     /// 显式触发 SceneView 钩子注册。供 LatticeModifierInitOnLoad 在 Editor 启动时
     /// 主动调用以强制加载本类（CustomEditor 属性本身不会触发静态构造函数）。
     /// 内部用 s_registered 防重复。
-    /// </summary>
     internal static void EnsureHookRegistered()
     {
         if (s_registered) return;
@@ -103,12 +101,9 @@ public class LatticeModifierEditor : Editor
         s_registered = true;
     }
 
-
-    /// <summary>
     /// v3.30：仅处理 Unity 复用 Editor 实例但未调用 OnEnable 的场景（target 变了
     /// 但 lattice 仍是旧值）。不再清除选中——selectedPoints 属性按 InstanceID
     /// 自动返回新 lattice 的独立选中集，不会混淆。
-    /// </summary>
     private void SyncLatticeFromTarget()
     {
         var currentTarget = target as LatticeModifier;
@@ -288,7 +283,6 @@ public class LatticeModifierEditor : Editor
         // v3.9：取消目标模式选项，统一使用多目标逻辑
         serializedObject.Update();
 
-
         // ── 显示目标字段 ──
         EditorGUILayout.PropertyField(serializedObject.FindProperty("targetRoot"), new GUIContent("多目标根节点"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("manualRenderers"), new GUIContent("手动指定 Renderer"), true);
@@ -405,20 +399,6 @@ public class LatticeModifierEditor : Editor
                       $"共 {renderers.Count} 个 Renderer\n" +
                       "点击选中 | Ctrl+点击加选 | Shift+拖拽框选 | 拖拽手柄变形";
         EditorGUILayout.HelpBox(info, MessageType.Info);
-
-        // 目标 Renderer 列表
-        if (renderers.Count > 0)
-        {
-            EditorGUILayout.Space(3);
-            EditorGUILayout.LabelField("目标 Renderer 列表：", EditorStyles.boldLabel);
-            EditorGUI.indentLevel++;
-            for (int i = 0; i < renderers.Count; i++)
-            {
-                string typeName = renderers[i] is SkinnedMeshRenderer ? "[Skinned]" : "[Mesh]";
-                EditorGUILayout.LabelField($"{i + 1}. {typeName} {renderers[i].name}", EditorStyles.miniLabel);
-            }
-            EditorGUI.indentLevel--;
-        }
 
         // ── 丢失绑定修复按钮 ──
         int missingCount = 0;
@@ -612,7 +592,7 @@ public class LatticeModifierEditor : Editor
 
         // ── 轴心设置 ──
         EditorGUILayout.Space(5);
-        EditorGUILayout.LabelField("轴心设置", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField("轴心设置：", EditorStyles.boldLabel);
         EditorGUILayout.BeginHorizontal();
 
         GUI.backgroundColor = new Color(0.9f, 0.85f, 1f);
@@ -649,6 +629,85 @@ public class LatticeModifierEditor : Editor
         }
 
         EditorGUILayout.EndHorizontal();
+
+        // v3.26：分别重置晶格体位移/旋转/缩放到初始化时的值。
+        EditorGUILayout.Space(5);
+        bool hasSaved = lattice.HasInitialTransformSaved;
+
+        if (hasSaved)
+        {
+            // 已记录：显示三按钮（位移/旋转/缩放）+ 右侧「记录当前位置」齿轮按钮
+            EditorGUILayout.LabelField("重置晶格体变换：", EditorStyles.boldLabel);
+            EditorGUILayout.BeginHorizontal();
+
+            GUI.backgroundColor = new Color(0.8f, 1f, 0.8f);
+            if (GUILayout.Button(new GUIContent("位移",
+                "将晶格体 Position 复位到初始位置。"), GUILayout.Height(24)))
+            {
+                Undo.RecordObject(lattice.transform, "重置晶格体位移");
+                Undo.RecordObject(lattice, "重置晶格体位移");
+                lattice.ResetPositionToInitial();
+                EditorUtility.SetDirty(lattice);
+                EditorUtility.SetDirty(lattice.transform);
+                SceneView.RepaintAll();
+            }
+
+            GUI.backgroundColor = new Color(0.8f, 0.9f, 1f);
+            if (GUILayout.Button(new GUIContent("旋转",
+                "将晶格体 Rotation 复位到初始旋转。"), GUILayout.Height(24)))
+            {
+                Undo.RecordObject(lattice.transform, "重置晶格体旋转");
+                Undo.RecordObject(lattice, "重置晶格体旋转");
+                lattice.ResetRotationToInitial();
+                EditorUtility.SetDirty(lattice);
+                EditorUtility.SetDirty(lattice.transform);
+                SceneView.RepaintAll();
+            }
+
+            GUI.backgroundColor = new Color(1f, 0.9f, 0.75f);
+            if (GUILayout.Button(new GUIContent("缩放",
+                "将晶格体 Scale 复位到初始缩放。"), GUILayout.Height(24)))
+            {
+                Undo.RecordObject(lattice.transform, "重置晶格体缩放");
+                Undo.RecordObject(lattice, "重置晶格体缩放");
+                lattice.ResetScaleToInitial();
+                EditorUtility.SetDirty(lattice);
+                EditorUtility.SetDirty(lattice.transform);
+                SceneView.RepaintAll();
+            }
+
+            // 缩放按钮右侧：齿轮图标按钮，点击后将当前 Transform 重新保存为重置基准
+            GUI.backgroundColor = new Color(0.25f, 0.22f, 0.25f);
+            if (GUILayout.Button(new GUIContent("◆",
+                "将当前晶格体的 Position/Rotation/Scale 重新保存为「重置基准」，\n之后三个重置按钮会以这个新位置为参照。"),
+                GUILayout.Width(28), GUILayout.Height(24)))
+            {
+                Undo.RecordObject(lattice, "记录晶格体初始位置");
+                lattice.SaveCurrentAsInitialTransform();
+                EditorUtility.SetDirty(lattice);
+                Debug.Log($"[LatticeModifier] 已记录当前 Transform 为重置基准：" +
+                          $"pos={lattice.transform.position}, rot={lattice.transform.rotation.eulerAngles}");
+                SceneView.RepaintAll();
+            }
+
+            EditorGUILayout.EndHorizontal();
+        }
+        else
+        {
+            // 旧场景：未记录时仍用整行宽按钮提示首次建立基准
+            GUI.backgroundColor = new Color(0.25f, 0.22f, 0.25f);
+            if (GUILayout.Button(new GUIContent("记录当前位置（作为重置基准）",
+                "旧场景晶格体尚未记录初始 Transform。\n点击此按钮记录当前位置为「重置基准」，之后可随时复位到此处。"),
+                GUILayout.Height(26)))
+            {
+                Undo.RecordObject(lattice, "记录晶格体初始位置");
+                lattice.SaveCurrentAsInitialTransform();
+                EditorUtility.SetDirty(lattice);
+                Debug.Log($"[LatticeModifier] 已记录当前 Transform 为重置基准：" +
+                          $"pos={lattice.transform.position}, rot={lattice.transform.rotation.eulerAngles}");
+                SceneView.RepaintAll();
+            }
+        }
 
         GUI.backgroundColor = Color.white;
     }
@@ -1016,9 +1075,35 @@ public class LatticeModifierEditor : Editor
             }
         }
 
-        selectedPoints = expanded;
+        // v3.31：支持 Undo/Redo。selectedPoints 是编辑器数据（存在 s_latticeSelections 中），
+        // 通过 RecordObject + undoRedoPerformed 一键回调实现双向切换。
+        var prevSelection = new HashSet<int>(selectedPoints);
+        var nextSelection = new HashSet<int>(expanded);
+
+        Undo.RecordObject(lattice, "扩展选择");
+        selectedPoints = nextSelection;
         s_activeSelectedPoints = selectedPoints;
         SyncSelectionToHierarchy();
+
+        // 注册一次性的 Undo/Redo 回调：根据当前选中状态判断是 undo 还是 redo 方向
+        LatticeModifier capturedLattice = lattice;
+        Undo.UndoRedoCallback handler = null;
+        handler = () =>
+        {
+            Undo.undoRedoPerformed -= handler;
+            if (capturedLattice == null) return;
+            // 当前选中 == nextSelection → 用户按了 Undo，恢复 prevSelection
+            // 当前选中 == prevSelection → 用户按了 Redo，恢复 nextSelection
+            var curr = new HashSet<int>(selectedPoints);
+            if (curr.SetEquals(nextSelection))
+                selectedPoints = prevSelection;
+            else if (curr.SetEquals(prevSelection))
+                selectedPoints = nextSelection;
+            s_activeSelectedPoints = selectedPoints;
+            SyncSelectionToHierarchy();
+            SceneView.RepaintAll();
+        };
+        Undo.undoRedoPerformed += handler;
     }
 
     // ═══════════════════════════════════════════
@@ -1136,12 +1221,14 @@ public class LatticeModifierEditor : Editor
             }
         }
 
-        // ── 绘制晶格连接线（背面线段压暗）──
+        // ── 绘制晶格线（背面线段压暗）──
         // 在四边形面可见性计算完成后绘制，利用 isPointFrontFacing 判断线段是否处于背面。
         // 背面定义：一条线段两端点都在外壳上，且至少一端所属四边形均不朝向相机。
         // 使用 anyBack 而非 bothBack，使折角处的棱线也能被压暗（角点可能属于正面面片但该棱仍在背面）。
-        Color brightLineColor = new Color(0.2f, 0.8f, 1f, 0.85f);
-        Color dimLineColor = new Color(0.2f * 0.4f, 0.8f * 0.4f, 1f * 0.4f, 0.3f);
+        Color brightLineColor = new Color(0.1f, 0.14f, 0.15f, 0.85f);
+        Color dimLineColor = new Color(0.4f , 0.4f , 0.4f, 0.5f);
+        // 晶格线宽（屏幕像素）。Handles.DrawLine 是固定 1px，改用 DrawAAPolyLine 才可控。
+        const float latticeLineWidth = 4f;
         for (int ix = 0; ix < nx; ix++)
         for (int iy = 0; iy < ny; iy++)
         for (int iz = 0; iz < nz; iz++)
@@ -1159,7 +1246,7 @@ public class LatticeModifierEditor : Editor
                 {
                     bool anyBack = aOnSurface && bOnSurface && (!isPointFrontFacing[idxA] || !isPointFrontFacing[idxB]);
                     Handles.color = anyBack ? dimLineColor : brightLineColor;
-                    Handles.DrawLine(pA, t.TransformPoint(lat.controlPoints[idxB]));
+                    Handles.DrawAAPolyLine(latticeLineWidth, pA, t.TransformPoint(lat.controlPoints[idxB]));
                 }
             }
             // Y 方向
@@ -1171,7 +1258,7 @@ public class LatticeModifierEditor : Editor
                 {
                     bool anyBack = aOnSurface && bOnSurface && (!isPointFrontFacing[idxA] || !isPointFrontFacing[idxB]);
                     Handles.color = anyBack ? dimLineColor : brightLineColor;
-                    Handles.DrawLine(pA, t.TransformPoint(lat.controlPoints[idxB]));
+                    Handles.DrawAAPolyLine(latticeLineWidth, pA, t.TransformPoint(lat.controlPoints[idxB]));
                 }
             }
             // Z 方向
@@ -1183,7 +1270,7 @@ public class LatticeModifierEditor : Editor
                 {
                     bool anyBack = aOnSurface && bOnSurface && (!isPointFrontFacing[idxA] || !isPointFrontFacing[idxB]);
                     Handles.color = anyBack ? dimLineColor : brightLineColor;
-                    Handles.DrawLine(pA, t.TransformPoint(lat.controlPoints[idxB]));
+                    Handles.DrawAAPolyLine(latticeLineWidth, pA, t.TransformPoint(lat.controlPoints[idxB]));
                 }
             }
         }
@@ -1535,11 +1622,9 @@ public class LatticeModifierEditor : Editor
         DrawLatticeAndHandles(s_activeLattice, s_activeSelectedPoints, sceneView, false);
     }
 
-    /// <summary>
     /// Esc 切换：按命名规则（Lattice_ + 模型名）查找匹配晶格对象并选中。
     /// 匹配范围：模型对象自身名 + 父链名（覆盖多目标模式父节点命名）。
     /// 返回 true 表示已选中至少一个晶格。
-    /// </summary>
     private static bool TrySelectLatticeByEsc()
     {
         // 文本框/搜索框聚焦时不消费 Esc
@@ -1860,12 +1945,10 @@ internal static class LatticeSceneWalker
         return n;
     }
 
-    /// <summary>
     /// 按命名规则 Lattice_ + 模型名 在所有已加载场景中查找晶格对象。
     /// 匹配范围：自身名 + 父链名（覆盖多目标模式父节点命名）。
     /// v3.27：名称匹配后增加渲染器目标验证，排除同名但无关联的晶格；
     ///        若名称匹配无有效结果，则降级为全场景渲染器目标扫描兜底。
-    /// </summary>
     public static List<GameObject> FindLatticesByName(GameObject go)
     {
         var result = new List<GameObject>();
@@ -1931,10 +2014,8 @@ internal static class LatticeSceneWalker
         return result;
     }
 
-    /// <summary>
     /// 验证晶格是否实际引用了给定 GameObject 的 Renderer。
     /// 检查层级：targetRoot 包含关系 → manualRenderers 包含关系 → deformTargets 中的 renderer。
-    /// </summary>
     private static bool IsLatticeTargetingGameObject(LatticeModifier lattice, GameObject go)
     {
         if (lattice == null || go == null) return false;

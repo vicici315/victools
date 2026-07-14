@@ -214,7 +214,7 @@ public class SmoothedNormalsUtility : EditorWindow
 			"1. 选择包含 MeshFilter/SkinnedMeshRenderer 的对象\n" +
 			"2. 选择平滑法线写入的目标通道\n" +
 			"3. 按需勾选「覆盖」选项\n" +
-			"4. 点击此按钮生成"), GUILayout.Height(30)))
+			"4. 点击此按钮生成"), GUILayout.Height(25)))
 		{
 			if (!hasMeshes)
 			{
@@ -263,16 +263,16 @@ public class SmoothedNormalsUtility : EditorWindow
 			"• 让描边 Shader 沿统一法线方向膨胀，避免断裂\n" +
 			"• 需要全局平滑光照效果的模型\n\n" +
 			"注意：勾选「覆盖」时直接修改原 Mesh，不可撤销。"),
-			GUILayout.Height(30)))
+			GUILayout.Height(25)))
 		{
 			UnifyMeshNormals();
 		}
 		GUI.backgroundColor = Color.cyan;
-		if (GUILayout.Button(new GUIContent("选择父对象","选择父级对象"), GUILayout.Height(30), GUILayout.Width(80)))
+		if (GUILayout.Button(new GUIContent("选择父对象","选择父级对象"), GUILayout.Height(25), GUILayout.Width(80)))
 		{
 			SelectParentObjects();
 		}
-		if (GUILayout.Button(new GUIContent("选择描边对象","一键挑选所有 _OL 描边对象"), GUILayout.Height(30), GUILayout.Width(100)))
+		if (GUILayout.Button(new GUIContent("选择描边对象","一键挑选所有 _OL 描边对象"), GUILayout.Height(25), GUILayout.Width(100)))
 		{
 			SelectOutlineObjects();
 		}

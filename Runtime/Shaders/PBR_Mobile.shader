@@ -32,6 +32,7 @@
 // PBR_Mobile6.2 支持烘焙模式Shadowmask模式，修复该模式时使用顶点阴影时报错
 // PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
 // PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）；Subtractive混合光照改用URP标准算法
+// PBR_Mobile6.5 P0性能优化：MRA贴图条件采样（仅_USEMSAMAP开启时采样）、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关（按需裁剪烘焙高光与间接高光计算）
 
 Shader "Custom/PBR_Mobile"
 {
@@ -111,6 +112,11 @@ Shader "Custom/PBR_Mobile"
         [Space(5)]
         [HideInInspector]_Cutoff("Alpha Cutoff", Range(0.001, 1.0)) = 0.5
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
+
+        [Header(8  (Performance Toggles))]
+        [Space(5)]
+        [Toggle(_DISABLEBAKEDSPECULAR)] _DisableBakedSpecular ("Disable Baked Specular (烘焙高光)", Float) = 1
+        [Toggle(_DISABLEINDIRECTSPECULAR)] _DisableIndirectSpecular ("Disable Indirect Specular (间接高光近似)", Float) = 1
         
         [HideInInspector][NoScaleOffset]unity_Lightmaps("unity_Lightmaps", 2DArray) = "" {}
         [HideInInspector][NoScaleOffset]unity_LightmapsInd("unity_LightmapsInd", 2DArray) = "" {}
@@ -122,7 +128,7 @@ Shader "Custom/PBR_Mobile"
         Tags
         {
             "QUEUE" = "Geometry"
-            "RenderType" = "Opaque"
+            "RenderType" = "Transparent"
             "DisableBatching" = "False"
             "RenderPipeline" = "UniversalPipeline"
             "UniversalMaterialType" = "Unlit"
@@ -166,6 +172,8 @@ Shader "Custom/PBR_Mobile"
             #pragma shader_feature_local _DISABLELIGHTCOLOR
             
             #pragma shader_feature_local _DEBUGNORMAL
+            #pragma shader_feature_local _DISABLEBAKEDSPECULAR
+            #pragma shader_feature_local _DISABLEINDIRECTSPECULAR
             
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
@@ -398,7 +406,13 @@ Shader "Custom/PBR_Mobile"
                 mat.uv = uv;
                 
                 mat.baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, uv);
-                mat.mraSample = SAMPLE_TEXTURE2D(_MetallicGlossMap, sampler_MetallicGlossMap, uv);
+                #ifdef _USEMSAMAP
+                    // 仅在使用 MRA 贴图时才采样，避免不必要的带宽/缓存开销
+                    mat.mraSample = SAMPLE_TEXTURE2D(_MetallicGlossMap, sampler_MetallicGlossMap, uv);
+                #else
+                    // 未开启 MRA 贴图时，蒙版通道 a 视为 1（即使用 _BaseColor 调色）
+                    mat.mraSample = half4(1, 1, 1, 1);
+                #endif
                 mat.albedo = lerp(mat.baseColor.rgb, mat.baseColor.rgb * _BaseColor.rgb, mat.mraSample.a);
                 
                 mat.metallic = _Metallic;
@@ -831,18 +845,20 @@ Shader "Custom/PBR_Mobile"
                 
                 // 间接漫反射：bakedGI只作用于漫反射通道（与URP Lit一致的能量分配）
                 half3 ambient = bakedGI * mat.diffuseColor;
+                #ifndef _DISABLEINDIRECTSPECULAR
                 // 间接高光近似：金属材质从bakedGI获取间接高光（轻量近似，不采样反射探针）
                 half NoV = saturate(dot(mat.normalWS, viewDirWS));
                 half fresnelTerm = fastPow(1.0 - NoV, 4.0);
                 half3 indirectSpecular = bakedGI * mat.specularColor * (fresnelTerm * mat.smoothness + mat.metallic * 0.15);
                 ambient += indirectSpecular;
+                #endif
                 
                 // 合成最终颜色：环境光 + 实时光照
                 half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
                 
                 // 烘焙高光（保留原来的效果，但不削减亮度，且受阴影影响）
                 half3 bakedSpecular = 0;
-                #ifdef LIGHTMAP_ON
+                #if defined(LIGHTMAP_ON) && !defined(_DISABLEBAKEDSPECULAR)
                     bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
                     finalColor += mat.specularColor * bakedSpecular;
                 #endif

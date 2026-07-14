@@ -1,6 +1,8 @@
 //【性能分析1.5】 优化未使用资源扫码准确度，精确查找BuildSetting中添加场景的资源使用，添加（扫描所有场景）选项
 //【性能分析1.6】- 优化未使用资源扫描和删除逻辑，修复 Prefab 嵌套依赖检测问题
 //【性能分析1.7】 对象统计模块添加静态对象统计快速选择
+//【性能分析1.8】 重构：版本号移至本类，与 ScenesTools/ProjectTools 等脚本保持一致
+
 using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
@@ -13,6 +15,9 @@ namespace VicTools
     /// 场景性能分析器 - 提供详细的场景性能分析报告
     public class ScenePerformanceAnalyzer : SubWindow
     {
+        /// 性能分析器窗口标签名（包含版本号），与 ScenesTools / ProjectTools 等脚本一致，由本类自行管理
+        public const string WindowName = "[性能分析 v1.8]";
+
         // 性能数据
         private PerformanceData _performanceData;
         private Vector2 _scrollPosition;
@@ -89,7 +94,7 @@ namespace VicTools
         private bool _showDetailedStatisticsSection = true;
         private bool _showResourceUtilization = true;
 
-        public ScenePerformanceAnalyzer(string name, EditorWindow parent) : base(VicToolsConfig.PerformanceAnalyzerWindowName, parent)
+        public ScenePerformanceAnalyzer(string name, EditorWindow parent) : base(WindowName, parent)
         {
             _performanceData = new PerformanceData();
         }
@@ -4519,7 +4524,7 @@ namespace VicTools
             _showGlobalIllumination = EditorPrefs.GetBool(prefix + "ShowGlobalIllumination", true);
             _showPerformanceWarnings = EditorPrefs.GetBool(prefix + "ShowPerformanceWarnings", true);
             _showDetailedStatisticsSection = EditorPrefs.GetBool(prefix + "ShowDetailedStatisticsSection", true);
-            _showResourceUtilization = EditorPrefs.GetBool(prefix + "ShowResourceUtilization", true);
+            _showResourceUtilization = EditorPrefs.GetBool(prefix + "ShowResourceUtilization", false);
             _autoRefresh = EditorPrefs.GetBool(prefix + "AutoRefresh", true);
         }
 

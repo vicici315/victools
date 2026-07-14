@@ -1,5 +1,6 @@
 // OutlineZOffset1.2 HLSL版本，优化描边深度偏移算法
 // OutlineZOffset1.3 优化轮廓描边算法
+// OutlineZOffset1.4 添加 DepthOnly pass 用于兼容 URP DepthPrimingMode=Forced，避免描边材质不可见。
 
 Shader "Custom/Outline/OutlineZOffset"
 {
@@ -19,7 +20,7 @@ Shader "Custom/Outline/OutlineZOffset"
     }
     SubShader
     {
-        Tags { "RenderType"="Opaque" "RenderPipeline"="UniversalPipeline" }
+        Tags { "RenderType"="Opaque" "RenderPipeline"="UniversalPipeline" "Queue"="Transparent" }
 
         Pass
         {
@@ -151,6 +152,57 @@ Shader "Custom/Outline/OutlineZOffset"
             half4 frag(Varyings IN) : SV_TARGET
             {
                 return _outline_color;
+            }
+
+            ENDHLSL
+        }
+
+        // 用于兼容 URP DepthPrimingMode=Forced：
+        // Forced 模式下 URP 会先把 ZWrite 关掉做 depth pre-pass，没有 DepthOnly pass 的材质在 prepass
+        // 路径下没有深度可参考，导致后续 pass 渲染异常。这里补一个与主 pass 一致的（Cull Front）DepthOnly。
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode"="DepthOnly" }
+            Cull Front
+            ZWrite On
+            ColorMask 0
+
+            HLSLPROGRAM
+            #pragma vertex DepthOnlyVertex
+            #pragma fragment DepthOnlyFragment
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            CBUFFER_START(UnityPerMaterial)
+                float _OutlineWidth;
+                float4 _outline_color;
+                float _OutlineZOffset;
+            CBUFFER_END
+
+            struct DepthAttributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS   : NORMAL;
+            };
+
+            struct DepthVaryings
+            {
+                float4 positionCS : SV_POSITION;
+            };
+
+            // 直接用 Object Space 法线外扩，再转 Clip Space，与主 pass 默认分支（_OUTLINESPACE_OBJECT）一致
+            DepthVaryings DepthOnlyVertex(DepthAttributes IN)
+            {
+                DepthVaryings OUT;
+                float3 expandedOS = IN.positionOS.xyz + IN.normalOS * _OutlineWidth;
+                OUT.positionCS = TransformObjectToHClip(expandedOS);
+                return OUT;
+            }
+
+            half DepthOnlyFragment(DepthVaryings IN) : SV_TARGET
+            {
+                return 0;
             }
 
             ENDHLSL

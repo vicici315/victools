@@ -36,8 +36,8 @@
 // LatticeModifier v3.23 性能+内存根治（26Renderer共享LatticeModifier场景端到端治理）：Per-Renderer范围跳过（DeformVertices返回bool追踪anyInRange，无顶点进入晶格直接returnfalse跳过SetVertices+RecalculateBounds+蒙皮dispatch，K帧只动1-3控制点时26Renderer中22+跳过CPU/GPU开销降到1/6~1/13）；LOD距离剔除阈值50m→12m；玩家端%MEM稳定18.5%（295MB/1.6GB），无持续增长
 // LatticeModifier v3.23.2 关键回退：v3.23曾尝试修复销毁顺序（先切Renderer到originalMesh再Destroy旧Mesh），实际在SkinnedMeshRenderer首次创建场景下导致模型看不到（怀疑切回originalMesh后蒙皮缓冲未及时挂上），回退v3.19销毁顺序，靠5秒冷却+v3.17/v3.19机制控制内存增长
 // LatticeModifier v3.24 内部点压缩（surfaceOnly模式）：新增surfaceOnly序列化字段，开启时controlPoints只存外壳点（去掉6个内部面以内的点）；内部点对表面顶点影响极小（Bernstein基函数趋近0）可省去提升大晶格性能；PointCountX/Y/Z和TotalPoints仍按完整晶格逻辑；新增SurfacePointCount与3D索引→压缩索引表；DeformVertices内层累加按(ix,iy,iz)跳过内部索引（compressedLut[]查表）；Gizmo/动画CP Transform/轴心操作全按压缩索引走；新增外壳压缩按钮一键生成压缩索引无需重新InitializeLattice
-
-
+// LatticeModifier v3.25 瞬移出范围恢复原始形态：DeformTarget 新增 wasAnyInRange 标记，ApplyDeformation 中检测"上一帧在范围内、本帧离开"事件，上传原始顶点还原模型原始形态。仅触发一次（wasAnyInRange=false 后后续帧 continue 保留原性能优化），离开范围后的对象不受晶格变形影响。
+// LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos/initLatticeRot/initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。
 
 using System;
 using System.Collections.Generic;
@@ -89,6 +89,12 @@ public class LatticeModifier : MonoBehaviour
     [HideInInspector] [SerializeField] private Vector3 latticeSize;
     [HideInInspector] [SerializeField] private bool initialized;
     [HideInInspector] [SerializeField] private Transform[] controlPointTransforms;
+
+    // v3.26：存储晶格体初始化时的 Transform，用于"重置晶格体位置"功能。
+    [HideInInspector] [SerializeField] private Vector3 initLatticePos;
+    [HideInInspector] [SerializeField] private Quaternion initLatticeRot;
+    [HideInInspector] [SerializeField] private Vector3 initLatticeScale;
+    [HideInInspector] [SerializeField] private bool initTransformSaved;
 
     // v3.24：压缩索引查找表（3D 索引 → controlPoints[] 内的索引）
     // - surfaceOnly=false：compressedLut[i] = i（恒等）
@@ -188,6 +194,12 @@ public class LatticeModifier : MonoBehaviour
         // 在冷却时间内不再重复重建（避免 SkinnedMeshRenderer.sharedMesh 周期性失效时
         // 持续 Instantiate 新 Mesh 但旧 Mesh 未立即被 Unity 回收导致的临时翻倍累积）。
         [NonSerialized] public float lastRebuildTime = -999f;
+
+        // v3.25：追踪上一帧是否有顶点进入晶格范围。
+        // 对象瞬移出范围时 DeformVertices 返回 false（跳过 SetVertices），
+        // 但 mesh 仍残留上一帧的变形顶点。通过此标记在 ApplyDeformation 中
+        // 检测"离开范围"事件并上传原始顶点还原。
+        [NonSerialized] public bool wasAnyInRange;
 
         // v3.18 性能：RecalculateBounds 节流计数器。每 4 帧重算一次 AABB，期间复用旧值。
         [NonSerialized] public int framesSinceBoundsRecalc;
@@ -496,6 +508,12 @@ public class LatticeModifier : MonoBehaviour
         GenerateControlPoints();
         initialized = true;
 
+        // v3.26：记录初始化时的 Transform，供"重置晶格体位置"按钮使用。
+        initLatticePos = transform.position;
+        initLatticeRot = transform.rotation;
+        initLatticeScale = transform.localScale;
+        initTransformSaved = true;
+
         // 关键：CreateLatticeController 路径下，用户点「初始化晶格」后立刻拖手柄
         // 会出现"模型不变形，必须保存场景重开后才生效"。
         // 根因：AddComponent 触发的 OnEnable 走 TryRecoverFromBuildScene 路径并设了
@@ -605,7 +623,27 @@ public class LatticeModifier : MonoBehaviour
             // （K 帧控制点未动 / 晶格位置偏远 / Renderer 在晶格外），跳过 SetRendererMesh 避免
             // 触发 SkinnedMeshRenderer 重复赋值 sharedMesh（虽然上面 v3.13 已避免每帧重复，
             // 但这里进一步保证"顶点未变"时连 SetRendererMesh 的引用比较都不做）。
-            if (!DeformVertices(dt, dt.deformedMeshA)) continue;
+            //
+            // v3.25 修复：对象瞬移出范围时，DeformVertices 已将原始顶点写入 vertCacheNative
+            // 但 anyInRange=false 导致 skipped SetVertices → mesh 残留变形顶点。
+            // wasAnyInRange 追踪上帧状态：上一帧在范围内、本帧离开 → 上传原始顶点还原。
+            bool anyInRange = DeformVertices(dt, dt.deformedMeshA);
+            if (anyInRange)
+            {
+                dt.wasAnyInRange = true;
+            }
+            else if (dt.wasAnyInRange)
+            {
+                // 离开晶格范围：上传原始顶点，恢复原始形态
+                dt.deformedMeshA.SetVertices(dt.vertCacheNative);
+                dt.deformedMeshA.RecalculateBounds();
+                dt.wasAnyInRange = false;
+            }
+            else
+            {
+                // 从未进入或已离开多帧：跳过以保留性能优化
+                continue;
+            }
 
             // 仅当当前 sharedMesh 不是 deformedMeshA 时才赋值（例如刚重建后），避免每帧重复赋值。
             // 用缓存的 MeshFilter 取当前 Mesh，避免每帧 GetComponent。
@@ -622,7 +660,6 @@ public class LatticeModifier : MonoBehaviour
     private static Camera s_cachedMainCam;
     private static float s_lastCamRefreshTime = -999f;
     private const float kCamRefreshInterval = 1f; // 1 秒刷新一次主相机引用（避免每帧 Camera.main）
-
 
     public void RefreshSourceMesh()
     {
@@ -684,6 +721,44 @@ public class LatticeModifier : MonoBehaviour
         Array.Copy(initialControlPoints, controlPoints, controlPoints.Length);
         ApplyDeformation();
     }
+
+    // v3.26：将晶格体 Transform 复位到 InitializeLattice 时的位置/旋转/缩放。
+    // 返回 false 表示尚未保存初始 Transform（兼容旧场景中的晶格体）。
+    public bool ResetPositionToInitial()
+    {
+        if (!initTransformSaved) return false;
+        transform.position = initLatticePos;
+        MarkDirty();
+        return true;
+    }
+
+    public bool ResetRotationToInitial()
+    {
+        if (!initTransformSaved) return false;
+        transform.rotation = initLatticeRot;
+        MarkDirty();
+        return true;
+    }
+
+    public bool ResetScaleToInitial()
+    {
+        if (!initTransformSaved) return false;
+        transform.localScale = initLatticeScale;
+        MarkDirty();
+        return true;
+    }
+
+    // v3.26：为旧场景晶格体首次记录当前位置作为重置基准。
+    public void SaveCurrentAsInitialTransform()
+    {
+        initLatticePos = transform.position;
+        initLatticeRot = transform.rotation;
+        initLatticeScale = transform.localScale;
+        initTransformSaved = true;
+    }
+
+    // v3.26：是否已保存初始 Transform。
+    public bool HasInitialTransformSaved => initTransformSaved;
 
     public void RestoreOriginal()
     {
@@ -1180,8 +1255,6 @@ public class LatticeModifier : MonoBehaviour
         dt.lastRebuildTime = Time.unscaledTime;
 
     }
-
-
 
     #endregion
 
@@ -2168,9 +2241,6 @@ public class LatticeModifier : MonoBehaviour
         if (Application.isPlaying) Destroy(mesh);
         else DestroyImmediate(mesh);
     }
-
-
-
 
     private static void SafeDestroy(UnityEngine.Object obj)
     {

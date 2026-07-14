@@ -10,10 +10,11 @@ Shader "Custom/Toon"
     Properties
     {
         [Toggle(_RECEIVE_SHADOWS)] _ReceiveShadows("自身阴影", Float) = 0
-        _Color("Color", Color) = (0.87,0.87,0.87,1)
+        [MainColor] _BaseColor("Base Color", Color) = (0.87,0.87,0.87,1)
         [MainTexture] _BaseMap("Main Texture", 2D) = "white" {}
-        [Normal] _NormalMap("Normal Map", 2D) = "bump" {}
-        _NormalScale("Normal Scale", Range(0, 2)) = 1.0
+        [Toggle(_NORMALMAP)] _UseNormalMap("Use Normal Map", Float) = 0
+        [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
+        _BumpScale ("Normal Scale", Range(0, 2)) = 1.0
         _AmbientColor("Ambient Color", Color) = (0.4,0.4,0.4,1)
         [HDR]
         _SpecularColor("Specular Color", Color) = (0.9,0.9,0.9,1)
@@ -63,15 +64,16 @@ Shader "Custom/Toon"
             #pragma multi_compile _ SHADOWS_SHADOWMASK
             #pragma multi_compile_local _ _USEEMISSIONMAP
             #pragma multi_compile_local _ _RECEIVE_SHADOWS
+            #pragma shader_feature_local _NORMALMAP
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
             CBUFFER_START(UnityPerMaterial)
-                float4 _Color;
+                float4 _BaseColor;
                 float4 _BaseMap_ST;
-                float4 _NormalMap_ST;
-                float  _NormalScale;
+                float4 _BumpMap_ST;
+                float  _BumpScale;
                 float4 _AmbientColor;
                 float4 _SpecularColor;
                 float _Glossiness;
@@ -91,7 +93,7 @@ Shader "Custom/Toon"
             CBUFFER_END
 
             TEXTURE2D(_BaseMap);    SAMPLER(sampler_BaseMap);
-            TEXTURE2D(_NormalMap);  SAMPLER(sampler_NormalMap);
+            TEXTURE2D(_BumpMap);    SAMPLER(sampler_BumpMap);
             TEXTURE2D(_EmissionMap); SAMPLER(sampler_EmissionMap);
 
             struct Attributes
@@ -134,10 +136,14 @@ Shader "Custom/Toon"
             half4 frag(Varyings IN) : SV_Target
             {
                 // 法线贴图解码，构建 TBN 矩阵转换到世界空间
-                half4 normalSample = SAMPLE_TEXTURE2D(_NormalMap, sampler_NormalMap, IN.uv);
-                half3 normalTS = UnpackNormalScale(normalSample, _NormalScale);
-                float3x3 TBN = float3x3(normalize(IN.tangentWS), normalize(IN.bitangentWS), normalize(IN.normalWS));
-                float3 normal = normalize(mul(normalTS, TBN));
+                #if defined(_NORMALMAP)
+                    half4 normalSample = SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, IN.uv);
+                    half3 normalTS = UnpackNormalScale(normalSample, _BumpScale);
+                    float3x3 TBN = float3x3(normalize(IN.tangentWS), normalize(IN.bitangentWS), normalize(IN.normalWS));
+                    float3 normal = normalize(mul(normalTS, TBN));
+                #else
+                    float3 normal = normalize(IN.normalWS);
+                #endif
 
                 float3 viewDir = normalize(IN.viewDirWS);
 
@@ -198,7 +204,7 @@ Shader "Custom/Toon"
 
                 half4 texColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv);
 
-                float4 baseColor = (light + _AmbientColor * (1.0 - lightIntensity) + specular + rim) * _Color * texColor;
+                float4 baseColor = (light + _AmbientColor * (1.0 - lightIntensity) + specular + rim) * _BaseColor * texColor;
                 // 自发光
                 #ifdef _USEEMISSIONMAP
                     half3 emissionMap = SAMPLE_TEXTURE2D(_EmissionMap, sampler_EmissionMap, IN.uv).rgb;

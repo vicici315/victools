@@ -9,6 +9,26 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.10.4
+
+- LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos/initLatticeRot/initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。
+   ![image-20260708164205316](./README.assets/image-20260708164205316.png)
+
+- LatticeModifierEditor v3.31 晶格线宽（屏幕像素）。Handles.DrawLine 是固定 1px，改用 DrawAAPolyLine 可控。
+
+- 现有材质针对DepthPrimingMode（深度预填充模式）Forced模式，优化性能与适配。
+   - FurShell_Mobile_Single_Combined 毛发材质 Queue 改为 Transparent 队列。
+   - Grass 2.4 DepthOnly pass 改为纯 vertex（不跑 Hull/Domain/Geometry），用草根 mesh 顶点位置写深度，解决 URP DepthPrimingMode=Forced 下 GS 双面薄片 Z 精度不一致导致的黑色面重叠问题。
+   - OutlineZOffset1.4 添加 DepthOnly pass 用于兼容 URP DepthPrimingMode=Forced，避免描边材质不可见。
+
+- PBR_Mobile 6.5 性能优化：MRA 贴图条件采样（仅 _USEMSAMAP 开启时采样），新增 _DisableBakedSpecular / _DisableIndirectSpecular 开关按需裁剪烘焙高光与间接高光计算，GUI 同步暴露选项。
+
+- PBR_Mobile_Trans 6.5 _ZWrite 改用 shader_feature_local 关键字化（_ZWWRITE），仅在使用时编译对应变体。
+
+- 场景工具 v2.29 资源箱添加【场景】按钮，一键将当前打开的所有场景（多场景支持）放入资源箱。
+
+---
+
 ### 版本 2.10.3
 
 - 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid。
@@ -16,9 +36,11 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
        “Esc” 快捷键在取消晶格点选择的基础上，支持晶格对象与模型对象快速切换。
 - LatticeModifier v3.24 内部点压缩（surfaceOnly 模式）。
    ![image-20260707172325638](./README.assets/image-20260707172325638.png)![image-20260707172546545](./README.assets/image-20260707172546545.png)
+
 - LatticeModifierEditor v3.26 解决多 Inspector 窗口下「扩展选择」「取消选择」按钮锁定/失效。
 - LatticeModifierEditor v3.27 快捷键 Esc 选中晶格体定位优化：FindLatticesByName 增加渲染器目标验证，排除同名但无关联的晶格，解决同名模型选中错误晶格体的问题。
 
+---
 
 ### 版本 2.10.2
 
@@ -36,6 +58,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - LatticeModifier v3.13：取消蒙皮双缓冲 + 每帧重新赋值 sharedMesh。
 - LatticeModifier v3.14：变形性能优化，修复运行时帧率骤降（修正缓存网格命名避免每帧重建、消除 Mathf.Pow、权重缓存、变更检测改用相对矩阵刚性同移零开销）。
 
+---
 
 ### 版本 2.10.1
 
@@ -48,7 +71,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
   
 - 场景工具 v2.27 修复【挑选-MissMat】逻辑，排除粒子Trail Material；添加重置场景对象位移旋转缩放变换工具按钮。
 
-
+---
 
 ### 版本 2.10.0
 
@@ -60,7 +83,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 场景工具 v2.26 添加【MissMesh选项】挑选，新增【丢失mesh自动找回按钮】，优化 FindMissMeshs：原有精确匹配失败后，新增基于对象名称的模糊相似匹配（拆词加权+阈值过滤），提升丢失 Mesh 找回成功率，OL对象优先查找_SmoothNormal平滑处理过的mesh。
 
-
+---
 
 ### 版本 2.9.8
 
@@ -74,7 +97,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
   
   ![image-20260609171940276](./README.assets/image-20260609171940276.png)
 
-
+---
 
 ### 版本 2.9.7
 
@@ -93,7 +116,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![grassCollision](./README.assets/grassCollision.gif)
 
-
+---
 
 ### 版本 2.9.6
 
@@ -125,7 +148,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260512105312233](./README.assets/image-20260512105312233.png)
 
-
+---
 
 ### 版本 2.9.5
 
@@ -145,7 +168,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 【场景工具 v2.19】 修复丢失对象删除出现的Bug。
 
-
+---
 
 ### 版本 2.9.4
 
@@ -167,7 +190,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - LatticeModifierEditor 2.4 3D视图选中同步：注册 Selection.selectionChanged，选中 CP 节点时遍历控制点找到对应索引，写入 selectedPoints 并触发 SceneView.RepaintAll()，Scene 视图里对应控制点会高亮显示。
 
-
+---
 
 ### 版本 2.9.3
 
@@ -177,7 +200,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - LatticeModifier 2.7 安全 Mesh 销毁机制，只销毁 _LatticeDeform 变形副本，防止共享 Mesh 资源被误删导致模型消失。
 
-
+---
 
 ### 版本 2.9.2
 
@@ -187,7 +210,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![Lattice1](./README.assets/Lattice1.gif)
 
-
+---
 
 ### 版本 2.9.1
 
@@ -201,7 +224,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260417170533616](./README.assets/image-20260417170533616.png)
 
-
+---
 
 ### 版本 2.9.0
 
@@ -240,7 +263,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260416105422156](./README.assets/image-20260416105422156.png)
 
-
+---
 
 ### 版本 2.8.2
 
@@ -250,7 +273,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - Tree_Trans1.0 植被透明材质，虚拟光照，ShadowMap  只带投影。
 
-
+---
 
 ### 版本 2.8.1
 
@@ -268,7 +291,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 【材质查找1.4】支持按住Ctrl键加选查找到的模型与材质球
 
-
+---
 
 ### 版本 2.8.0
 
@@ -288,7 +311,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260319113841675](./README.assets/image-20260319113841675.png)
 
-
+---
 
 ### 版本 2.7.10
 
@@ -300,7 +323,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260316144444516](./README.assets/image-20260316144444516.png)
 
-
+---
 
 ### 版本 2.7.9
 
@@ -310,7 +333,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 添加"Custom\Texture"天空盒shader
 
-
+---
 
 ### 版本 2.7.8
 
@@ -329,7 +352,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260306154648216](./README.assets/Glass_carWindow2.gif)
 
-
+---
 
 ### 版本 2.7.7
 
@@ -343,7 +366,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
   
 - PBR_Mobile5.7 烘焙投影支持，使用Unity标准的Subtractive模式方法
 
-
+---
 
 ### 版本 2.7.6
 
@@ -362,7 +385,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![image-20260304123220237](./README.assets/image-20260304123220237.png)
 
-
+---
 
 ### 版本 2.7.5
 
@@ -371,27 +394,27 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - 【场景工具2.13】 优化挑选二级选项逻辑，更准确的挑选操作
 - 【Compute Buffer Tool v3.4】 管理器添加SpotTexture批量设置所有PBR_Mobile材质参数，优化在剔除、添加材质时更新材质参数
 
-
+---
 
 ### 版本 2.7.4
 
 - 【场景工具2.12】优化资源箱丢失对象保留正确名称，启动工具自动刷新
 - 【ComputeBufferTool3.3】添加（剔除材质 ↑）按钮，可以剔除模型或Project中的材质球，强化（添加材质↓）按钮也可添加场景对象材质
 
-
+---
 
 ### 版本 2.7.3
 
 - 【场景工具2.11】完善[挑选]按钮功能优化判断逻辑
 - 【ComputeBufferTool3.2】优化用户界面，添加（添加材质↓）按钮用于向管理器添加Project中选择的材质球
 
-
+---
 
 ### 版本 2.7.2
 
 - 优化挑选选项逻辑；添加（Reset）按钮用于关闭所有一级选项
 
-
+---
 
 ### 版本 2.7.1
 
@@ -399,7 +422,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 【ComputeBufferTool3.1】优化材质列表，添加（选择材质）按钮用于选择收集的材质球
 
-
+---
 
 ### 版本 2.6.1
 
@@ -411,19 +434,19 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
   ![](./README.assets/PBRM5.1.gif)
 
-
+---
 
 ### 版本 2.6.0
 
 - 【场景工具2.7-资源箱】全局存档改为本地Library\VicTools；创建PathHelper类路径管理
 
-
+---
 
 ### 版本 2.5.0
 
 - Package打包版本，添加Outline描边Shader，主材质PBR_Mobile沿用老guid避免替换旧文件时材质丢失
 
-
+---
 
 ### 版本 1.5.0
 
@@ -432,7 +455,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - 改进资源箱文件管理
 - 增强性能分析功能
 
-
+---
 
 ### 版本 1.4.0
 
@@ -440,7 +463,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - 改进材质批量控制系统
 - 优化着色器性能
 
-
+---
 
 ### 版本 1.3.0
 
@@ -448,7 +471,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - 改进搜索历史管理
 - 优化用户界面
 
-
+---
 
 ## 主要功能模块
 

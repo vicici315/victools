@@ -16,7 +16,7 @@ namespace VicTools
         [MenuItem("Tools/VicTools(YD)/[ ScenesTools ] 独立窗口 >/[性能分析]", false, 1801)]
         public static void ShowWindow()
         {
-            var window = GetWindow<TestScenePerformanceAnalyzer>(VicToolsConfig.PerformanceAnalyzerWindowName);
+            var window = GetWindow<TestScenePerformanceAnalyzer>(ScenePerformanceAnalyzer.WindowName);
             window.minSize = new Vector2(420, 962);
             window.maxSize = new Vector2(1680, 1832);
         }
