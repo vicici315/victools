@@ -436,8 +436,8 @@ public class FurShell_MobileGUI : ShaderGUI
             EditorGUI.indentLevel++;
             
             // 添加挂载脚本按钮
-            GUI.backgroundColor = new Color(0.7f, 0.9f, 1.0f); // 浅蓝色
-            if (GUILayout.Button("挂载脚本", GUILayout.Width(100)))
+            GUI.backgroundColor = new Color(0.7f, 0.8f, 1.0f); // 浅蓝色
+            if (GUILayout.Button("挂载触摸控制工具", GUILayout.Width(130)))
             {
                 AttachTouchDeformationController();
             }

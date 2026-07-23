@@ -1,6 +1,8 @@
 // URP车窗玻璃Shader - 支持透明、菲涅尔反射、球形环境贴图
-// 1.2 添加"Reflection Scale"参数，控制反射图的明显度
-// 1.3 优化反射，添加反射贴图位移，添加GUI控制，Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果
+// Glass_carWindow 1.2 添加"Reflection Scale"参数，控制反射图的明显度
+// Glass_carWindow 1.3 优化反射，添加反射贴图位移，添加GUI控制，Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果
+// Glass_carWindow 1.4 添加顶点风动位移，可用于模拟树叶飘动效果
+
 Shader "Custom/Glass_carWindow"
 {
     Properties
@@ -34,13 +36,24 @@ Shader "Custom/Glass_carWindow"
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.12
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.0
         
-        // [Header(Fresnel Ramp)]
+        //         [Header(Fresnel Ramp)]
         // [Space(5)]
         [Toggle(_USEFRESNELRAMP)] _UseFresnelRamp("Use Fresnel Ramp", Float) = 0
         _FresnelRampTexture ("Fresnel Ramp Texture", 2D) = "white" {}
         _FresnelRampRow ("Fresnel Ramp Row", Range(0.01, 0.99)) = 0.99
         _FresnelRampIntensity ("Fresnel Ramp Intensity", Range(0, 2)) = 0.2
-        
+
+        // =============================================
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+        // 关闭 _USEVERTEXDISPLACEMENT 时整段代码被 shader_feature 剔除，零开销
+        // =============================================
+        // [Header(Vertex Wind Displacement)]
+        [Toggle(_USEVERTEXDISPLACEMENT)] _UseVertexDisplacement("Use Vertex Wind Displacement", Float) = 0
+        [NoScaleOffset] _Tree_NoiseTexture1 ("Wind Noise Texture (R, 可选)", 2D) = "white" {}
+        _Big_WindAmount ("Big Wind Amount (振幅)", Float) = 0.1
+        _Small_WindSpeed ("Small Wind Speed (时间速度)", Float) = 0.5
+        _Small_Wave ("Small Wave (空间频率, 0=无变化)", Range(0.01, 10)) =  0.5
+
         [Header(Render Settings)]
         // [Space(5)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
@@ -73,6 +86,7 @@ Shader "Custom/Glass_carWindow"
             #pragma shader_feature_local _USENORMALMAP
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _USEFRESNELRAMP
+            #pragma shader_feature_local _USEVERTEXDISPLACEMENT
             #pragma multi_compile_fog
             
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
@@ -85,6 +99,9 @@ Shader "Custom/Glass_carWindow"
             SAMPLER(sampler_BumpMap);
             TEXTURE2D(_FresnelRampTexture);
             SAMPLER(sampler_FresnelRampTexture);
+            // 顶点风动位移噪声贴图
+            TEXTURE2D(_Tree_NoiseTexture1);
+            SAMPLER(sampler_Tree_NoiseTexture1);
 
             CBUFFER_START(UnityPerMaterial)
                 half4 _BaseColor;
@@ -102,6 +119,10 @@ Shader "Custom/Glass_carWindow"
                 float4 _FresnelRampTexture_ST;
                 half _FresnelRampRow;
                 half _FresnelRampIntensity;
+                // 顶点风动位移参数
+                half _Big_WindAmount;
+                half _Small_WindSpeed;
+                half _Small_Wave;
             CBUFFER_END
 
             struct Attributes
@@ -217,21 +238,42 @@ Shader "Custom/Glass_carWindow"
             Varyings vert(Attributes input)
             {
                 Varyings output;
-                
+
+                #ifdef _USEVERTEXDISPLACEMENT
+                // 顶点风动位移（沿 X 轴风动，支持可选噪声贴图 + 程序化回退）
+                // 公式: windU = vertexX · _Small_Wave + time · _Small_WindSpeed
+                // 全部使用 float 精度，避免 half 哈希函数在部分 GPU 上产生 NaN/Inf
+                float3 windDisplacedPos = input.positionOS.xyz;
+                float  windU     = windDisplacedPos.x * _Small_Wave
+                                 + _Time.y * _Small_WindSpeed;
+                float  windNoise = SAMPLE_TEXTURE2D_LOD(_Tree_NoiseTexture1, sampler_Tree_NoiseTexture1,
+                                                        float2(windU, windU), 0).r;
+                // 无分支程序化回退：贴图默认白色（R≈1）时启用
+                float useHash   = step(0.999, windNoise);
+                float p         = frac(windU * 0.1031);
+                p               = p * p + 33.33;
+                p               = p * p + p;
+                float hashNoise = frac(p);
+                windNoise       = lerp(windNoise, hashNoise, useHash);
+                windDisplacedPos.x += _Big_WindAmount * windNoise;
+                VertexPositionInputs vertexInput = GetVertexPositionInputs(windDisplacedPos);
+                #else
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);
+                #endif
+
                 VertexNormalInputs normalInput = GetVertexNormalInputs(input.normalOS, input.tangentOS);
-                
+
                 output.positionCS = vertexInput.positionCS;
                 output.positionWS = vertexInput.positionWS;
                 output.uv = input.uv;
                 output.normalWS = normalInput.normalWS;
                 output.viewDirWS = GetCameraPositionWS() - vertexInput.positionWS;
                 output.fogFactor = ComputeFogFactor(vertexInput.positionCS.z);
-                
+
                 #ifdef _USENORMALMAP
                 output.tangentWS = float4(normalInput.tangentWS, input.tangentOS.w);
                 #endif
-                
+
                 return output;
             }
             // ● 饱和度调整函数

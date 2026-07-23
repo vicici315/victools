@@ -37,7 +37,18 @@ Shader "Custom/Glass_MobileNew"
         [Toggle(_USEVERTEXDEFORM)] _UseVertexDeform ("Vertex Deform", Float) = 0
         _VertexDeformStrength ("Deform Strength", Range(0, 1.0)) = 0.02
         [Toggle(_DEFORM_USE_UV)] _DeformUseUV ("Deform Use UV (Skinned)", Float) = 0
-        
+
+        // =============================================
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+        // 与 _USEVERTEXDEFORM 独立可叠加，关闭时整段被 shader_feature 剔除，零开销
+        // =============================================
+        [Header(Vertex Wind Displacement)]
+        [Toggle(_USEVERTEXDISPLACEMENT)] _UseVertexDisplacement ("Use Vertex Wind Displacement", Float) = 0
+        [NoScaleOffset] _Tree_NoiseTexture1 ("Wind Noise Texture (R, 可选)", 2D) = "white" {}
+        _Big_WindAmount ("Big Wind Amount (振幅)", Float) = 0.1
+        _Small_WindSpeed ("Small Wind Speed (时间速度)", Float) = 0.5
+        _Small_Wave ("Small Wave (空间频率, 0=无变化)", Range(0, 10)) = 1.0
+
         // [Header(Refraction)]
         [Toggle(_USEREFRACTION)] _UseRefraction ("Use Refraction", Float) = 1
         _RefractionStrength ("Refraction Strength", Range(-1.81, 1.81)) = -0.3
@@ -101,7 +112,8 @@ Shader "Custom/Glass_MobileNew"
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _USEVERTEXDEFORM
             #pragma multi_compile_local _ _DEFORM_USE_UV
-            
+            #pragma shader_feature_local _USEVERTEXDISPLACEMENT
+
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
@@ -156,6 +168,9 @@ Shader "Custom/Glass_MobileNew"
             SAMPLER(sampler_BumpMap);
             TEXTURE2D(_SphericalReflectionMap);
             SAMPLER(sampler_SphericalReflectionMap);
+            // 顶点风动位移噪声贴图
+            TEXTURE2D(_Tree_NoiseTexture1);
+            SAMPLER(sampler_Tree_NoiseTexture1);
             
             half fastPow(half x, half n) {
                 return exp2(n * log2(x)); // 在某些GPU上更快
@@ -224,6 +239,10 @@ Shader "Custom/Glass_MobileNew"
                 float4 _BaseMap_ST;
                 float4 _BumpMap_ST;
                 half _VertexDeformStrength;
+                // 顶点风动位移参数
+                half _Big_WindAmount;
+                half _Small_WindSpeed;
+                half _Small_Wave;
             CBUFFER_END
 
             // ● FastSpecular函数 - 来自Glass_carWindow.shader的优化高光计算
@@ -266,7 +285,28 @@ Shader "Custom/Glass_MobileNew"
             Varyings vert(Attributes IN)
             {
                 Varyings OUT;
-                
+
+                // ── 顶点风动位移（移植自 SyntyStudios/SciFiPlant） ──
+                // 与 _USEVERTEXDEFORM 独立可叠加，先于顶点变形执行
+                // 沿模型空间 X 轴位移，使用 _Tree_NoiseTexture1 的 R 通道作为位移源
+                // max(1e-5, ...) 防止 _Small_Wave=1 时除零产生 NaN
+                // 关闭 keyword 时整段被剔除，无任何性能开销
+                #ifdef _USEVERTEXDISPLACEMENT
+                    // 公式: windU = vertexX · _Small_Wave + time · _Small_WindSpeed (已解耦)
+                    // 全部使用 float 精度，避免 half 哈希函数在部分 GPU 上产生 NaN
+                    float windU     = IN.positionOS.x * _Small_Wave
+                                    + _Time.y * _Small_WindSpeed;
+                    float windNoise = SAMPLE_TEXTURE2D_LOD(_Tree_NoiseTexture1, sampler_Tree_NoiseTexture1,
+                                                            float2(windU, windU), 0).r;
+                    float useHash   = step(0.999, windNoise);
+                    float p         = frac(windU * 0.1031);
+                    p               = p * p + 33.33;
+                    p               = p * p + p;
+                    float hashNoise = frac(p);
+                    windNoise       = lerp(windNoise, hashNoise, useHash);
+                    IN.positionOS.x += _Big_WindAmount * windNoise;
+                #endif
+
                 // ── 顶点变形 ──
                 #ifdef _USEVERTEXDEFORM
                     float2 deformScrollSpeed = _BumpMap_ST.zw;
@@ -486,6 +526,7 @@ Shader "Custom/Glass_MobileNew"
 
             #pragma shader_feature_local _USEVERTEXDEFORM
             #pragma multi_compile_local _ _DEFORM_USE_UV
+            #pragma shader_feature_local _USEVERTEXDISPLACEMENT
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
@@ -494,6 +535,9 @@ Shader "Custom/Glass_MobileNew"
 
             TEXTURE2D(_BumpMap);
             SAMPLER(sampler_BumpMap);
+            // 顶点风动位移噪声贴图（保持阴影几何与渲染几何一致）
+            TEXTURE2D(_Tree_NoiseTexture1);
+            SAMPLER(sampler_Tree_NoiseTexture1);
 
             CBUFFER_START(UnityPerMaterial)
                 half4 _BaseColor;
@@ -513,6 +557,10 @@ Shader "Custom/Glass_MobileNew"
                 float4 _BaseMap_ST;
                 float4 _BumpMap_ST;
                 half _VertexDeformStrength;
+                // 顶点风动位移参数
+                half _Big_WindAmount;
+                half _Small_WindSpeed;
+                half _Small_Wave;
             CBUFFER_END
 
             struct Attributes
@@ -535,6 +583,23 @@ Shader "Custom/Glass_MobileNew"
                 Varyings output;
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
+
+                // ── 顶点风动位移（与 ForwardLit Pass 一致） ──
+                #ifdef _USEVERTEXDISPLACEMENT
+                    // 公式: windU = vertexX · _Small_Wave + time · _Small_WindSpeed (已解耦)
+                    // 全部使用 float 精度，避免 half 哈希函数在部分 GPU 上产生 NaN
+                    float windU     = input.positionOS.x * _Small_Wave
+                                    + _Time.y * _Small_WindSpeed;
+                    float windNoise = SAMPLE_TEXTURE2D_LOD(_Tree_NoiseTexture1, sampler_Tree_NoiseTexture1,
+                                                            float2(windU, windU), 0).r;
+                    float useHash   = step(0.999, windNoise);
+                    float p         = frac(windU * 0.1031);
+                    p               = p * p + 33.33;
+                    p               = p * p + p;
+                    float hashNoise = frac(p);
+                    windNoise       = lerp(windNoise, hashNoise, useHash);
+                    input.positionOS.x += _Big_WindAmount * windNoise;
+                #endif
 
                 // ── 与 ForwardLit Pass 相同的顶点位移 ──
                 #ifdef _USEVERTEXDEFORM

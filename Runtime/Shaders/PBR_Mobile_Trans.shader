@@ -19,12 +19,16 @@
 // 继承PBR_Mobile6.0 完善所有效果，继承原始表现效果（支持ShadowMap透明投影）
 // 继承PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
 // 继承PBR_Mobile6.5 P0性能优化：MRA贴图条件采样、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关；_ZWrite改用shader_feature_local关键字化
+// 继承PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
+// 继承PBR_Mobile7.2
+
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
     {
         [Toggle(_DISABLEENVIRONMENT)] _DisableEnvironment ("Disable Environment", Float) = 0
         [Toggle(_DISABLELIGHTCOLOR)] _DisableLightColor ("Disable LightColor", Float) = 0
+        [Toggle(_USESOFTSHADOW)] _UseSoftShadow ("Use Optimized Soft Shadow", Float) = 1
         [Header(1  (Base Properties))]
         [Space(5)]
         [MainColor] _BaseColor ("Base Color", Color) = (1,1,1,1)
@@ -37,6 +41,7 @@ Shader "Custom/PBR_Mobile_Trans"
         _SpecularScale ("Specular Scale", Range(0.1, 5)) = 2
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
         _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
+        _Softness ("Shadow Softness（纹素数）", Range(0, 4)) = 1.5
         _Brightness ("Brightness", Range(0.5, 2)) = 1.2
         [HideInInspector] _BakedSpecularDirection ("Baked Specular Direction", Vector) = (0, 0, 1)
         [Toggle(_USEMSAMAP)] _UseMsaMap ("Use Metallic Roughness Map", Float) = 0
@@ -142,6 +147,7 @@ Shader "Custom/PBR_Mobile_Trans"
             #pragma shader_feature_local _NORMALMAP
             #pragma shader_feature_local _USEPOINTLIGHT
             #pragma shader_feature_local _USEVERSHADOW
+            #pragma shader_feature_local _USESOFTSHADOW
             #pragma shader_feature_local _USEREFLECTION
             #pragma shader_feature_local _DISABLEENVIRONMENT
             #pragma shader_feature_local _DISABLELIGHTCOLOR
@@ -181,6 +187,8 @@ Shader "Custom/PBR_Mobile_Trans"
             TEXTURE2D(_SphericalReflectionMap);
             SAMPLER(sampler_SphericalReflectionMap);
 
+            float4 _MainLightShadowmapTexture_TexelSize;
+
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseMap_ST;
                 half4 _BaseColor;
@@ -188,6 +196,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 half _Roughness;
                 half _SpecularScale;
                 half _ShadowScale;
+                float _Softness;
                 half _HalfLambert;
                 half _Brightness;
                 half _BumpScale;
@@ -492,22 +501,51 @@ Shader "Custom/PBR_Mobile_Trans"
                 half3 viewDirWS = normalize(input.viewDirWS);
                 
                 half shadowAttenuation = 1;
+#ifdef _USESOFTSHADOW
+                // 优化软阴影：4 层采样（1 中心 + 3 点 120° 均布）+ 每像素伪随机旋转
+                // 仅 1 次 TransformWorldToShadowCoord，4 层等权平均 1:1:1:1 ÷ 4 → 各点 25%
+                // 伪随机旋转打破大采样半径下的方向性条纹，转为不可见噪声
+                Light mainLight = GetMainLight();
+                half3 lightDir = mainLight.direction;
+                {
+                    float4 sc = TransformWorldToShadowCoord(input.positionWS);
+                    float2 texelSize = _MainLightShadowmapTexture_TexelSize.xy;
+                    float radius = _Softness * texelSize.x;
+
+                    // 基于 shadowCoord 的 hash 生成伪随机旋转角（0~2π），每像素不同方向
+                    float rndAngle = frac(sin(dot(sc.xy, float2(12.9898, 78.233))) * 43758.5453) * 6.283185;
+                    float cosA = cos(rndAngle), sinA = sin(rndAngle);
+
+                    // 中心点
+                    float shadow = SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc);
+                    // 旋转后方向 1（原 0°）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(cosA, sinA) * radius, sc.zw));
+                    // 旋转后方向 2（原 120°）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(-0.5 * cosA - 0.866 * sinA, -0.5 * sinA + 0.866 * cosA) * radius, sc.zw));
+                    // 旋转后方向 3（原 240°）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(-0.5 * cosA + 0.866 * sinA, -0.5 * sinA - 0.866 * cosA) * radius, sc.zw));
+
+                    // 超出阴影贴图范围（sc.z <= 0）时维持无阴影状态
+                    half inRange = (sc.z > 0.0) ? 1.0 : 0.0;
+                    mainLight.shadowAttenuation = lerp(1.0, shadow / 4.0, inRange);
+                }
+#else
                 float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);
                 Light mainLight = GetMainLight(shadowCoord);
                 half3 lightDir = mainLight.direction;
+#endif
                 
-                // 处理ShadowMask（用于Subtractive和Shadowmask模式下的Mix灯光）
-                #if defined(LIGHTMAP_ON)
-                    #if defined(SHADOWS_SHADOWMASK)
-                        // Shadowmask模式：使用烘焙的阴影遮罩
-                        half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
-                        mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
-                    #elif defined(LIGHTMAP_SHADOW_MIXING)
-                        // Subtractive模式：从lightmap中减去主光源的贡献，然后添加实时光照
-                        // 这样可以让动态物体正确接收实时阴影
-                        // 注意：在Subtractive模式下，静态物体的阴影已经烘焙到lightmap中
-                        // 动态物体需要接收实时阴影
-                    #endif
+                // ShadowMask：取软阴影和烘焙遮罩的较暗值
+                #if defined(LIGHTMAP_ON) && defined(SHADOWS_SHADOWMASK)
+                    half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+                    mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
                 #endif
                 
                 #ifdef _USEVERSHADOW
@@ -688,6 +726,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 half _Roughness;
                 half _SpecularScale;
                 half _ShadowScale;
+                float _Softness;
                 half _HalfLambert;
                 half _Brightness;
                 half _BumpScale;
@@ -774,7 +813,7 @@ Shader "Custom/PBR_Mobile_Trans"
                 "RenderType" = "Opaque"
                 "DisableBatching" = "False"
                 "RenderPipeline" = "UniversalPipeline"
-                "UniversalMaterialType" = "Unlit"
+                "UniversalMaterialType" = "Unlit"   
                 "ShaderGraphTargetId" = "UniversalUnlitSubTarget"
             }
             

@@ -38,6 +38,12 @@ public class Glass_carWindowGUI : ShaderGUI
     private MaterialProperty fresnelRampTexture; // Glass_carWindow独有
     private MaterialProperty fresnelRampRow; // Glass_carWindow独有
     private MaterialProperty fresnelRampIntensity; // Glass_carWindow独有
+    // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+    private MaterialProperty useVertexDisplacement;
+    private MaterialProperty treeNoiseTexture1;
+    private MaterialProperty bigWindAmount;
+    private MaterialProperty smallWindSpeed;
+    private MaterialProperty smallWave;
     private MaterialProperty cullMode;
     private MaterialProperty renderMode; // Glass_MobileNew 渲染模式
     private MaterialProperty zWrite; // 深度写入
@@ -58,11 +64,22 @@ public class Glass_carWindowGUI : ShaderGUI
         using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawSpecular();
         }
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+        if (useVertexDisplacement != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawVertexDisplacement();
+            }
+        }
         using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawDistortion();
         }
-        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
-        DrawRefraction(); // Glass_MobileNew独有
+        // Glass_MobileNew独有：折射（Glass_carWindow 无此属性，跳过防止空盒）
+        if (useRefraction != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawRefraction();
+            }
         }
         using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawReflection();
@@ -70,8 +87,12 @@ public class Glass_carWindowGUI : ShaderGUI
         using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawFresnel();
         }
-        using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
-        DrawFresnelRamp(); // Glass_carWindow独有
+        // Glass_carWindow独有：菲涅尔渐变贴图（Glass_MobileNew 无此属性，跳过防止空盒）
+        if (useFresnelRamp != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawFresnelRamp();
+            }
         }
         DrawRenderSettings();
     }
@@ -104,6 +125,12 @@ public class Glass_carWindowGUI : ShaderGUI
         fresnelRampTexture = FindProperty("_FresnelRampTexture", m_Properties, false); // Glass_carWindow独有
         fresnelRampRow = FindProperty("_FresnelRampRow", m_Properties, false); // Glass_carWindow独有
         fresnelRampIntensity = FindProperty("_FresnelRampIntensity", m_Properties, false); // Glass_carWindow独有
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+        useVertexDisplacement = FindProperty("_UseVertexDisplacement", m_Properties, false);
+        treeNoiseTexture1 = FindProperty("_Tree_NoiseTexture1", m_Properties, false);
+        bigWindAmount = FindProperty("_Big_WindAmount", m_Properties, false);
+        smallWindSpeed = FindProperty("_Small_WindSpeed", m_Properties, false);
+        smallWave = FindProperty("_Small_Wave", m_Properties, false);
         cullMode = FindProperty("_Cull", m_Properties);
         renderMode = FindProperty("_RenderMode", m_Properties, false);
         zWrite = FindProperty("_ZWrite", m_Properties, false);
@@ -257,9 +284,50 @@ public class Glass_carWindowGUI : ShaderGUI
         }
     }
 
+    private void DrawVertexDisplacement()
+    {
+        // 顶点风动位移（移植自 SyntyStudios/SciFiPlant 的 Tree Vertex Animation）
+        if (useVertexDisplacement == null) return;
+
+        // 显式监听 toggle 变化，强制同步 keyword（防止 [Toggle] 自动处理在某些 Editor 场景下失效）
+        EditorGUI.BeginChangeCheck();
+        m_MaterialEditor.ShaderProperty(useVertexDisplacement, "3 ▌顶点风动位移 (Wind Displacement)");
+        if (EditorGUI.EndChangeCheck())
+        {
+            foreach (var obj in m_MaterialEditor.targets)
+            {
+                Material mat = obj as Material;
+                if (mat == null) continue;
+                if (useVertexDisplacement.floatValue > 0.5f)
+                    mat.EnableKeyword("_USEVERTEXDISPLACEMENT");
+                else
+                    mat.DisableKeyword("_USEVERTEXDISPLACEMENT");
+            }
+        }
+
+        if (useVertexDisplacement.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+
+            EditorGUILayout.HelpBox(
+                "沿模型 X 轴位移，振幅 / 时间速度 / 空间频率 三参数独立。\n" +
+                "噪声贴图可空，为空时自动使用程序化噪声。",
+                MessageType.Info);
+
+            m_MaterialEditor.TexturePropertySingleLine(new GUIContent("风动噪声贴图 (R, 可选)"), treeNoiseTexture1);
+            m_MaterialEditor.FloatProperty(bigWindAmount, "风动振幅 (Big Wind Amount)");
+            m_MaterialEditor.FloatProperty(smallWindSpeed, "时间速度 (Small Wind Speed)");
+            m_MaterialEditor.RangeProperty(smallWave, "空间频率 (Small Wave)");
+
+            EditorGUI.indentLevel--;
+        }
+    }
+
     private void DrawDistortion()
     {
-        m_MaterialEditor.ShaderProperty(useNormalMap, "3 ▌使用法线贴图 (扭曲)");
+        // 章节编号：插入顶点风动位移后，原 3 → 4
+        string sectionNumber = "4";
+        m_MaterialEditor.ShaderProperty(useNormalMap, $"{sectionNumber} ▌使用法线贴图 (扭曲)");
         
         if (useNormalMap.floatValue > 0.5f)
         {
@@ -348,8 +416,9 @@ public class Glass_carWindowGUI : ShaderGUI
         // Glass_MobileNew独有的折射功能
         if (useRefraction != null && refractionStrength != null)
         {
-            m_MaterialEditor.ShaderProperty(useRefraction, "4 ▌使用折射");
-            
+            // 章节编号：插入顶点风动位移后，原 4 → 5
+            m_MaterialEditor.ShaderProperty(useRefraction, "5 ▌使用折射");
+
             if (useRefraction.floatValue > 0.5f)
             {
                 EditorGUI.indentLevel++;
@@ -362,7 +431,8 @@ public class Glass_carWindowGUI : ShaderGUI
     private void DrawReflection()
     {
         // 根据是否有折射功能来决定标题编号
-        string sectionNumber = (useRefraction != null) ? "5" : "4";
+        // 插入顶点风动位移后，原 4/5 → 5/6
+        string sectionNumber = (useRefraction != null) ? "6" : "5";
         m_MaterialEditor.ShaderProperty(useReflection, $"{sectionNumber} ▌使用反射贴图");
         
         if (useReflection.floatValue > 0.5f)
@@ -385,22 +455,24 @@ public class Glass_carWindowGUI : ShaderGUI
     private void DrawFresnel()
     {
         // 根据是否有折射功能来决定标题编号
-        string sectionNumber = (useRefraction != null) ? "6" : "5";
+        // 插入顶点风动位移后，原 5/6 → 6/7
+        string sectionNumber = (useRefraction != null) ? "7" : "6";
         GUILayout.Label($"{sectionNumber} ▌菲涅尔 (Fresnel)", EditorStyles.boldLabel);
         m_MaterialEditor.RangeProperty(fresnelPower, "全局强度");
         m_MaterialEditor.RangeProperty(fresnelBias, "中心偏移");
         m_MaterialEditor.RangeProperty(fresnelScale, "边缘缩放");
-        
+
     }
 
     private void DrawFresnelRamp()
     {
         // Glass_carWindow独有的菲涅尔渐变贴图功能
-        if (useFresnelRamp != null && fresnelRampTexture != null && 
+        if (useFresnelRamp != null && fresnelRampTexture != null &&
             fresnelRampRow != null && fresnelRampIntensity != null)
         {
             // 根据是否有折射功能来决定标题编号
-            string sectionNumber = (useRefraction != null) ? "7" : "6";
+            // 插入顶点风动位移后，原 6/7 → 7/8
+            string sectionNumber = (useRefraction != null) ? "8" : "7";
             m_MaterialEditor.ShaderProperty(useFresnelRamp, $"{sectionNumber} ▌使用菲涅尔渐变贴图");
             
             if (useFresnelRamp.floatValue > 0.5f)
@@ -420,7 +492,9 @@ public class Glass_carWindowGUI : ShaderGUI
 
     private void DrawRenderSettings()
     {
-        GUILayout.Label("7 ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
+        // 章节编号：插入顶点风动位移后，原 7 → 8 (有折射时 9)
+        string sectionNumber = (useRefraction != null) ? "9" : "8";
+        GUILayout.Label($"{sectionNumber} ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
         
         // Glass_MobileNew 渲染模式切换
         if (renderMode != null)
@@ -852,12 +926,13 @@ public class Glass_carWindowGUI : ShaderGUI
         // 每个 toggle 属性名 -> 对应的 shader keyword
         var toggleKeywords = new System.Collections.Generic.Dictionary<string, string>
         {
-            { "_UseNormalMap",    "_USENORMALMAP"    },
-            { "_UseRefraction",   "_USEREFRACTION"   },  // Glass_MobileNew
-            { "_UseReflection",   "_USEREFLECTION"   },
-            { "_UseVertexDeform", "_USEVERTEXDEFORM" },  // Glass_MobileNew
-            { "_DeformUseUV",     "_DEFORM_USE_UV"   },  // Glass_MobileNew 顶点变形UV模式
-            { "_UseFresnelRamp",  "_USEFRESNELRAMP"  },  // Glass_carWindow
+            { "_UseNormalMap",         "_USENORMALMAP"          },
+            { "_UseRefraction",        "_USEREFRACTION"         },  // Glass_MobileNew
+            { "_UseReflection",        "_USEREFLECTION"         },
+            { "_UseVertexDeform",      "_USEVERTEXDEFORM"       },  // Glass_MobileNew
+            { "_DeformUseUV",          "_DEFORM_USE_UV"         },  // Glass_MobileNew 顶点变形UV模式
+            { "_UseFresnelRamp",       "_USEFRESNELRAMP"        },  // Glass_carWindow
+            { "_UseVertexDisplacement","_USEVERTEXDISPLACEMENT" },  // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
         };
 
         foreach (var pair in toggleKeywords)

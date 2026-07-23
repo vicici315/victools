@@ -33,6 +33,8 @@
 // PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
 // PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）；Subtractive混合光照改用URP标准算法
 // PBR_Mobile6.5 P0性能优化：MRA贴图条件采样（仅_USEMSAMAP开启时采样）、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关（按需裁剪烘焙高光与间接高光计算）
+// PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
+// PBR_Mobile7.2 每个像素根据 sc.xy 做 hash 生成 [0, 2π) 的伪随机旋转角，让 3 个采样方向每像素随机偏移，规则的条纹被打散为高频随机噪声。
 
 Shader "Custom/PBR_Mobile"
 {
@@ -41,6 +43,7 @@ Shader "Custom/PBR_Mobile"
         [Toggle(_DISABLEENVIRONMENT)] _DisableEnvironment ("Disable Environment", Float) = 0
         [Toggle(_DISABLELIGHTCOLOR)] _DisableLightColor ("Disable LightColor", Float) = 0
         [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 0
+        [Toggle(_USESOFTSHADOW)] _UseSoftShadow ("Use Optimized Soft Shadow", Float) = 1
         [Header(1  (Base Properties))]
         [Space(5)]
         [MainColor] _BaseColor ("Base Color", Color) = (1,1,1,1)
@@ -53,6 +56,7 @@ Shader "Custom/PBR_Mobile"
         _SpecularScale ("Specular Scale", Range(0.1, 5)) = 2
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
         _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
+        _Softness ("Shadow Softness（纹素数）", Range(0, 4)) = 1.5
         _Brightness ("Brightness", Range(0.5, 20)) = 1.0
         _BakedSpecularDirection ("Baked Specular Direction", Vector) = (0, 0, 1)
         [Toggle(_USEMSAMAP)] _UseMsaMap ("Use Metallic Roughness Map", Float) = 0
@@ -161,6 +165,7 @@ Shader "Custom/PBR_Mobile"
             #pragma shader_feature_local _INVERTEMISMAP
             #pragma shader_feature_local _FILPG
             #pragma shader_feature_local _USEVERSHADOW
+            #pragma shader_feature_local _USESOFTSHADOW
             #pragma shader_feature_local _USEMSAMAP
             #pragma shader_feature_local _USEAOMAP
             #pragma shader_feature_local _NORMALMAP
@@ -230,6 +235,8 @@ Shader "Custom/PBR_Mobile"
             TEXTURE2D(_SpotTexture);
             SAMPLER(sampler_SpotTexture);
 
+            float4 _MainLightShadowmapTexture_TexelSize;
+
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseMap_ST;
                 half4 _BaseColor;
@@ -237,6 +244,7 @@ Shader "Custom/PBR_Mobile"
                 half _Roughness;
                 half _SpecularScale;
                 half _ShadowScale;
+                float _Softness;
                 half _HalfLambert;
                 half _Brightness;
                 half _BumpScale;
@@ -743,39 +751,73 @@ Shader "Custom/PBR_Mobile"
                 half3 lightColor = 0;
                 half3 lightDir = 0;
                 
+#ifdef _USEVERSHADOW
+                // 顶点阴影模式：跳过 shadow map 采样，直接使用顶点预计算阴影
+                Light mainLight = GetMainLight();
+                lightDir = mainLight.direction;
+                
+                if (_ShadowScale < 0.88)
+                {
+                    half vertShadow = input.positionWS_shadow.w;
+                    #if defined(SHADOWS_SHADOWMASK) && defined(LIGHTMAP_ON)
+                        // Shadowmask 模式：取顶点阴影和烘焙遮罩的较暗值
+                        half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+                        shadowAttenuation = min(vertShadow, shadowMask.r);
+                    #else
+                        shadowAttenuation = vertShadow;
+                    #endif
+                }
+#else
+                // 像素阴影模式
+#ifdef _USESOFTSHADOW
+                // ===== 软阴影 =====
+                // 算法：UV 空间等边三角形采样（1 中心 + 3 点 120° 均布）+ 每像素伪随机旋转
+                // 仅 1 次 TransformWorldToShadowCoord，4 层等权平均 1:1:1:1 ÷ 4 → 各点 25%
+                // 伪随机旋转打破大采样半径下的方向性条纹，转为不可见噪声
+                Light mainLight = GetMainLight();
+                lightDir = mainLight.direction;
+                {
+                    // 世界坐标 → ShadowCoord（仅 1 次，4 层采样共享）
+                    float4 sc = TransformWorldToShadowCoord(input.positionWS_shadow.xyz);
+                    float2 texelSize = _MainLightShadowmapTexture_TexelSize.xy;
+                    float radius = _Softness * texelSize.x;    // 采样半径（纹素单位）
+
+                    // 基于 shadowCoord 的 hash 生成伪随机旋转角（0~2π），每像素不同方向
+                    float rndAngle = frac(sin(dot(sc.xy, float2(12.9898, 78.233))) * 43758.5453) * 6.283185;
+                    float cosA = cos(rndAngle), sinA = sin(rndAngle);
+
+                    // 采样 1：中心点
+                    float shadow = SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc);
+                    // 采样 2：旋转后方向 1（原 0°）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(cosA, sinA) * radius, sc.zw));
+                    // 采样 3：旋转后方向 2（原 120°）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(-0.5 * cosA - 0.866 * sinA, -0.5 * sinA + 0.866 * cosA) * radius, sc.zw));
+                    // 采样 4：旋转后方向 3（原 240°）
+                    shadow += SAMPLE_TEXTURE2D_SHADOW(
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare,
+                        float4(sc.xy + float2(-0.5 * cosA + 0.866 * sinA, -0.5 * sinA - 0.866 * cosA) * radius, sc.zw));
+
+                    // 超出阴影贴图范围（sc.z <= 0）时维持无阴影状态
+                    half inRange = (sc.z > 0.0) ? 1.0 : 0.0;
+                    mainLight.shadowAttenuation = lerp(1.0, shadow / 4.0, inRange);
+                }
+#else
                 float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS_shadow.xyz);
                 Light mainLight = GetMainLight(shadowCoord);
                 lightDir = mainLight.direction;
+#endif
                 
-                // 处理ShadowMask（用于Subtractive和Shadowmask模式下的Mix灯光）
-                #if defined(LIGHTMAP_ON)
-                    #if defined(SHADOWS_SHADOWMASK)
-                        // Shadowmask模式：使用烘焙的阴影遮罩
-                        half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
-                        mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
-                    // #elif defined(LIGHTMAP_SHADOW_MIXING)
-                        // Subtractive模式：从lightmap中减去主光源的贡献，然后添加实时光照
-                        // 这样可以让动态物体正确接收实时阴影
-                        // 注意：在Subtractive模式下，静态物体的阴影已经烘焙到lightmap中
-                        // 动态物体需要接收实时阴影
-                    #endif
-                #endif 
+                // ShadowMask：取软阴影和烘焙遮罩的较暗值
+                #if defined(LIGHTMAP_ON) && defined(SHADOWS_SHADOWMASK)
+                    half4 shadowMask = SAMPLE_SHADOWMASK(input.lightmapUV);
+                    mainLight.shadowAttenuation = min(mainLight.shadowAttenuation, shadowMask.r);
+                #endif
                 
-                #ifdef _USEVERSHADOW
-                    // 顶点阴影模式 - 使用顶点着色器预计算的阴影值
-                    // 同时融合 frag 中的 Shadowmask 结果（mainLight.shadowAttenuation 已被上面的 Shadowmask 修改）
-                    if (_ShadowScale < 0.88)
-                    {
-                        half vertShadow = input.positionWS_shadow.w;
-                        #if defined(SHADOWS_SHADOWMASK) && defined(LIGHTMAP_ON)
-                            // Shadowmask 模式：取顶点阴影和 Shadowmask 的较暗值
-                            shadowAttenuation = min(vertShadow, mainLight.shadowAttenuation);
-                        #else
-                            shadowAttenuation = vertShadow;
-                        #endif
-                    }
-                #else
-                    // 像素阴影模式
                     if (_ShadowScale < 0.88)
                     {
                         half baseShadow = mainLight.shadowAttenuation;
@@ -806,7 +848,7 @@ Shader "Custom/PBR_Mobile"
                         shadowAttenuation = lerp(1.0, shadowAttenuation, backfaceFactor);
                     }
                     // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
-                #endif
+#endif
                 
                 #ifndef _DISABLEENVIRONMENT
                 // _DISABLELIGHTCOLOR：漫反射去色只保留强度，高光保留原始颜色影响金属度
@@ -1092,6 +1134,7 @@ Shader "Custom/PBR_Mobile"
                 half _Roughness;
                 half _SpecularScale;
                 half _ShadowScale;
+                float _Softness;
                 half _HalfLambert;
                 half _Brightness;
                 half _BumpScale;

@@ -21,6 +21,7 @@
 //               场景打开后自动重新尝试恢复 null 对象
 //               【刷新→】按钮合并了按场景信息恢复 null 对象的能力
 // 场景工具 v2.29 资源箱添加【场景】按钮，一键将当前打开的所有场景（多场景支持）放入资源箱
+// 场景工具 v2.30 【选择名称:】按钮支持选中未激活对象。
 
 using System;
 using UnityEngine;
@@ -166,7 +167,7 @@ public class ResourceBoxRecoveryItem
         // 资源箱文件管理相关变量
         private string _resourceBoxFileName = ""; // 当前资源箱文件名
         private int _selectedFileIndex; // 选中的文件索引
-        private readonly List<string> _availableFiles = new List<string>(); // 可用的资源箱文件列表
+        private readonly List<string> _availableFiles = new(); // 可用的资源箱文件列表
         // 注意：ResourceBoxDirectory和GlobalResourceBoxPath现在通过PathHelper类获取
 
         // 搜索历史记录管理器
@@ -175,7 +176,7 @@ public class ResourceBoxRecoveryItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.29]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.30]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -790,8 +791,8 @@ public class ResourceBoxRecoveryItem
         /// 在场景中查找所有名称包含指定文本的对象
         private static List<GameObject> FindObjectsByName(string searchText)
         {
-            // 获取场景中的所有游戏对象（使用新的API，不排序以获得更好的性能）
-            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+            // 获取场景中的所有游戏对象（包含未激活对象）
+            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
 
             return allObjects.Where(obj => obj.name.IndexOf(searchText, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
         }
@@ -799,8 +800,8 @@ public class ResourceBoxRecoveryItem
         /// 在场景中查找所有名称相似的对象
         private static List<GameObject> FindSimilarObjects(string namePattern)
         {
-            // 获取场景中的所有游戏对象（使用新的API，不排序以获得更好的性能）
-            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None);
+            // 获取场景中的所有游戏对象（包含未激活对象）
+            var allObjects = Object.FindObjectsByType<GameObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
 
             return allObjects.Where(obj => obj.name.StartsWith(namePattern)).ToList();
         }

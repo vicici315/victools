@@ -134,6 +134,13 @@ namespace VicTools
                 });
             }
 
+            Add("v2.10.5",
+                "LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。",
+                "PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)",
+                "场景工具 v2.30 【选择名称:】按钮支持选中未激活对象。",
+                "ShadowReceiver 12.0 接收阴影材质（等边三角形 120° 软阴影 + 单次 shadow map 比较，无 PCF 开销）"
+            );
+
             Add("v2.10.4",
                 "添加新工具菜单：创建 FPS帧率显示（可以自动创建帧率显示脚本相关对象）。",
                 "LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos / initLatticeRot / initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。",

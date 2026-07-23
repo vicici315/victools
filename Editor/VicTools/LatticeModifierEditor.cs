@@ -21,6 +21,7 @@
 // LatticeModifierEditor v3.29 选中状态丢失修复：selectedPoints 从 static 改为实例字段，每个 Editor 实例独立维护自己的选中点集合。不再通过 static 共享，彻底避免多 Inspector 窗口间交叉清除选中状态。SyncLatticeFromTarget 简化为只处理 Editor 复用（target 变 lattice 未变）的单一场合。
 // LatticeModifierEditor v3.30 多 Inspector 同步修复：selectedPoints 改为属性，底层按 InstanceID 存储在静态 Dictionary 中。多个 Inspector 窗口显示同一晶格时共享同一份选中数据，切换晶格时自动获取对应晶格的独立选中集（切换回来时自动恢复）。不再交叉清除。
 // LatticeModifierEditor v3.31 扩展选择支持 Undo/Redo：ExpandSelection 通过 Undo.RecordObject 创建撤销点 + undoRedoPerformed 一次性回调实现双向切换，Ctrl+Z 回退 Ctrl+Y 重做。
+// LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -296,7 +297,7 @@ public class LatticeModifierEditor : Editor
         // v3.24.1：surfaceOnly 改为 NonSerialized 后不能用 PropertyField，手动 Toggle
         bool prevSurfaceOnly = lattice.surfaceOnly;
         bool currSurfaceOnly = EditorGUILayout.Toggle(
-            new GUIContent("v3.24 忽略内部控制点",
+            new GUIContent("忽略内部控制点（v3.24）",
                 "开启后控制点只保留 6 个外壳面，去掉立方体内部的点。\n" +
                 "内部点对表面顶点影响极小（Bernstein 基函数趋近 0），\n" +
                 "可大幅减少 FFD 累加计算量。8x8x8 晶格控制点从 512 减到 296（-42%）。"),
@@ -1128,6 +1129,15 @@ public class LatticeModifierEditor : Editor
     {
         if (lat == null || !lat.IsInitialized || lat.controlPoints == null) return;
 
+        // v3.32 运行时优化：Play Mode 下不做任何晶格点/线着色计算，
+        // 改为绘制一个浅灰色立方体外壳（无点、无选中、无拖拽、无框选）。
+        // 单一短路点同时覆盖 OnSceneGUI 与 OnGlobalSceneGUIStatic 两条调用路径。
+        if (Application.isPlaying)
+        {
+            DrawLatticeBoundingBoxSimple(lat);
+            return;
+        }
+
         // v3.27 防御：清理选中集中不属于当前晶格的点索引（切换晶格时静态选择残留）
         if (selPts != null && selPts.Count > 0)
             selPts.RemoveWhere(idx => idx < 0 || idx >= lat.controlPoints.Length);
@@ -1620,6 +1630,40 @@ public class LatticeModifierEditor : Editor
         if (Selection.activeGameObject == s_activeLattice.gameObject)
             return;
         DrawLatticeAndHandles(s_activeLattice, s_activeSelectedPoints, sceneView, false);
+    }
+
+    /// v3.32 运行时简化绘制：只画 8 个角点 + 12 条边的浅灰色立方体外壳。
+    /// 跳过面可见性 / 深度排序 / 选中 / 拖拽 / 框选 等所有重操作，
+    /// 用于 Application.isPlaying 期间的 OnSceneGUI，避免 Editor 在 Play Mode 下持续消耗性能。
+    /// </summary>
+    private static void DrawLatticeBoundingBoxSimple(LatticeModifier lat)
+    {
+        Transform t = lat.transform;
+        int nx = lat.PointCountX, ny = lat.PointCountY, nz = lat.PointCountZ;
+        if (lat.controlPoints.Length != nx * ny * nz) return;
+
+        // 8 个角点（世界空间）
+        Vector3 p0 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(0,     0,     0)]);
+        Vector3 p1 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(nx-1, 0,     0)]);
+        Vector3 p2 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(nx-1, ny-1, 0)]);
+        Vector3 p3 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(0,     ny-1, 0)]);
+        Vector3 p4 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(0,     0,     nz-1)]);
+        Vector3 p5 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(nx-1, 0,     nz-1)]);
+        Vector3 p6 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(nx-1, ny-1, nz-1)]);
+        Vector3 p7 = t.TransformPoint(lat.controlPoints[lat.GetFlatIndex(0,     ny-1, nz-1)]);
+
+        // 浅灰色统一着色
+        Color gray = new Color(0.7f, 0.7f, 0.7f, 0.6f);
+        Handles.color = gray;
+        // 底面四边形
+        Handles.DrawAAPolyLine(2f, p0, p1, p2, p3, p0);
+        // 顶面四边形
+        Handles.DrawAAPolyLine(2f, p4, p5, p6, p7, p4);
+        // 4 条垂直棱
+        Handles.DrawAAPolyLine(2f, p0, p4);
+        Handles.DrawAAPolyLine(2f, p1, p5);
+        Handles.DrawAAPolyLine(2f, p2, p6);
+        Handles.DrawAAPolyLine(2f, p3, p7);
     }
 
     /// Esc 切换：按命名规则（Lattice_ + 模型名）查找匹配晶格对象并选中。

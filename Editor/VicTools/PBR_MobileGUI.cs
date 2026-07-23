@@ -2,6 +2,7 @@
 // 6.0 支持多个材质球读档
 // 6.1 添加【统一阴影】按钮，用于统一设置“自身阴影衰减”值，使场景中阴影保持一致的明暗度（包括PBR_Mobile_Trans）
 // 6.3 优化读档，按属性值精确同步 shader 关键字（两个 shader 共用，仅同步各自实际声明的关键字）
+// PBR_Mobile.shader7.1 添加"同步设置"按钮，一键同步场景中所有PBR_Mobile.shader与PBR_Mobile_Trans.shader软阴影参数
 
 using UnityEngine;
 using UnityEditor;
@@ -23,6 +24,8 @@ public class PBR_MobileGUI : ShaderGUI
     private MaterialProperty specularScale;
     private MaterialProperty halfLambert;
     private MaterialProperty shadowScale;
+    private MaterialProperty useSoftShadow;
+    private MaterialProperty softness;
     private MaterialProperty brightness;
     private MaterialProperty bakedSpecularDirection;
     private MaterialProperty useMsaMap;
@@ -138,6 +141,7 @@ public class PBR_MobileGUI : ShaderGUI
         disableEnvironment = FindProperty("_DisableEnvironment", m_Properties, false);
         disableLightColor = FindProperty("_DisableLightColor", m_Properties, false);
         useVerShadow = FindProperty("_UseVerShadow", m_Properties, false);
+        useSoftShadow = FindProperty("_UseSoftShadow", m_Properties, false);
         baseColor = FindProperty("_BaseColor", m_Properties);
         baseMap = FindProperty("_BaseMap", m_Properties);
         metallic = FindProperty("_Metallic", m_Properties);
@@ -145,6 +149,7 @@ public class PBR_MobileGUI : ShaderGUI
         specularScale = FindProperty("_SpecularScale", m_Properties);
         halfLambert = FindProperty("_HalfLambert", m_Properties);
         shadowScale = FindProperty("_ShadowScale", m_Properties);
+        softness = FindProperty("_Softness", m_Properties, false);
         brightness = FindProperty("_Brightness", m_Properties);
         bakedSpecularDirection = FindProperty("_BakedSpecularDirection", m_Properties);
         useMsaMap = FindProperty("_UseMsaMap", m_Properties, false);
@@ -250,6 +255,25 @@ public class PBR_MobileGUI : ShaderGUI
         if (useVerShadow != null)
         {
             m_MaterialEditor.ShaderProperty(useVerShadow, "使用顶点阴影");
+        }
+        
+        if (useSoftShadow != null)
+        {
+            EditorGUILayout.BeginHorizontal();
+            m_MaterialEditor.ShaderProperty(useSoftShadow, "使用优化软阴影");
+            GUI.backgroundColor = new Color(1.0f, 0.6f, 0.3f);
+            if (GUILayout.Button(new GUIContent("同步设置", "将当前材质的（使用优化软阴影）与（阴影柔化半径）参数同步到场景中所有使用 PBR_Mobile 及Trans材质"), GUILayout.Width(65)))
+            {
+                EditorApplication.delayCall += SyncSoftShadowSettings;
+            }
+            GUI.backgroundColor = Color.white;
+            EditorGUILayout.EndHorizontal();
+            if (useSoftShadow.floatValue > 0.5f && softness != null)
+            {
+                EditorGUI.indentLevel++;
+                m_MaterialEditor.RangeProperty(softness, "阴影柔化半径");
+                EditorGUI.indentLevel--;
+            }
         }
     }
 
@@ -766,7 +790,7 @@ public class PBR_MobileGUI : ShaderGUI
             string trimmed = lines[li].Trim().TrimEnd(',');
             int colonIndex = trimmed.IndexOf(':');
             if (colonIndex < 0) continue;
-
+            // Substring(0, colonIndex) 可以写成更简洁的 [..colonIndex]，建议用后者，如果需要兼容 C# 7.3 或更早：必须保留 Substring(0, colonIndex)
             string propertyName = trimmed.Substring(0, colonIndex).Trim().Trim('"');
             string valueStr = trimmed.Substring(colonIndex + 1).Trim();
 
@@ -879,6 +903,7 @@ public class PBR_MobileGUI : ShaderGUI
         SyncToggle("_DisableEnvironment", "_DISABLEENVIRONMENT");
         SyncToggle("_DisableLightColor",  "_DISABLELIGHTCOLOR");
         SyncToggle("_UseVerShadow",       "_USEVERSHADOW");
+        SyncToggle("_UseSoftShadow",      "_USESOFTSHADOW");
         SyncToggle("_UseMsaMap",          "_USEMSAMAP");
         SyncToggle("_UseAOMap",           "_USEAOMAP");
         SyncToggle("_PreviewAOMap",       "_PREVIEWAO");
@@ -1139,6 +1164,72 @@ public class PBR_MobileGUI : ShaderGUI
         else
         {
             Debug.LogWarning($"场景中没有找到符合条件的{staticTypeText}对象材质。跳过了 {skippedCount} 个{(currentIsStatic ? "非静态" : "静态")}对象");
+        }
+    }
+
+    /// 同步场景中所有同时使用 PBR_Mobile 和 PBR_Mobile_Trans Shader 的材质的优化软阴影设置
+    /// 包括 _UseSoftShadow toggle 和 _Softness 柔化半径
+    private void SyncSoftShadowSettings()
+    {
+        Material sourceMat = m_MaterialEditor.target as Material;
+        if (sourceMat == null) return;
+        
+        float sourceUseSoftShadow = sourceMat.GetFloat("_UseSoftShadow");
+        float sourceSoftness = sourceMat.GetFloat("_Softness");
+
+        // 同时匹配 PBR_Mobile 和 PBR_Mobile_Trans 两种 shader
+        string shaderName = sourceMat.shader.name;
+        string shaderNameTrans = shaderName + "_Trans";    // Custom/PBR_Mobile → Custom/PBR_Mobile_Trans
+        if (shaderName.EndsWith("_Trans"))
+            shaderNameTrans = shaderName;                  // 当前已是 Trans，保持
+        string shaderNameBase = shaderName.EndsWith("_Trans") ? shaderName.Substring(0, shaderName.Length - 6) : shaderName;
+
+        Shader baseShader = Shader.Find(shaderNameBase);
+        Shader transShader = Shader.Find(shaderNameTrans);
+
+        var renderers = Object.FindObjectsOfType<Renderer>();
+        var processedMaterials = new System.Collections.Generic.HashSet<Material>();
+        int modifiedCount = 0;
+
+        foreach (var renderer in renderers)
+        {
+            foreach (var mat in renderer.sharedMaterials)
+            {
+                if (mat == null || mat == sourceMat) continue;
+                Shader matShader = mat.shader;
+                if ((baseShader != null && matShader == baseShader) ||
+                    (transShader != null && matShader == transShader))
+                {
+                    // matched
+                }
+                else
+                {
+                    continue;
+                }
+                if (!processedMaterials.Add(mat)) continue;
+
+                Undo.RecordObject(mat, "Sync Soft Shadow Settings");
+                mat.SetFloat("_UseSoftShadow", sourceUseSoftShadow);
+                mat.SetFloat("_Softness", sourceSoftness);
+
+                if (sourceUseSoftShadow > 0.5f)
+                    mat.EnableKeyword("_USESOFTSHADOW");
+                else
+                    mat.DisableKeyword("_USESOFTSHADOW");
+
+                EditorUtility.SetDirty(mat);
+                modifiedCount++;
+            }
+        }
+
+        if (modifiedCount > 0)
+        {
+            Debug.Log($"同步设置完成：已将 {modifiedCount} 个材质(PBR_Mobile + PBR_Mobile_Trans)的优化软阴影参数同步（_UseSoftShadow={sourceUseSoftShadow}, _Softness={sourceSoftness:F3}）");
+            SceneView.RepaintAll();
+        }
+        else
+        {
+            Debug.LogWarning("场景中没有找到使用 PBR_Mobile 或 PBR_Mobile_Trans Shader 的其他材质");
         }
     }
 }

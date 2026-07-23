@@ -9,10 +9,33 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.10.5
+
+- LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。
+
+- ShadowReceiver 6.0 支持DepthPrimingMode=Forced，使用手动软化阴影方案，解决阴影在透明渲染序列无法使用软阴影的问题。
+
+  ![ShadowReceiver5](./README.assets/ShadowReceiver5.gif) 
+
+  ShadowReceiver 12.0 接收阴影材质（等边三角形 120° 软阴影 + 单次 shadow map 比较，无 PCF 开销）
+  
+- 新增一键配置帧率显示工具，方便美术配置帧率显示，查看场景性能消耗。
+
+  ![image-20260720095834879](./README.assets/image-20260720095834879.png)![image-20260720095728128](./README.assets/image-20260720095728128.png)
+  
+- PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
+
+  ![image-20260723161800859](./README.assets/image-20260723161800859.png) 
+  
+- 场景工具 v2.30 【选择名称:】按钮支持选中未激活对象。
+
+---
+
 ### 版本 2.10.4
 
 - LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos/initLatticeRot/initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。
-   ![image-20260708164205316](./README.assets/image-20260708164205316.png)
+
+   ![image-20260708164205316](./README.assets/image-20260708164205316.png) 
 
 - LatticeModifierEditor v3.31 晶格线宽（屏幕像素）。Handles.DrawLine 是固定 1px，改用 DrawAAPolyLine 可控。
 
@@ -33,10 +56,11 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - 场景工具 v2.28 资源箱场景对象存储机制增强：每个场景对象持久化记录 scenePath / sceneName / sceneGuid。
 - LatticeModifier v3.23 性能 + 内存根治（针对 26 Renderer 共享 LatticeModifier 场景，端到端治理玩家端内存增长）。
-       “Esc” 快捷键在取消晶格点选择的基础上，支持晶格对象与模型对象快速切换。
+   「ESC」快捷键在取消晶格点选择的基础上，支持晶格对象与模型对象快速切换。
 - LatticeModifier v3.24 内部点压缩（surfaceOnly 模式）。
+  
    ![image-20260707172325638](./README.assets/image-20260707172325638.png)![image-20260707172546545](./README.assets/image-20260707172546545.png)
-
+   
 - LatticeModifierEditor v3.26 解决多 Inspector 窗口下「扩展选择」「取消选择」按钮锁定/失效。
 - LatticeModifierEditor v3.27 快捷键 Esc 选中晶格体定位优化：FindLatticesByName 增加渲染器目标验证，排除同名但无关联的晶格，解决同名模型选中错误晶格体的问题。
 
@@ -47,10 +71,12 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 - SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体。
 
 - SpotLightVolume v6.2 - 蒙版投影：新增maskTexture蒙版纹理模拟窗格光柱投影，沿光轴等比投射到锥体横截面，支持enableMask开关和maskIntensity强度控制。
-  ![image-20260629101349789](./README.assets/image-20260629101349789.png)
-
+  
+  ![image-20260629101349789](./README.assets/image-20260629101349789.png) 
+  
 - SpotLightVolumeCore v5.2 解决聚光灯体积光模拟边缘在深度雾中出现硬边问题。
-  ![image-20260626134001662](./README.assets/image-20260626134001662.png)
+
+  ![image-20260626134001662](./README.assets/image-20260626134001662.png) 
 
 - LatticeModifier v3.10 修复「单个静态对象打包后不可见 / 材质变灰」的真正根因——运行时 Mesh 可读性，取消目标模式（SingleRenderer/MultiRenderer），单/多对象统一处理 + 修复污染。
 - LatticeModifier v3.11 修复「目标对象带缩放时晶格变形被放大（叠加）」。
@@ -63,7 +89,8 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 ### 版本 2.10.1
 
 - 主菜单使用AdvancedDropdown菜单系统支持图标，添加相关菜单图标，支持菜单搜索。
-  ![image-20260618164421017](./README.assets/image-20260618164421017.png)
+
+  ![image-20260618164421017](./README.assets/image-20260618164421017.png) 
 
 - LatticeModifierEditor 3.2 Inspector 暴露边缘羽化参数（feather），实时调整晶格边界变形衰减；添加晶格轴心设置；Esc 取消选择晶格点。
 
@@ -91,11 +118,11 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - Tools菜单添加：探照灯体积雾（SpotLightVolume），SpotLightVolume v1.0 - 优化轻量探照灯体积雾效果。
 
-  ![image-20260605150714558](./README.assets/image-20260605150714558.png)
+  ![image-20260605150714558](./README.assets/image-20260605150714558.png) 
   
   SpotLightVolume v3.1 优化步进预计算为1步。效果上边缘过渡会稍微粗糙，性能有大幅提升。
   
-  ![image-20260609171940276](./README.assets/image-20260609171940276.png)
+  ![image-20260609171940276](./README.assets/image-20260609171940276.png) 
 
 ---
 
