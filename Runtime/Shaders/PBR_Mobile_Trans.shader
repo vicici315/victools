@@ -20,7 +20,6 @@
 // 继承PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
 // 继承PBR_Mobile6.5 P0性能优化：MRA贴图条件采样、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关；_ZWrite改用shader_feature_local关键字化
 // 继承PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
-// 继承PBR_Mobile7.2
 
 Shader "Custom/PBR_Mobile_Trans"
 {
@@ -502,9 +501,8 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 half shadowAttenuation = 1;
 #ifdef _USESOFTSHADOW
-                // 优化软阴影：4 层采样（1 中心 + 3 点 120° 均布）+ 每像素伪随机旋转
-                // 仅 1 次 TransformWorldToShadowCoord，4 层等权平均 1:1:1:1 ÷ 4 → 各点 25%
-                // 伪随机旋转打破大采样半径下的方向性条纹，转为不可见噪声
+                // 优化软阴影：4 层采样（1 中心 + 3 点 120° 均布），仅 1 次 TransformWorldToShadowCoord
+                // 固定权重 2:1:1:1 ÷ 5 → 中心 40%，周边各 20%，羽化更强、归一化正确
                 Light mainLight = GetMainLight();
                 half3 lightDir = mainLight.direction;
                 {
@@ -512,29 +510,25 @@ Shader "Custom/PBR_Mobile_Trans"
                     float2 texelSize = _MainLightShadowmapTexture_TexelSize.xy;
                     float radius = _Softness * texelSize.x;
 
-                    // 基于 shadowCoord 的 hash 生成伪随机旋转角（0~2π），每像素不同方向
-                    float rndAngle = frac(sin(dot(sc.xy, float2(12.9898, 78.233))) * 43758.5453) * 6.283185;
-                    float cosA = cos(rndAngle), sinA = sin(rndAngle);
-
-                    // 中心点
+                    // 中心点（权重 2）
                     float shadow = SAMPLE_TEXTURE2D_SHADOW(
-                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc);
-                    // 旋转后方向 1（原 0°）
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc) * 2.0;
+                    // 0°（权重 1）
                     shadow += SAMPLE_TEXTURE2D_SHADOW(
                         _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                        float4(sc.xy + float2(cosA, sinA) * radius, sc.zw));
-                    // 旋转后方向 2（原 120°）
+                        float4(sc.xy + float2(radius, 0), sc.zw));
+                    // 120°（权重 1）
                     shadow += SAMPLE_TEXTURE2D_SHADOW(
                         _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                        float4(sc.xy + float2(-0.5 * cosA - 0.866 * sinA, -0.5 * sinA + 0.866 * cosA) * radius, sc.zw));
-                    // 旋转后方向 3（原 240°）
+                        float4(sc.xy + float2(-0.5 * radius, 0.866 * radius), sc.zw));
+                    // 240°（权重 1）
                     shadow += SAMPLE_TEXTURE2D_SHADOW(
                         _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                        float4(sc.xy + float2(-0.5 * cosA + 0.866 * sinA, -0.5 * sinA - 0.866 * cosA) * radius, sc.zw));
+                        float4(sc.xy + float2(-0.5 * radius, -0.866 * radius), sc.zw));
 
                     // 超出阴影贴图范围（sc.z <= 0）时维持无阴影状态
                     half inRange = (sc.z > 0.0) ? 1.0 : 0.0;
-                    mainLight.shadowAttenuation = lerp(1.0, shadow / 4.0, inRange);
+                    mainLight.shadowAttenuation = lerp(1.0, shadow / 5.0, inRange);
                 }
 #else
                 float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS);

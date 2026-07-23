@@ -70,36 +70,31 @@ Shader "Custom/ShadowReceiver"
             half4 frag(Varyings IN) : SV_Target
             {
                 // ===== 软阴影 =====
-                // 算法：UV 空间等边三角形采样（1 中心 + 3 点 120° 均布）+ 每像素伪随机旋转
-                // 仅 1 次 TransformWorldToShadowCoord，4 层等权平均 1:1:1:1 ÷ 4 → 各点 25%
-                // 伪随机旋转打破大采样半径下的方向性条纹，转为不可见噪声
+                // 算法：UV 空间等边三角形采样（1 中心 + 3 点 120° 均布），仅 1 次 TransformWorldToShadowCoord
+                // 固定权重 2:1:1:1 ÷ 5 → 中心 40%，周边各 20%，羽化更强、归一化正确
                 float4 sc = TransformWorldToShadowCoord(IN.positionWS);
                 float2 texelSize = _MainLightShadowmapTexture_TexelSize.xy;
                 float radius = _Softness * texelSize.x;    // 采样半径（纹素单位）
 
-                // 基于 shadowCoord 的 hash 生成伪随机旋转角（0~2π），每像素不同方向
-                float rndAngle = frac(sin(dot(sc.xy, float2(12.9898, 78.233))) * 43758.5453) * 6.283185;
-                float cosA = cos(rndAngle), sinA = sin(rndAngle);
-
-                // 采样 1：中心点
+                // 采样 1：中心点（权重 2）
                 float shadow = SAMPLE_TEXTURE2D_SHADOW(
-                    _MainLightShadowmapTexture, sampler_LinearClampCompare, sc);
-                // 采样 2：旋转后方向 1（原 0°）
+                    _MainLightShadowmapTexture, sampler_LinearClampCompare, sc) * 2.0;
+                // 采样 2：0°（右侧，权重 1）
                 shadow += SAMPLE_TEXTURE2D_SHADOW(
                     _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                    float4(sc.xy + float2(cosA, sinA) * radius, sc.zw));
-                // 采样 3：旋转后方向 2（原 120°）
+                    float4(sc.xy + float2(radius, 0), sc.zw));
+                // 采样 3：120°（左上，cos120°=-0.5, sin120°≈0.866，权重 1）
                 shadow += SAMPLE_TEXTURE2D_SHADOW(
                     _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                    float4(sc.xy + float2(-0.5 * cosA - 0.866 * sinA, -0.5 * sinA + 0.866 * cosA) * radius, sc.zw));
-                // 采样 4：旋转后方向 3（原 240°）
+                    float4(sc.xy + float2(-0.5 * radius, 0.866 * radius), sc.zw));
+                // 采样 4：240°（左下，cos240°=-0.5, sin240°≈-0.866，权重 1）
                 shadow += SAMPLE_TEXTURE2D_SHADOW(
                     _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                    float4(sc.xy + float2(-0.5 * cosA + 0.866 * sinA, -0.5 * sinA - 0.866 * cosA) * radius, sc.zw));
+                    float4(sc.xy + float2(-0.5 * radius, -0.866 * radius), sc.zw));
 
                 // 超出阴影贴图范围（sc.z <= 0）时维持无阴影状态
                 half inRange = (sc.z > 0.0) ? 1.0 : 0.0;
-                shadow = lerp(1.0, shadow / 4.0, inRange);
+                shadow = lerp(1.0, shadow / 5.0, inRange);
 
                 half3 ambient = SampleSH(half3(0, 1, 0));
                 half3 shadowColor = lerp(half3(0, 0, 0), ambient, _AmbientStrength * 0.25);
@@ -108,7 +103,6 @@ Shader "Custom/ShadowReceiver"
             }
             ENDHLSL
         }
-
         // ===== DepthOnly Pass：写入深度用于与其他透明对象的排序 =====
         Pass
         {

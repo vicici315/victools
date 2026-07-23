@@ -34,7 +34,7 @@
 // PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）；Subtractive混合光照改用URP标准算法
 // PBR_Mobile6.5 P0性能优化：MRA贴图条件采样（仅_USEMSAMAP开启时采样）、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关（按需裁剪烘焙高光与间接高光计算）
 // PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
-// PBR_Mobile7.2 每个像素根据 sc.xy 做 hash 生成 [0, 2π) 的伪随机旋转角，让 3 个采样方向每像素随机偏移，规则的条纹被打散为高频随机噪声。
+
 
 Shader "Custom/PBR_Mobile"
 {
@@ -771,9 +771,8 @@ Shader "Custom/PBR_Mobile"
                 // 像素阴影模式
 #ifdef _USESOFTSHADOW
                 // ===== 软阴影 =====
-                // 算法：UV 空间等边三角形采样（1 中心 + 3 点 120° 均布）+ 每像素伪随机旋转
-                // 仅 1 次 TransformWorldToShadowCoord，4 层等权平均 1:1:1:1 ÷ 4 → 各点 25%
-                // 伪随机旋转打破大采样半径下的方向性条纹，转为不可见噪声
+                // 算法：UV 空间等边三角形采样（1 中心 + 3 点 120° 均布），仅 1 次 TransformWorldToShadowCoord
+                // 固定权重 2:1:1:1 ÷ 5 → 中心 40%，周边各 20%，羽化更强、归一化正确
                 Light mainLight = GetMainLight();
                 lightDir = mainLight.direction;
                 {
@@ -782,29 +781,25 @@ Shader "Custom/PBR_Mobile"
                     float2 texelSize = _MainLightShadowmapTexture_TexelSize.xy;
                     float radius = _Softness * texelSize.x;    // 采样半径（纹素单位）
 
-                    // 基于 shadowCoord 的 hash 生成伪随机旋转角（0~2π），每像素不同方向
-                    float rndAngle = frac(sin(dot(sc.xy, float2(12.9898, 78.233))) * 43758.5453) * 6.283185;
-                    float cosA = cos(rndAngle), sinA = sin(rndAngle);
-
-                    // 采样 1：中心点
+                    // 采样 1：中心点（权重 2）
                     float shadow = SAMPLE_TEXTURE2D_SHADOW(
-                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc);
-                    // 采样 2：旋转后方向 1（原 0°）
+                        _MainLightShadowmapTexture, sampler_LinearClampCompare, sc) * 2.0;
+                    // 采样 2：0°（右侧，权重 1）
                     shadow += SAMPLE_TEXTURE2D_SHADOW(
                         _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                        float4(sc.xy + float2(cosA, sinA) * radius, sc.zw));
-                    // 采样 3：旋转后方向 2（原 120°）
+                        float4(sc.xy + float2(radius, 0), sc.zw));
+                    // 采样 3：120°（左上，cos120°=-0.5, sin120°≈0.866，权重 1）
                     shadow += SAMPLE_TEXTURE2D_SHADOW(
                         _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                        float4(sc.xy + float2(-0.5 * cosA - 0.866 * sinA, -0.5 * sinA + 0.866 * cosA) * radius, sc.zw));
-                    // 采样 4：旋转后方向 3（原 240°）
+                        float4(sc.xy + float2(-0.5 * radius, 0.866 * radius), sc.zw));
+                    // 采样 4：240°（左下，cos240°=-0.5, sin240°≈-0.866，权重 1）
                     shadow += SAMPLE_TEXTURE2D_SHADOW(
                         _MainLightShadowmapTexture, sampler_LinearClampCompare,
-                        float4(sc.xy + float2(-0.5 * cosA + 0.866 * sinA, -0.5 * sinA - 0.866 * cosA) * radius, sc.zw));
+                        float4(sc.xy + float2(-0.5 * radius, -0.866 * radius), sc.zw));
 
                     // 超出阴影贴图范围（sc.z <= 0）时维持无阴影状态
                     half inRange = (sc.z > 0.0) ? 1.0 : 0.0;
-                    mainLight.shadowAttenuation = lerp(1.0, shadow / 4.0, inRange);
+                    mainLight.shadowAttenuation = lerp(1.0, shadow / 5.0, inRange);
                 }
 #else
                 float4 shadowCoord = TransformWorldToShadowCoord(input.positionWS_shadow.xyz);
