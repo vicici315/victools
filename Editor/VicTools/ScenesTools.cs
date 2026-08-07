@@ -1263,15 +1263,16 @@ public class ResourceBoxRecoveryItem
                                     }
                                     else if (isShiftPressed)
                                     {
-                                        Selection.activeObject = null;
-                                        Selection.activeObject = obj;
+                                        // 注意：不能用 Selection.activeObject = null（Play Mode 下被 Unity 拒绝抛 "This cannot be used during play mode"）
+                                        // 用 Selection.objects = new[] { obj } 一次性替换即可
+                                        Selection.objects = new Object[] { obj };
                                         SceneTools.SelectAllHierarchy();
                                     }
                                     else
                                     {
                                         // 普通点击：替换当前选择
-                                        Selection.activeObject = null;
-                                        Selection.activeObject = obj;
+                                        // 同样用 Selection.objects 避免 Play Mode 下 activeObject = null 的限制
+                                        Selection.objects = new Object[] { obj };
                                     }
 
                                     EditorGUIUtility.PingObject(obj);

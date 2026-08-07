@@ -42,9 +42,10 @@ Shader "Custom/Glass_MobileNew"
         // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
         // 与 _USEVERTEXDEFORM 独立可叠加，关闭时整段被 shader_feature 剔除，零开销
         // =============================================
-        [Header(Vertex Wind Displacement)]
+        // [Header(Vertex Wind Displacement)]
         [Toggle(_USEVERTEXDISPLACEMENT)] _UseVertexDisplacement ("Use Vertex Wind Displacement", Float) = 0
         [NoScaleOffset] _Tree_NoiseTexture1 ("Wind Noise Texture (R, 可选)", 2D) = "white" {}
+        _WindDirection ("Wind Direction (XYZ 方向, W 无效)", Vector) = (1, 0, 0, 0)
         _Big_WindAmount ("Big Wind Amount (振幅)", Float) = 0.1
         _Small_WindSpeed ("Small Wind Speed (时间速度)", Float) = 0.5
         _Small_Wave ("Small Wave (空间频率, 0=无变化)", Range(0, 10)) = 1.0
@@ -64,7 +65,7 @@ Shader "Custom/Glass_MobileNew"
         _FresnelBias ("Fresnel Bias", Range(0, 1)) = 0.072
         _FresnelScale ("Fresnel Scale", Range(0, 2)) = 1.2
         
-        [Header(Render Settings)]
+        // [Header(Render Settings)]
         [KeywordEnum(Transparent, Opaque)] _RenderMode ("Render Mode", Float) = 0
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
         
@@ -240,6 +241,7 @@ Shader "Custom/Glass_MobileNew"
                 float4 _BumpMap_ST;
                 half _VertexDeformStrength;
                 // 顶点风动位移参数
+                half4 _WindDirection;
                 half _Big_WindAmount;
                 half _Small_WindSpeed;
                 half _Small_Wave;
@@ -558,6 +560,7 @@ Shader "Custom/Glass_MobileNew"
                 float4 _BumpMap_ST;
                 half _VertexDeformStrength;
                 // 顶点风动位移参数
+                half4 _WindDirection;
                 half _Big_WindAmount;
                 half _Small_WindSpeed;
                 half _Small_Wave;

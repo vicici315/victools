@@ -1683,7 +1683,8 @@ namespace VicTools
                 VicDropdownItemData.Separator(),
                 new VicDropdownItemData("创建 晶格变形控制器（Lattice）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/icon_SelectLattIcon.png"), CreateLatticeController),
                 new VicDropdownItemData("创建 混合变形控制（BlendShape）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/BlendShape.png"), CreateBlendShapeAni),
-                new VicDropdownItemData("创建 主材质自发光闪烁控制（EmissionFlicker）", LoadItemIcon(""), CreateEmissionFlicker),
+                new VicDropdownItemData("创建 主材质自发光闪烁控制（EmissionFlicker）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/T_flicker.png"), CreateEmissionFlicker),
+                new VicDropdownItemData("创建 无限循环滚动（RoadScroll）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/T_RoadScroll.png"), RoadScrollEditorHelper.CreateRoadScroll),
                 new VicDropdownItemData("创建 旋转动画控制组件（RotationController）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/RotationController.png"), CreateRotationController),
                 new VicDropdownItemData("创建 探照灯体积雾（SpotLightVolume）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/SpotLightVolume.png"), CreateSpotLightVolume),
                 new VicDropdownItemData("创建 FPS帧率显示（当前场景）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/FPS.png"), CreateFPSDisplay),
@@ -1698,8 +1699,7 @@ namespace VicTools
         {
             return new List<VicDropdownItemData>
             {
-                new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon(""), SceneTools.ApplyLightDirectionToMaterials),
-                new VicDropdownItemData("校正 PBR_Mobile5.9 高光、反射数值", LoadItemIcon(""), CorrectPBRMobile58Specular),
+                new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon(""), SceneTools.ApplyLightDirectionToMaterials)
 
             };
         }
@@ -1708,26 +1708,28 @@ namespace VicTools
         {
             return new List<VicDropdownItemData>
             {
-                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
-                new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
+                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
+                new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
                 VicDropdownItemData.Separator(),
-                new VicDropdownItemData("AddTrans（透明叠加，可模拟灯光照射）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/AddTrans")),
-                new VicDropdownItemData("Glass_carWindow（玻璃材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Glass_carWindow")),
-                new VicDropdownItemData("Glass_MobileNew（折射效果水、果冻材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Glass_MobileNew")),
-                new VicDropdownItemData("Tree_Trans（植被树叶透明飘动材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Tree_Trans")),
-                new VicDropdownItemData("Grass（草地材质，可交互）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Grass")),
-                new VicDropdownItemData("Texture（纯贴图颜色Alpha透明）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Texture")),
-                new VicDropdownItemData("FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC")),
-                new VicDropdownItemData("Custom_Hair（头发材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Hair")),
-                new VicDropdownItemData("Custom_Toon（卡通材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Toon")),
-                new VicDropdownItemData("Custom_Snow（雪地材质，可交互）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Snow")),
+                new VicDropdownItemData("AddTrans（透明叠加，可模拟灯光照射）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_light.png"), () => CreateMaterialFromShader("Custom/AddTrans")),
+                new VicDropdownItemData("Glass_carWindow（玻璃材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_glass.png"), () => CreateMaterialFromShader("Custom/Glass_carWindow")),
+                new VicDropdownItemData("Glass_MobileNew（折射效果水、果冻材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_glass.png"), () => CreateMaterialFromShader("Custom/Glass_MobileNew")),
+                new VicDropdownItemData("Tree_Trans（植被树叶透明飘动材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_leaf.png"), () => CreateMaterialFromShader("Custom/Tree_Trans")),
+                new VicDropdownItemData("Grass（草地材质，可交互）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_grass.png"), () => CreateMaterialFromShader("Custom/Grass")),
+                new VicDropdownItemData("Texture（纯贴图颜色Alpha透明）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_tex.png"), () => CreateMaterialFromShader("Custom/Texture")),
+                new VicDropdownItemData("Texture-UI（UI专用适配 Canvas 渲染）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_tex.png"), () => CreateMaterialFromShader("Custom/Texture-UI")),
+                new VicDropdownItemData("FurShell_Mobile_SingleC（毛发材质，带触摸吹风系统）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_fur.png"), () => CreateMaterialFromShader("Custom/FurShell_Mobile_SingleC")),
+                new VicDropdownItemData("Custom_Hair（头发材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_hair.png"), () => CreateMaterialFromShader("Custom/Hair")),
+                new VicDropdownItemData("Custom_Toon（卡通材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_toon.png"), () => CreateMaterialFromShader("Custom/Toon")),
+                new VicDropdownItemData("Custom_Snow（雪地材质，可交互）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_snow.png"), () => CreateMaterialFromShader("Custom/Snow")),
                 VicDropdownItemData.Separator(),
-                new VicDropdownItemData("ShadowReceiver（透明地面接收投影）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/ShadowReceiver")),
-                new VicDropdownItemData("TextureGaussianBlur（ScreenColor高斯模糊材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL")),
-                new VicDropdownItemData("Outline（普通描边材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Outline/Outline")),
-                new VicDropdownItemData("OutlineZOffset（轮廓描边材质）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
+                new VicDropdownItemData("ShadowReceiver（透明地面接收投影）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_gray.png"), () => CreateMaterialFromShader("Custom/ShadowReceiver")),
+                new VicDropdownItemData("TextureGaussianBlur（ScreenColor高斯模糊材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blur.png"), () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL")),
+                new VicDropdownItemData("Outline（普通描边材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/Outline")),
+                new VicDropdownItemData("OutlineZOffset（轮廓描边材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
                 VicDropdownItemData.Separator(),
-                new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon(""), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
+                new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_particle.png"), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
+                new VicDropdownItemData("CustomTransCutout（Masked非半透明材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_red.png"), () => CreateMaterialFromShader("Custom/TransCutout")),
             };
         }
 
@@ -1816,7 +1818,7 @@ namespace VicTools
 
         /// 在当前场景创建一个 FPS 帧率显示控件（Packages/com.youdoo.victools/Runtime/Scripts/FPS.cs）。
         ///   - 自动检测已加载场景中是否有 Canvas；没有则自动创建一个 ScreenSpaceOverlay Canvas + EventSystem
-        ///   - Text/TMP 组件由 FPS 脚本的 [RequireComponent] 自动添加（不再手动创建，避免与脚本冲突）
+        ///   - Text 组件由 FPS 脚本的 [RequireComponent(typeof(Text))] 自动添加（不再手动创建，避免与脚本冲突）
         ///   - 文本内容、字号、颜色 等均由 FPS 脚本自己管理（Start / Update），本工具不重复配置
         private void CreateFPSDisplay()
         {
@@ -1869,7 +1871,7 @@ namespace VicTools
             }
 
             // 4. 挂载 FPS 组件
-            //    [RequireComponent] 会自动添加 Text/TMP 组件；
+            //    [RequireComponent(typeof(Text))] 会自动添加 Text 组件；
             //    文本的字号 / 颜色 / 内容 均由 FPS.Start() 与 Update() 自己管理。
             //    本工具不重复配置，避免冲突。
             var canvasGO2 = canvas.gameObject;
@@ -1890,8 +1892,11 @@ namespace VicTools
             EditorUtility.SetDirty(canvasGO2);
             EditorSceneManager.MarkSceneDirty(canvasGO2.scene);
 
-            Debug.Log($"[VicTools] 已在 Canvas [{canvasGO2.name}] 上挂载 FPS 组件（Text/TMP 由 RequireComponent 自动添加）");
+            Debug.Log($"[VicTools] 已在 Canvas [{canvasGO2.name}] 上挂载 FPS 组件（Text 由 RequireComponent 自动添加）");
         }
+
+        // 注：RoadScroll 创建工具已迁移到 RoadScrollEditorHelper.cs（约 130 行），避免 VicToolsWindow.cs 体积膨胀。
+        //     菜单注册委托：VicToolsWindow 第 1687 行的 "创建 无限循环滚动道路（RoadScroll）" → RoadScrollEditorHelper.CreateRoadScroll
 
         private void CreateEmissionFlicker()
         {
@@ -2089,11 +2094,26 @@ namespace VicTools
             Selection.activeGameObject = latticeObj;
         }
 
-        /// 显示Menu下拉菜单
+        /// 显示Menu下拉菜单（传统无图标菜单）
         private void ShowMenuDropdown(Rect buttonRect)
         {
-            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Menu", BuildMenuItems());
-            dropdown.Show(buttonRect);
+            var menu = new GenericMenu();
+            foreach (var item in BuildMenuItems())
+            {
+                if (item.isSeparator)
+                {
+                    menu.AddSeparator("");
+                }
+                else
+                {
+                    var action = item.action;
+                    if (action != null)
+                        menu.AddItem(new GUIContent(item.name), false, () => action());
+                    else
+                        menu.AddDisabledItem(new GUIContent(item.name));
+                }
+            }
+            menu.DropDown(buttonRect);
         }
 
         private void ShowMaterialDropdown(Rect buttonRect)
@@ -2166,64 +2186,6 @@ namespace VicTools
 
             Selection.activeObject = mat;
             EditorGUIUtility.PingObject(mat);
-        }
-
-        /// 校正PBR_Mobile5.8高光 - 调整材质的SpecularScale参数
-        private void CorrectPBRMobile58Specular()
-        {
-            // 查找所有使用PBR_Mobile shader的材质
-            string[] materialGuids = AssetDatabase.FindAssets("t:Material");
-            int correctedCount = 0;
-            int reflCount = 0;
-            int totalPBRMaterials = 0;
-            
-            foreach (string guid in materialGuids)
-            {
-                string path = AssetDatabase.GUIDToAssetPath(guid);
-                Material material = AssetDatabase.LoadAssetAtPath<Material>(path);
-                
-                if (material != null && material.shader != null && material.shader.name == "Custom/PBR_Mobile")
-                {
-                    totalPBRMaterials++;
-                    
-                    // 检查是否有_SpecularScale属性
-                    if (material.HasProperty("_SpecularScale"))
-                    {
-                        float currentScale = material.GetFloat("_SpecularScale");
-                        
-                        // 如果当前值大于等于2，说明可能是为了补偿之前的削减而设置的高值
-                        // 将其调整为合理范围（除以约25倍，因为之前被0.04削减）
-                        if (currentScale != 2.0f)
-                        {
-                            // float newScale = Mathf.Clamp(currentScale / 25.0f, 1.0f, 12.0f);
-                            material.SetFloat("_SpecularScale", 2.0f);
-                            EditorUtility.SetDirty(material);
-                            correctedCount++;
-                            
-                            // Debug.Log($"校正材质: {material.name} - SpecularScale: {currentScale:F2} → {newScale:F2}");
-                        }
-                        if (material.GetFloat("_ReflectionStrength") <= 1.2f){
-                            material.SetFloat("_ReflectionStrength", 1.5f);
-                            EditorUtility.SetDirty(material);
-                            reflCount++;
-                        }
-                    }
-                }
-            }
-            
-            // 保存所有修改
-            AssetDatabase.SaveAssets();
-            AssetDatabase.Refresh();
-            
-            // 显示结果
-            string message = $"校正完成！\n\n" +
-                           $"扫描到 {totalPBRMaterials} 个PBR_Mobile材质\n" +
-                           $"校正了 {correctedCount} 个材质的高光参数\n" +
-                           $"校正了 {reflCount} 个材质的反射强度参数\n\n" +
-                           $"说明：PBR_Mobile5.8版本移除了specularColor削减，\n" +
-                           $"高光亮度恢复正常，之前设置的高SpecularScale值已自动调整。";
-            
-            EditorUtility.DisplayDialog("PBR_Mobile5.8 高光校正", message, "确定");
         }
 
         /// 修复项目里所有 TMP_FontAsset 的 material 字段。

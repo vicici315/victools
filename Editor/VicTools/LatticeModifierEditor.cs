@@ -22,6 +22,7 @@
 // LatticeModifierEditor v3.30 多 Inspector 同步修复：selectedPoints 改为属性，底层按 InstanceID 存储在静态 Dictionary 中。多个 Inspector 窗口显示同一晶格时共享同一份选中数据，切换晶格时自动获取对应晶格的独立选中集（切换回来时自动恢复）。不再交叉清除。
 // LatticeModifierEditor v3.31 扩展选择支持 Undo/Redo：ExpandSelection 通过 Undo.RecordObject 创建撤销点 + undoRedoPerformed 一次性回调实现双向切换，Ctrl+Z 回退 Ctrl+Y 重做。
 // LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。
+// LatticeModifierEditor v3.33 「对象位置」按钮新增：在重置按钮行最左边加一个新按钮，调 lattice.ResetPositionToTarget() 复位到目标对象当前位置。「位移」按钮恢复原义 —— 复位到初始化时的基准位置。
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -637,13 +638,30 @@ public class LatticeModifierEditor : Editor
 
         if (hasSaved)
         {
-            // 已记录：显示三按钮（位移/旋转/缩放）+ 右侧「记录当前位置」齿轮按钮
+            // 已记录：显示四按钮（对象位置/位移/旋转/缩放）+ 右侧「记录当前位置」齿轮按钮
             EditorGUILayout.LabelField("重置晶格体变换：", EditorStyles.boldLabel);
             EditorGUILayout.BeginHorizontal();
 
             GUI.backgroundColor = new Color(0.8f, 1f, 0.8f);
+            if (GUILayout.Button(new GUIContent("对象位置",
+                "将晶格体 Position 复位到目标对象的当前位置（targetRoot / targetRenderer / deformTargets[0].renderer）。"), GUILayout.Width(80),
+                GUILayout.Height(24)))
+            {
+                Undo.RecordObject(lattice.transform, "晶格体贴向目标对象位置");
+                Undo.RecordObject(lattice, "晶格体贴向目标对象位置");
+                if (!lattice.ResetPositionToTarget())
+                {
+                    EditorUtility.DisplayDialog("提示",
+                        "复位失败：未指定目标对象。\n请先在 Inspector 中设置 targetRoot 或 targetRenderer 后再使用「对象位置」按钮。",
+                        "确定");
+                }
+                EditorUtility.SetDirty(lattice);
+                EditorUtility.SetDirty(lattice.transform);
+                SceneView.RepaintAll();
+            }
+
             if (GUILayout.Button(new GUIContent("位移",
-                "将晶格体 Position 复位到初始位置。"), GUILayout.Height(24)))
+                "将晶格体 Position 复位到初始位置（SaveCurrentAsInitialTransform 保存的基准）。"), GUILayout.Height(24)))
             {
                 Undo.RecordObject(lattice.transform, "重置晶格体位移");
                 Undo.RecordObject(lattice, "重置晶格体位移");
@@ -1635,7 +1653,6 @@ public class LatticeModifierEditor : Editor
     /// v3.32 运行时简化绘制：只画 8 个角点 + 12 条边的浅灰色立方体外壳。
     /// 跳过面可见性 / 深度排序 / 选中 / 拖拽 / 框选 等所有重操作，
     /// 用于 Application.isPlaying 期间的 OnSceneGUI，避免 Editor 在 Play Mode 下持续消耗性能。
-    /// </summary>
     private static void DrawLatticeBoundingBoxSimple(LatticeModifier lat)
     {
         Transform t = lat.transform;

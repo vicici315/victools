@@ -100,13 +100,11 @@ Shader "Custom/PBR_Mobile_Trans"
         // 支持透明裁剪阴影，不会被黑色覆盖
         // 半透明模式：_SrcBlend=5(SrcAlpha), _DstBlend=10(OneMinusSrcAlpha), _ZWrite=0
         // 真正的半透明效果，但阴影投射会有问题
-        [Header(8  (Transparent))]
         [Enum(UnityEngine.Rendering.BlendMode)] _SrcBlend("Src Blend", Float) = 1
         [Enum(UnityEngine.Rendering.BlendMode)] _DstBlend("Dst Blend", Float) = 0
         
         [Toggle(_ZWWRITE)] _ZWrite("Z Write", Float) = 1
         
-        [Header(#  (Performance))]
         [Enum(Off,0,Front,1,Back,2)] _Cull ("Cull Mode", Float) = 2
         [Toggle(_DISABLEBAKEDSPECULAR)] _DisableBakedSpecular ("Disable Baked Specular (烘焙高光)", Float) = 1
         [Toggle(_DISABLEINDIRECTSPECULAR)] _DisableIndirectSpecular ("Disable Indirect Specular (间接高光近似)", Float) = 1

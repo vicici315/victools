@@ -33,7 +33,7 @@ Shader "Custom/Toon"
         _DarkRimColor("Dark Rim Color", Color) = (0.25,0.35,0.74,0.5)
         _DarkRimAmount("Dark Rim Amount", Range(0, 1)) = 0.6
         _DarkRimThreshold("Dark Rim Threshold", Range(0.1, 1)) = 0.2
-        [Header(Emission)]
+        // [Header(Emission)]
         [Toggle(_USEEMISSIONMAP)] _UseEmissionMap("Use Emission Map", Float) = 0
         [HDR] _EmissionColor("Emission Color", Color) = (1,1,1,1)
         _EmissionMap("Emission Map", 2D) = "white" {}

@@ -9,6 +9,38 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 ## <更新日志>
 
+### 版本 2.11.0
+
+- 材质GUI添加材质参数着色样式，根据参数类型进行分类着色，让材质参数更直观。
+
+- "添加新工具【无限循环滚动v2.2】，可以快速对美术资源进行无限循环游走滚动，可以用于道路背景墙等无限移动模拟。
+
+  ![image-20260805223257776](./README.assets/image-20260805223257776.png) ![RoadScroll](./README.assets/RoadScroll.gif)
+
+- 添加新材质【Texture-UI 1.0】 基于 Custom/Texture 改编的UI专用版本。
+
+- 材质读档添加“排除主纹理”选项按钮，读取材质参数时可以选则不读取主要贴图包含PBR和自发光配套贴图。
+
+---
+
+### 版本 2.10.6
+
+- 【新材质】TransCutout 2.4 全透明 stencil mask 材质，集成 DitherTemporalAA 函数（颗粒状渐变，模拟 UE 同名函数效果），支持粒子系统 ColorOverLifetime 驱动渐变颜色和透明阈值。
+
+  ![particleMask4](./README.assets/particleMask4.gif) 
+
+- Glass_carWindow 1.4 添加顶点风动位移，可用于模拟抖动、生物游动效果。
+
+  ![paopao](./README.assets/paopao.gif) 
+  
+- 整理各类型材质，添加图标显示。
+
+  ![image-20260728162049158](./README.assets/image-20260728162049158.png) 
+
+- FPS 5.4 移除TMP支持，统一使用 UnityEngine.UI.Text。
+
+---
+
 ### 版本 2.10.5
 
 - LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。

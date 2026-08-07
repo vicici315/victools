@@ -1,9 +1,21 @@
 // Custom/Toon ShaderGUI - 分组显示 + 存档/读档功能
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class CustomToonGUI : ShaderGUI
 {
+    // "仅非主纹理"读档选项下要排除的纹理属性名集合（CustomToonGUI 专用）。
+    // 合并 HeaderStyle.MainTexturePropertyNames（_BaseMap / _MainTex）共用部分，
+    // 再追加 Toon 专用 _BumpMap（法线贴图）。
+    // _BumpMap 与 _BumpScale 强绑定，切换它会改变表面光照的明暗交界线 / 边缘光等所有依赖法线的效果，
+    // 所以"仅非主纹理"选项下应保留当前设置，不从存档恢复。
+    private static readonly System.Collections.Generic.HashSet<string> ToonMainTexturePropertyNames =
+        new System.Collections.Generic.HashSet<string>(HeaderStyle.MainTexturePropertyNames)
+        {
+            "_BumpMap"
+        };
+
     public override void OnGUI(MaterialEditor materialEditor, MaterialProperty[] properties)
     {
         Material material = materialEditor.target as Material;
@@ -16,28 +28,32 @@ public class CustomToonGUI : ShaderGUI
         materialEditor.ShaderProperty(FindProperty("_ReceiveShadows", properties), "自身阴影");
 
         // ── 基础颜色 ──
-        EditorGUILayout.LabelField("基础颜色", EditorStyles.boldLabel);
-        materialEditor.ShaderProperty(FindProperty("_BaseColor", properties), "颜色");
+        HeaderStyle.ShaderProperty(materialEditor, FindProperty("_BaseColor", properties), "基础颜色", HeaderStyle.Base);
         materialEditor.TexturePropertySingleLine(new GUIContent("主贴图"), FindProperty("_BaseMap", properties));
         materialEditor.TextureScaleOffsetProperty(FindProperty("_BaseMap", properties));
         materialEditor.ShaderProperty(FindProperty("_AmbientColor", properties), "环境光颜色");
 
         // ── 法线 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("法线贴图", EditorStyles.boldLabel);
-        materialEditor.ShaderProperty(FindProperty("_UseNormalMap", properties), "使用法线贴图");
-        materialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), FindProperty("_BumpMap", properties));
-        materialEditor.ShaderProperty(FindProperty("_BumpScale", properties), "法线强度");
+        var useNormalMap = FindProperty("_UseNormalMap", properties);
+        HeaderStyle.ShaderProperty(materialEditor, useNormalMap, "使用法线贴图", HeaderStyle.Base);
+        if (useNormalMap.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+            materialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), FindProperty("_BumpMap", properties));
+            materialEditor.ShaderProperty(FindProperty("_BumpScale", properties), "法线强度");
+            EditorGUI.indentLevel--;
+        }
 
         // ── 高光 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("高光", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("高光", HeaderStyle.Lighting), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(FindProperty("_SpecularColor", properties), "高光颜色");
         materialEditor.ShaderProperty(FindProperty("_Glossiness", properties), "光滑度");
 
         // ── 明暗交界线 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("明暗交界线", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("明暗交界线", HeaderStyle.Lighting), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(FindProperty("_ToonSteps", properties), "段数 (1=硬切)");
         materialEditor.ShaderProperty(FindProperty("_ToonSmooth", properties), "段间柔化");
         materialEditor.ShaderProperty(FindProperty("_ToonOffset", properties), "明暗偏移");
@@ -46,25 +62,30 @@ public class CustomToonGUI : ShaderGUI
 
         // ── 亮部边缘光 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("亮部边缘光 (Rim)", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("亮部边缘光 (Rim)", HeaderStyle.Fresnel), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(FindProperty("_RimColor", properties), "边缘光颜色");
         materialEditor.ShaderProperty(FindProperty("_RimAmount", properties), "边缘光范围");
         materialEditor.ShaderProperty(FindProperty("_RimThreshold", properties), "边缘光阈值");
 
         // ── 暗部边缘光 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("暗部边缘光", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("暗部边缘光", HeaderStyle.Fresnel), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(FindProperty("_DarkRimColor", properties), "暗部边缘光颜色");
         materialEditor.ShaderProperty(FindProperty("_DarkRimAmount", properties), "暗部边缘光范围");
         materialEditor.ShaderProperty(FindProperty("_DarkRimThreshold", properties), "暗部边缘光阈值");
 
         // ── 自发光 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("自发光", EditorStyles.boldLabel);
-        materialEditor.ShaderProperty(FindProperty("_UseEmissionMap", properties), "启用自发光贴图");
-        materialEditor.ShaderProperty(FindProperty("_EmissionColor", properties), "自发光颜色");
-        materialEditor.TexturePropertySingleLine(new GUIContent("自发光贴图"), FindProperty("_EmissionMap", properties));
-        materialEditor.ShaderProperty(FindProperty("_EmissionScale", properties), "自发光强度");
+        var useEmissionMap = FindProperty("_UseEmissionMap", properties);
+        HeaderStyle.ShaderProperty(materialEditor, useEmissionMap, "启用自发光贴图", HeaderStyle.Base);
+        if (useEmissionMap.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+            materialEditor.ShaderProperty(FindProperty("_EmissionColor", properties), "自发光颜色");
+            materialEditor.TexturePropertySingleLine(new GUIContent("自发光贴图"), FindProperty("_EmissionMap", properties));
+            materialEditor.ShaderProperty(FindProperty("_EmissionScale", properties), "自发光强度");
+            EditorGUI.indentLevel--;
+        }
     }
 
     // ═══════════════════════════════════════════
@@ -82,6 +103,7 @@ public class CustomToonGUI : ShaderGUI
         bool doPreset = GUILayout.Button("预设 ▾", GUILayout.Height(22));
         GUI.backgroundColor = Color.white;
         EditorGUILayout.EndHorizontal();
+
         EditorGUILayout.Space(4);
 
         if (doSave) { SavePreset(material); GUIUtility.ExitGUI(); }
@@ -148,12 +170,18 @@ public class CustomToonGUI : ShaderGUI
 
     private void LoadPresetFile(Material material, string filePath)
     {
+        if (material == null || material.shader == null) return;
         if (!System.IO.File.Exists(filePath)) return;
 
         string json = System.IO.File.ReadAllText(filePath);
         bool hasTexData = json.Contains("\"path\":");
-        bool loadTextures = hasTexData && EditorUtility.DisplayDialog("读取纹理",
-            "存档中包含纹理引用，是否同时读取？", "是", "否，仅参数");
+
+        // 共用三选项对话框（无纹理存档跳过弹框）
+        HeaderStyle.LoadTextureChoice choice = hasTexData
+            ? HeaderStyle.ShowLoadTextureDialog()
+            : new HeaderStyle.LoadTextureChoice(false, false);
+        bool loadTextures = hasTexData && choice.LoadTextures;
+        bool loadMainTex  = hasTexData && choice.LoadMainTex;
 
         Undo.RecordObject(material, "加载 Toon 材质预设");
 
@@ -184,29 +212,32 @@ public class CustomToonGUI : ShaderGUI
                     if (!float.IsNaN(fv)) material.SetFloat(propName, fv);
                     break;
                 case ShaderUtil.ShaderPropertyType.TexEnv:
-                    if (!loadTextures) break;
-                    // 主纹理已有时不替换
-                    bool isMainTexA = (propName == "_BaseMap" || propName == "_MainTex");
-                    if (!(isMainTexA && material.GetTexture(propName) != null))
-                    {
-                        string texPath = ExtractTexPath(json, propName);
-                        if (!string.IsNullOrEmpty(texPath))
-                        {
-                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                            if (tex != null) material.SetTexture(propName, tex);
-                        }
-                    }
+                    // Tiling/Offset 始终读取
                     float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
                     float[] offset = ExtractSubFloatArray(json, propName, "offset");
                     if (tiling != null && tiling.Length >= 2)
                         material.SetTextureScale(propName, new Vector2(tiling[0], tiling[1]));
                     if (offset != null && offset.Length >= 2)
                         material.SetTextureOffset(propName, new Vector2(offset[0], offset[1]));
+
+                    if (!loadTextures) break;
+
+                    // Toon 专用主纹理：仅非主纹理选项下跳过，保留当前设置。
+                    // ToonMainTexturePropertyNames 包含 _BaseMap / _MainTex / _BumpMap。
+                    if (ToonMainTexturePropertyNames.Contains(propName) && !loadMainTex) break;
+
+                    string texPath = ExtractTexPath(json, propName);
+                    if (!string.IsNullOrEmpty(texPath))
+                    {
+                        Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
+                        if (tex != null) material.SetTexture(propName, tex);
+                    }
                     break;
             }
         }
 
         EditorUtility.SetDirty(material);
+        Debug.Log($"[CustomToonGUI] 存档已加载：{filePath}");
     }
 
     private string GetPresetDir(Material material)
@@ -275,64 +306,7 @@ public class CustomToonGUI : ShaderGUI
         string dir = GetPresetDir(material);
         string path = EditorUtility.OpenFilePanel("加载 Toon 材质存档", dir, "json");
         if (string.IsNullOrEmpty(path) || !System.IO.File.Exists(path)) return;
-
-        bool loadTextures = EditorUtility.DisplayDialog("读取纹理",
-            "是否同时读取纹理参数？\n选择「否」将只读取数值参数。", "是", "否");
-
-        string json = System.IO.File.ReadAllText(path);
-        Undo.RecordObject(material, "加载 Toon 材质预设");
-
-        Shader shader = material.shader;
-        int count = ShaderUtil.GetPropertyCount(shader);
-
-        for (int i = 0; i < count; i++)
-        {
-            string propName = ShaderUtil.GetPropertyName(shader, i);
-            var propType = ShaderUtil.GetPropertyType(shader, i);
-            if (!material.HasProperty(propName)) continue;
-
-            switch (propType)
-            {
-                case ShaderUtil.ShaderPropertyType.Color:
-                    float[] ca = ExtractFloatArray(json, propName);
-                    if (ca != null && ca.Length >= 4)
-                        material.SetColor(propName, new Color(ca[0], ca[1], ca[2], ca[3]));
-                    break;
-                case ShaderUtil.ShaderPropertyType.Vector:
-                    float[] va = ExtractFloatArray(json, propName);
-                    if (va != null && va.Length >= 4)
-                        material.SetVector(propName, new Vector4(va[0], va[1], va[2], va[3]));
-                    break;
-                case ShaderUtil.ShaderPropertyType.Float:
-                case ShaderUtil.ShaderPropertyType.Range:
-                    float fv = ExtractFloat(json, propName, float.NaN);
-                    if (!float.IsNaN(fv)) material.SetFloat(propName, fv);
-                    break;
-                case ShaderUtil.ShaderPropertyType.TexEnv:
-                    if (!loadTextures) break;
-                    // 主纹理已有时不替换
-                    bool isMainTexB = (propName == "_BaseMap" || propName == "_MainTex");
-                    if (!(isMainTexB && material.GetTexture(propName) != null))
-                    {
-                        string texPath = ExtractTexPath(json, propName);
-                        if (!string.IsNullOrEmpty(texPath))
-                        {
-                            Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(texPath);
-                            if (tex != null) material.SetTexture(propName, tex);
-                        }
-                    }
-                    float[] tiling = ExtractSubFloatArray(json, propName, "tiling");
-                    float[] offset = ExtractSubFloatArray(json, propName, "offset");
-                    if (tiling != null && tiling.Length >= 2)
-                        material.SetTextureScale(propName, new Vector2(tiling[0], tiling[1]));
-                    if (offset != null && offset.Length >= 2)
-                        material.SetTextureOffset(propName, new Vector2(offset[0], offset[1]));
-                    break;
-            }
-        }
-
-        EditorUtility.SetDirty(material);
-        Debug.Log($"[CustomToonGUI] 存档已加载：{path}");
+        LoadPresetFile(material, path);
     }
 
     // ── JSON 解析工具 ──

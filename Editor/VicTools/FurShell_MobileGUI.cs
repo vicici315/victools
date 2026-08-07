@@ -6,6 +6,7 @@
 using UnityEngine;
 using UnityEditor;
 using System.IO;
+using VicTools;
 
 public class FurShell_MobileGUI : ShaderGUI
 {
@@ -113,7 +114,7 @@ public class FurShell_MobileGUI : ShaderGUI
     private void DrawArchiveButtons()
     {
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("毛发设置", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("毛发设置", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
         
         // 添加存档按钮
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
@@ -344,7 +345,7 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawRenderSettings()
     {
-        EditorGUILayout.LabelField("渲染设置", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("渲染设置", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         
         if (useDistanceAtten != null)
             m_MaterialEditor.ShaderProperty(useDistanceAtten, new GUIContent("使用距离衰减",
@@ -357,7 +358,7 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawBaseProperties()
     {
-        EditorGUILayout.LabelField("基础属性", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("基础属性", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         
         if (baseColor != null)
             m_MaterialEditor.ShaderProperty(baseColor, "基础颜色");
@@ -381,7 +382,7 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawFurProperties()
     {
-        EditorGUILayout.LabelField("毛发属性", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("毛发属性", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         
         if (shellAmount != null)
             m_MaterialEditor.ShaderProperty(shellAmount, "毛发层数");
@@ -402,7 +403,7 @@ public class FurShell_MobileGUI : ShaderGUI
         
         EditorGUILayout.HelpBox("xyz: 基础移动方向, w: 移动因子指数", MessageType.Info);
         m_MaterialEditor.ShaderProperty(baseMove, "基础移动");
-        EditorGUILayout.LabelField("风力设置", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("风力设置", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
         
         if (useWind != null)
             m_MaterialEditor.ShaderProperty(useWind, "使用风力");
@@ -426,10 +427,10 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawTouchSettings()
     {
-        EditorGUILayout.LabelField("触摸设置", EditorStyles.boldLabel);
+        // EditorGUILayout.LabelField(HeaderStyle.Rich("触摸设置", HeaderStyle.Interaction), EditorStyle.Get.BoldLabelRichStyle);
         
         if (useTouch != null)
-            m_MaterialEditor.ShaderProperty(useTouch, "使用触摸");
+            HeaderStyle.ShaderProperty(m_MaterialEditor, useTouch, "使用触摸交互", HeaderStyle.Interaction);
         
         if (useTouch != null && useTouch.floatValue > 0.5f)
         {
@@ -460,7 +461,6 @@ public class FurShell_MobileGUI : ShaderGUI
 
     private void DrawWindConeSettings()
     {
-        EditorGUILayout.LabelField("圆锥风力设置", EditorStyles.boldLabel);
         
         // 手动绘制Toggle，完全控制其行为
         if (useWindCone != null)
@@ -476,7 +476,7 @@ public class FurShell_MobileGUI : ShaderGUI
             
             EditorGUI.BeginChangeCheck();
             bool currentValue = actualValue > 0.5f;
-            bool newValue = EditorGUILayout.Toggle("使用圆锥风力", currentValue);
+            bool newValue = HeaderStyle.Toggle("使用圆锥场风力", currentValue, HeaderStyle.Interaction);
             
             if (EditorGUI.EndChangeCheck())
             {

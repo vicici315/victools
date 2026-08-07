@@ -41,11 +41,11 @@ Shader "Custom/Blur/TextureGaussianBlur_HLSL"
         _Sigma ("Sigma", Range(0.1, 5.0)) = 2.7
         _SampleCount ("Sample Count", Range(1, 12)) = 6
         [Toggle] _InvertDirection ("Invert Direction", Float) = 0
-        [Toggle(_USE_SCENE_COLOR)] _UseSceneColor ("Use Scene Color (when no source tex)", Float) = 0
+        [Toggle(_USE_SCENE_COLOR)] _UseSceneColor ("Use Scene Color (when no source tex)", Float) = 1
         [Toggle(_SINGLE_FRAME)] _SingleFrame ("Single Frame Capture", Float) = 0
         [HideInInspector][NoScaleOffset] _CapturedSceneTex ("Captured Scene Texture", 2D) = "white" {}
         [NoScaleOffset] _BlurSourceTex ("Blur Source Texture", 2D) = "white" {}
-        _TexExposure ("Blur Texture Exposure", Range(0.1, 1.0)) = 0.7
+        _TexExposure ("Blur Texture Exposure", Range(0.1, 1.0)) = 1.0
         _Contrast ("Contrast", Range(0.0, 2.0)) = 1.0
         
         [Toggle(_USE_DISTORTION)] _UseDistortion ("Use Distortion", Float) = 0

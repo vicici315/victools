@@ -6,12 +6,31 @@
 
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class PBR_MobileGUI : ShaderGUI
 {
     private MaterialEditor m_MaterialEditor;
     private MaterialProperty[] m_Properties;
     private bool isTransShader = false; // 标记是否为 Trans 版本的 Shader
+
+    // "仅非主纹理"读档选项下要排除的纹理属性名集合（PBR_MobileGUI 专用）。
+    // 合并 HeaderStyle.MainTexturePropertyNames（_BaseMap / _MainTex）共用部分，
+    // 再追加 PBR 专用 _MetallicGlossMap（MRA 贴图）、_BumpMap（法线贴图）、_EmissionMap（自发光贴图）。
+    // 理由：
+    //   _MetallicGlossMap 兼作 金属度(R)/粗糙度(G)/AO(B) 通道，与同名 float 参数互斥，
+    //                    切换它会改变 _Metallic/_Roughness/_OcclusionContrast 等参数的语义。
+    //   _BumpMap          法线贴图，与 _BumpScale 强绑定，切换它会改变表面光照细节。
+    //   _EmissionMap      自发光贴图，与 _EmissionColor/_EmissionScale 共同决定发光效果，
+    //                    切换它会改变发光区域与颜色叠加语义。
+    // 上述纹理"仅非主纹理"选项下应保留当前设置，不从存档恢复，避免破坏材质当前的视觉表现。
+    private static readonly System.Collections.Generic.HashSet<string> PBRMainTexturePropertyNames =
+        new System.Collections.Generic.HashSet<string>(HeaderStyle.MainTexturePropertyNames)
+        {
+            "_MetallicGlossMap",
+            "_BumpMap",
+            "_EmissionMap"
+        };
 
     // 缓存属性
     private MaterialProperty disableEnvironment;
@@ -202,7 +221,7 @@ public class PBR_MobileGUI : ShaderGUI
     private void DrawGlobalSettings()
     {
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("全局设置", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("全局设置", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
         
         // 添加存档按钮
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
@@ -279,7 +298,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawBaseProperties()
     {
-        GUILayout.Label("1 ▌基础属性 (Base Properties)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("1 ▌基础属性 (Base Properties)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.ColorProperty(baseColor, "基础颜色");
         m_MaterialEditor.TextureProperty(baseMap, "颜色贴图 (RGB)");
         if (isTransShader)
@@ -290,7 +309,7 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawMetallicRoughnessAO()
     {
-        GUILayout.Label("2 ▌PBR参数 (Metallic、Roughness、AO)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("2 ▌PBR参数 (Metallic、Roughness、AO)", HeaderStyle.Lighting), EditorStyle.Get.BoldLabelRichStyle);
         
         m_MaterialEditor.RangeProperty(metallic, "金属度");
         m_MaterialEditor.RangeProperty(roughness, "粗糙度");
@@ -362,7 +381,7 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("3 ▌法线贴图 (Normal Map)", EditorStyles.boldLabel);
         
-        m_MaterialEditor.ShaderProperty(useNormalMap, "3 ▌使用法线贴图");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useNormalMap, "3 ▌使用法线贴图", HeaderStyle.Base);
         
         if (useNormalMap.floatValue > 0.5f)
         {
@@ -389,8 +408,7 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("4 ▌自发光 (Emission)", EditorStyles.boldLabel);
         
-        m_MaterialEditor.ShaderProperty(useEmissionMap, "4 ▌使用自发光贴图");
-        
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useEmissionMap, "4 ▌使用自发光贴图", HeaderStyle.Lighting);
         if (useEmissionMap.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
@@ -406,7 +424,7 @@ public class PBR_MobileGUI : ShaderGUI
     {
         // GUILayout.Label("5 ▌反射 (Reflection)", EditorStyles.boldLabel);
         
-        m_MaterialEditor.ShaderProperty(useReflection, "5 ▌使用反射贴图");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useReflection, "5 ▌使用反射贴图", HeaderStyle.Base);
         
         if (useReflection.floatValue > 0.5f)
         {
@@ -423,7 +441,7 @@ public class PBR_MobileGUI : ShaderGUI
     private void DrawPointLights()
     {
         // GUILayout.Label("6 ▌自定义点光源 (Custom Point Lights)", EditorStyles.boldLabel);
-        m_MaterialEditor.ShaderProperty(usePointlight, "6 ▌使用点光源");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, usePointlight, "6 ▌使用点光源", HeaderStyle.Interaction);
         
         if (usePointlight.floatValue > 0.5f)
         {
@@ -439,7 +457,7 @@ public class PBR_MobileGUI : ShaderGUI
     private void DrawSpotLights()
     {
         // GUILayout.Label("7 ▌自定义聚光灯 (Custom Spot Lights)", EditorStyles.boldLabel);
-        m_MaterialEditor.ShaderProperty(useSpotlight, "7 ▌使用聚光灯");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useSpotlight, "7 ▌使用聚光灯", HeaderStyle.Interaction);
         
         if (useSpotlight.floatValue > 0.5f)
         {
@@ -482,7 +500,7 @@ public class PBR_MobileGUI : ShaderGUI
         EditorGUILayout.Space(5);
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            GUILayout.Label("# ▌性能 (Performance)", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("# ▌性能 (Performance)", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
             m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
 
             // 性能开关 - 仅 PBR_Mobile 声明了这些属性，Trans 版本为 null 时自动隐藏
@@ -542,7 +560,7 @@ public class PBR_MobileGUI : ShaderGUI
                 Material mat = material; // 捕获材质引用
                 menu.AddItem(new GUIContent(fileName), false, () =>
                 {
-                    EditorApplication.delayCall += () => LoadMaterialParametersToMaterial(mat, filePath);
+                    EditorApplication.delayCall += () => LoadFromFile(mat, filePath);
                 });
             }
         }
@@ -577,7 +595,7 @@ public class PBR_MobileGUI : ShaderGUI
                 Material mat = material; // 捕获材质引用
                 menu.AddItem(new GUIContent(fileName), false, () =>
                 {
-                    EditorApplication.delayCall += () => LoadMaterialParametersToMaterial(mat, filePath);
+                    EditorApplication.delayCall += () => LoadFromFile(mat, filePath);
                 });
             }
         }
@@ -599,7 +617,28 @@ public class PBR_MobileGUI : ShaderGUI
                 material = selMat;
         }
         if (material == null) return;
-        LoadMaterialParametersToMaterial(material, filePath);
+        LoadFromFile(material, filePath);
+    }
+
+    /// 单材质读档入口（菜单项 / LoadPresetFile 走这里）：弹一次三选项纹理对话框，再加载。
+    /// <para>无纹理存档（hasTexData=false，如 Default）跳过弹框，默认全部读取但被 hasTexData 屏蔽掉。</para>
+    private void LoadFromFile(Material material, string filePath)
+    {
+        if (material == null || material.shader == null) return;
+        if (!System.IO.File.Exists(filePath))
+        {
+            Debug.LogWarning($"存档文件不存在: {filePath}");
+            return;
+        }
+
+        string json = System.IO.File.ReadAllText(filePath);
+        bool hasTexData = json.Contains("\"path\":");
+
+        HeaderStyle.LoadTextureChoice choice = hasTexData
+            ? HeaderStyle.ShowLoadTextureDialog()
+            : new HeaderStyle.LoadTextureChoice(false, false);
+
+        LoadMaterialParametersToMaterial(material, filePath, choice);
     }
     
     /// 存档材质参数（排除纹理）
@@ -733,6 +772,9 @@ public class PBR_MobileGUI : ShaderGUI
                 $"将对 {targets.Length} 个材质应用此存档。\n\n注意：纹理和基础颜色不会被修改。", 
                 "确定", "取消"))
             {
+                // 弹一次三选项纹理对话框，传给所有材质（避免每个材质都弹框）
+                HeaderStyle.LoadTextureChoice choice = HeaderStyle.ShowLoadTextureDialog();
+                int applied = 0;
                 foreach (Object obj in targets)
                 {
                     Material mat = obj as Material;
@@ -741,7 +783,8 @@ public class PBR_MobileGUI : ShaderGUI
                         // 检查shader是否匹配
                         if (mat.shader.name == material.shader.name)
                         {
-                            LoadMaterialParametersToMaterial(mat, presetPath);
+                            LoadMaterialParametersToMaterial(mat, presetPath, choice);
+                            applied++;
                         }
                         else
                         {
@@ -750,18 +793,24 @@ public class PBR_MobileGUI : ShaderGUI
                     }
                 }
                 
-                Debug.Log($"批量读档完成：已应用到 {targets.Length} 个材质");
+                Debug.Log($"批量读档完成：已应用到 {applied}/{targets.Length} 个材质");
             }
         }
         else
         {
             // 单选模式
-            LoadMaterialParametersFromFile(presetPath);
+            LoadFromFile(material, presetPath);
         }
     }
     
-    /// 从文件加载材质参数到指定材质
-    private void LoadMaterialParametersToMaterial(Material material, string filePath)
+    /// 从文件加载材质参数到指定材质（底层，<paramref name="choice"/> 必传，不弹对话框）
+    /// <para>外部入口：</para>
+    /// <list type="bullet">
+    ///   <item>单材质读档（菜单项 / 预设）→ <see cref="LoadFromFile"/>（弹一次三选项对话框）</item>
+    ///   <item>批量读档 → <see cref="LoadMaterialParameters"/>（弹一次三选项对话框后传入）</item>
+    ///   <item>重置参数 → <see cref="LoadMaterialParametersFromFile"/>（直接传 (false, false)，不弹框）</item>
+    /// </list>
+    private void LoadMaterialParametersToMaterial(Material material, string filePath, HeaderStyle.LoadTextureChoice choice)
     {
         if (material == null || material.shader == null) return;
         
@@ -777,10 +826,10 @@ public class PBR_MobileGUI : ShaderGUI
         // 读取JSON
         string json = System.IO.File.ReadAllText(filePath);
 
-        // 检测是否包含纹理数据，提示用户是否读取
+        // 检测是否包含纹理数据，配合 choice 决定是否实际读取
         bool hasTexData = json.Contains("\"path\":");
-        bool loadTex = hasTexData && EditorUtility.DisplayDialog("读取纹理",
-            "存档中包含纹理引用，是否同时读取？", "是", "否，仅参数");
+        bool loadTex     = hasTexData && choice.LoadTextures;
+        bool loadMainTex = hasTexData && choice.LoadMainTex;
         
         // 使用简单的JSON解析
         var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
@@ -813,9 +862,9 @@ public class PBR_MobileGUI : ShaderGUI
 
                 if (!loadTex) continue;
 
-                // 主纹理已有时不替换
-                bool isMainTex = (propertyName == "_BaseMap" || propertyName == "_MainTex");
-                if (isMainTex && material.GetTexture(propertyName) != null) continue;
+                // PBR 专用主纹理：仅非主纹理选项下跳过，保留当前设置。
+                // PBRMainTexturePropertyNames 包含 _BaseMap / _MainTex / _MetallicGlossMap。
+                if (PBRMainTexturePropertyNames.Contains(propertyName) && !loadMainTex) continue;
 
                 string texPath = ExtractTexString(texJson, "path");
                 if (!string.IsNullOrEmpty(texPath))
@@ -922,13 +971,15 @@ public class PBR_MobileGUI : ShaderGUI
         SyncToggle("_ZWrite",                  "_ZWWRITE");
     }
 
-    /// 从文件加载材质参数（单个材质）
+    /// 从文件加载材质参数（单个材质，不弹纹理对话框）。
+    /// <para>由 <see cref="ResetMaterialParameters"/> 调用——重置参数时不需要再询问"是否读取纹理"，
+    /// Default 存档本身也无纹理（hasTexData=false），直接传 (false, false) 走底层加载。</para>
     private void LoadMaterialParametersFromFile(string filePath)
     {
         Material material = m_MaterialEditor.target as Material;
         if (material == null) return;
         
-        LoadMaterialParametersToMaterial(material, filePath);
+        LoadMaterialParametersToMaterial(material, filePath, new HeaderStyle.LoadTextureChoice(false, false));
         
         // 刷新材质编辑器
         if (m_MaterialEditor != null)

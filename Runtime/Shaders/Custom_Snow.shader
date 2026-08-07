@@ -6,6 +6,7 @@
 // Custom_Snow 1.1 优化雪地闪烁表现，陡峭斜面剔除：法线Y分量越小说明越陡峭，剔除闪光避免拉线
 // Custom_Snow 1.2 使用_SparkleTex G通道噪波增强镜头转动时随机闪烁效果，添加【蒙版纹理密度】值，完善GUI参数说明
 // Custom_Snow 1.3 优化压痕加深颜色效果
+// Custom_Snow 1.4 纠正DepthPrimingMode=Forced时渲染队列设置为Transparent，避免被其他透明物体遮挡
 
 Shader "Custom/Snow"
 {
@@ -53,7 +54,7 @@ Shader "Custom/Snow"
         {
             "RenderType" = "Opaque"
             "RenderPipeline" = "UniversalPipeline"
-            "Queue" = "Geometry"
+            "Queue" = "Transparent"
         }
 
         HLSLINCLUDE

@@ -1,0 +1,15 @@
+{
+  "_BaseMap": {"path": "Assets/Art/EffectResource/Monster/CutRobot/Textures/Smoke_HD_JY_WB_101.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_BaseColor": [1, 1, 1, 1],
+  "_Cutoff": 0.55,
+  "_UseParticleAlpha": 1,
+  "_CutoffMin": 1.47,
+  "_CutoffMax": 0.837,
+  "_UseDither": 1,
+  "_DitherTexture": {"path": "Packages/com.youdoo.victools/Runtime/Testures/AA4.PNG", "tiling": [1, 1], "offset": [0, 0]},
+  "_DitherSize": 8,
+  "_SrcBlend": 0,
+  "_DstBlend": 0,
+  "_ZWrite": 0,
+  "_Cull": 2
+}

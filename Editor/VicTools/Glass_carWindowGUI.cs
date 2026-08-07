@@ -2,9 +2,11 @@
 // 基于PBR_MobileGUI的控制逻辑实现
 // Glass_carWindowGUIv1.1 修复Glass_MobileNew.shader的读档排序错误问题
 // Glass_carWindowGUIv2.0 添加预设列表菜单，读档使用下拉菜单模式
+// Glass_carWindowGUIv2.1 添加风动方向参数存档、读档记录
 
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class Glass_carWindowGUI : ShaderGUI
 {
@@ -41,6 +43,7 @@ public class Glass_carWindowGUI : ShaderGUI
     // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
     private MaterialProperty useVertexDisplacement;
     private MaterialProperty treeNoiseTexture1;
+    private MaterialProperty windDirection;
     private MaterialProperty bigWindAmount;
     private MaterialProperty smallWindSpeed;
     private MaterialProperty smallWave;
@@ -128,6 +131,7 @@ public class Glass_carWindowGUI : ShaderGUI
         // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
         useVertexDisplacement = FindProperty("_UseVertexDisplacement", m_Properties, false);
         treeNoiseTexture1 = FindProperty("_Tree_NoiseTexture1", m_Properties, false);
+        windDirection = FindProperty("_WindDirection", m_Properties, false);
         bigWindAmount = FindProperty("_Big_WindAmount", m_Properties, false);
         smallWindSpeed = FindProperty("_Small_WindSpeed", m_Properties, false);
         smallWave = FindProperty("_Small_Wave", m_Properties, false);
@@ -139,7 +143,7 @@ public class Glass_carWindowGUI : ShaderGUI
     private void DrawGlobalSettings()
     {
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("全局设置", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("全局设置", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
         
         // 添加存档按钮
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
@@ -256,7 +260,7 @@ public class Glass_carWindowGUI : ShaderGUI
 
     private void DrawGlassProperties()
     {
-        GUILayout.Label("1 ▌玻璃属性 (Glass Properties)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("1 ▌玻璃属性 (Glass Properties)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.ColorProperty(baseColor, "基础颜色");
         if (baseMap != null)
         {
@@ -267,7 +271,7 @@ public class Glass_carWindowGUI : ShaderGUI
 
     private void DrawSpecular()
     {
-        GUILayout.Label("2 ▌高光 (Specular)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("2 ▌高光 (Specular)", HeaderStyle.Lighting), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.RangeProperty(smoothness, "光滑度");
         m_MaterialEditor.RangeProperty(specularStrength, "高光强度");
         
@@ -291,7 +295,7 @@ public class Glass_carWindowGUI : ShaderGUI
 
         // 显式监听 toggle 变化，强制同步 keyword（防止 [Toggle] 自动处理在某些 Editor 场景下失效）
         EditorGUI.BeginChangeCheck();
-        m_MaterialEditor.ShaderProperty(useVertexDisplacement, "3 ▌顶点风动位移 (Wind Displacement)");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useVertexDisplacement, "3 ▌顶点风动位移 (Wind Displacement)", HeaderStyle.Interaction);
         if (EditorGUI.EndChangeCheck())
         {
             foreach (var obj in m_MaterialEditor.targets)
@@ -315,9 +319,14 @@ public class Glass_carWindowGUI : ShaderGUI
                 MessageType.Info);
 
             m_MaterialEditor.TexturePropertySingleLine(new GUIContent("风动噪声贴图 (R, 可选)"), treeNoiseTexture1);
-            m_MaterialEditor.FloatProperty(bigWindAmount, "风动振幅 (Big Wind Amount)");
-            m_MaterialEditor.FloatProperty(smallWindSpeed, "时间速度 (Small Wind Speed)");
-            m_MaterialEditor.RangeProperty(smallWave, "空间频率 (Small Wave)");
+            if (windDirection != null)
+                m_MaterialEditor.VectorProperty(windDirection, "风动方向 (XYZ)");
+            if (bigWindAmount != null)
+                m_MaterialEditor.FloatProperty(bigWindAmount, "风动振幅 (Big Wind Amount)");
+            if (smallWindSpeed != null)
+                m_MaterialEditor.FloatProperty(smallWindSpeed, "时间速度 (Small Wind Speed)");
+            if (smallWave != null)
+                m_MaterialEditor.RangeProperty(smallWave, "空间频率 (Small Wave)");
 
             EditorGUI.indentLevel--;
         }
@@ -327,8 +336,7 @@ public class Glass_carWindowGUI : ShaderGUI
     {
         // 章节编号：插入顶点风动位移后，原 3 → 4
         string sectionNumber = "4";
-        m_MaterialEditor.ShaderProperty(useNormalMap, $"{sectionNumber} ▌使用法线贴图 (扭曲)");
-        
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useNormalMap, $"{sectionNumber} ▌使用法线贴图 (扭曲)", HeaderStyle.Interaction);
         if (useNormalMap.floatValue > 0.5f)
         {
             EditorGUI.indentLevel++;
@@ -417,7 +425,7 @@ public class Glass_carWindowGUI : ShaderGUI
         if (useRefraction != null && refractionStrength != null)
         {
             // 章节编号：插入顶点风动位移后，原 4 → 5
-            m_MaterialEditor.ShaderProperty(useRefraction, "5 ▌使用折射");
+            HeaderStyle.ShaderProperty(m_MaterialEditor, useRefraction, "5 ▌使用折射", HeaderStyle.Base);
 
             if (useRefraction.floatValue > 0.5f)
             {
@@ -433,7 +441,7 @@ public class Glass_carWindowGUI : ShaderGUI
         // 根据是否有折射功能来决定标题编号
         // 插入顶点风动位移后，原 4/5 → 5/6
         string sectionNumber = (useRefraction != null) ? "6" : "5";
-        m_MaterialEditor.ShaderProperty(useReflection, $"{sectionNumber} ▌使用反射贴图");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useReflection, $"{sectionNumber} ▌使用反射贴图", HeaderStyle.Base);
         
         if (useReflection.floatValue > 0.5f)
         {
@@ -457,7 +465,7 @@ public class Glass_carWindowGUI : ShaderGUI
         // 根据是否有折射功能来决定标题编号
         // 插入顶点风动位移后，原 5/6 → 6/7
         string sectionNumber = (useRefraction != null) ? "7" : "6";
-        GUILayout.Label($"{sectionNumber} ▌菲涅尔 (Fresnel)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich($"{sectionNumber} ▌菲涅尔 (Fresnel)", HeaderStyle.Fresnel), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.RangeProperty(fresnelPower, "全局强度");
         m_MaterialEditor.RangeProperty(fresnelBias, "中心偏移");
         m_MaterialEditor.RangeProperty(fresnelScale, "边缘缩放");
@@ -473,7 +481,7 @@ public class Glass_carWindowGUI : ShaderGUI
             // 根据是否有折射功能来决定标题编号
             // 插入顶点风动位移后，原 6/7 → 7/8
             string sectionNumber = (useRefraction != null) ? "8" : "7";
-            m_MaterialEditor.ShaderProperty(useFresnelRamp, $"{sectionNumber} ▌使用菲涅尔渐变贴图");
+            HeaderStyle.ShaderProperty(m_MaterialEditor, useFresnelRamp, $"{sectionNumber} ▌使用菲涅尔渐变贴图", HeaderStyle.Fresnel);
             
             if (useFresnelRamp.floatValue > 0.5f)
             {
@@ -494,7 +502,7 @@ public class Glass_carWindowGUI : ShaderGUI
     {
         // 章节编号：插入顶点风动位移后，原 7 → 8 (有折射时 9)
         string sectionNumber = (useRefraction != null) ? "9" : "8";
-        GUILayout.Label($"{sectionNumber} ▌渲染设置 (Render Settings)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich($"{sectionNumber} ▌渲染设置 (Render Settings)", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         
         // Glass_MobileNew 渲染模式切换
         if (renderMode != null)
@@ -620,6 +628,17 @@ public class Glass_carWindowGUI : ShaderGUI
         Material material = m_MaterialEditor.target as Material;
         if (material == null || material.shader == null) return;
         
+        // 从 MaterialProperty 列表构建类型对照表，修正 ShaderUtil 对 Vector 类型的误判
+        var propTypeMap = new System.Collections.Generic.Dictionary<string, MaterialProperty.PropType>();
+        if (m_Properties != null)
+        {
+            foreach (var mp in m_Properties)
+            {
+                if (mp != null)
+                    propTypeMap[mp.name] = mp.type;
+            }
+        }
+        
         Shader shader = material.shader;
         int propertyCount = ShaderUtil.GetPropertyCount(shader);
         
@@ -634,6 +653,14 @@ public class Glass_carWindowGUI : ShaderGUI
             ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
             
             if (!material.HasProperty(propertyName)) continue;
+            
+            // 优先用 MaterialProperty.type 修正类型（某些 Unity 版本 Vector → Float 误判）
+            MaterialProperty.PropType mpropType;
+            if (propTypeMap.TryGetValue(propertyName, out mpropType)
+                && mpropType == MaterialProperty.PropType.Vector)
+            {
+                propertyType = ShaderUtil.ShaderPropertyType.Vector;
+            }
             
             if (!first) sb.AppendLine(",");
             first = false;
@@ -747,7 +774,18 @@ public class Glass_carWindowGUI : ShaderGUI
         
         // 记录撤销操作
         Undo.RecordObject(material, "Load Glass Material Parameters");
-        
+
+        // 构建 MaterialProperty 类型对照表，用于区分配 Color/Vector
+        var propTypeMap = new System.Collections.Generic.Dictionary<string, MaterialProperty.PropType>();
+        if (m_Properties != null)
+        {
+            foreach (var mp in m_Properties)
+            {
+                if (mp != null)
+                    propTypeMap[mp.name] = mp.type;
+            }
+        }
+
         // 手动解析JSON
         var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
         
@@ -842,13 +880,25 @@ public class Glass_carWindowGUI : ShaderGUI
                         float.TryParse(parts[i].Trim(), out values[i]);
                     }
                     
-                    try
-                    {
-                        material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
-                    }
-                    catch
+                    // 根据 MaterialProperty.type 区分 Vector 和 Color，避免误用 SetColor
+                    MaterialProperty.PropType loadPropType;
+                    bool isVector = propTypeMap.TryGetValue(propertyName, out loadPropType)
+                                 && loadPropType == MaterialProperty.PropType.Vector;
+                    
+                    if (isVector)
                     {
                         material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                    }
+                    else
+                    {
+                        try
+                        {
+                            material.SetColor(propertyName, new Color(values[0], values[1], values[2], values[3]));
+                        }
+                        catch
+                        {
+                            material.SetVector(propertyName, new Vector4(values[0], values[1], values[2], values[3]));
+                        }
                     }
                 }
             }

@@ -2,6 +2,7 @@
 // 存读档包含纹理等所有参数
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class CustomParticleGUI : ShaderGUI
 {
@@ -66,7 +67,7 @@ public class CustomParticleGUI : ShaderGUI
     private void DrawGlobalSettings()
     {
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("全局设置", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("全局设置", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
 
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f);
         if (GUILayout.Button("存档", GUILayout.Width(50)))
@@ -91,7 +92,7 @@ public class CustomParticleGUI : ShaderGUI
 
     private void DrawMainTexture()
     {
-        GUILayout.Label("1 ▌主贴图 (Main Texture)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("1 ▌主贴图 (Main Texture)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.TexturePropertySingleLine(new GUIContent("主贴图"), mainTex);
 
         Material material = m_MaterialEditor.target as Material;
@@ -119,13 +120,13 @@ public class CustomParticleGUI : ShaderGUI
 
     private void DrawUVAnimation()
     {
-        GUILayout.Label("2 ▌UV动画 (UV Animation)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("2 ▌UV动画 (UV Animation)", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.VectorProperty(scrollSpeed, "UV滚动速度 (XY)");
     }
 
     private void DrawWetDecal()
     {
-        m_MaterialEditor.ShaderProperty(useWetDecal, "3 ▌打湿贴花 (Wet Decal)");
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useWetDecal, "3 ▌打湿贴花 (Wet Decal)", HeaderStyle.Base);
 
         if (useWetDecal.floatValue > 0.5f)
         {
@@ -154,7 +155,7 @@ public class CustomParticleGUI : ShaderGUI
             }
 
             EditorGUILayout.Space(4);
-            GUILayout.Label("菲涅尔 (Fresnel)", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("菲涅尔 (Fresnel)", HeaderStyle.Fresnel), EditorStyle.Get.BoldLabelRichStyle);
             EditorGUI.indentLevel++;
             m_MaterialEditor.RangeProperty(fresnelPower, "全局强度");
             m_MaterialEditor.RangeProperty(fresnelBias, "中心偏移");
@@ -167,13 +168,13 @@ public class CustomParticleGUI : ShaderGUI
 
     private void DrawBlendMode()
     {
-        GUILayout.Label("4 ▌混合模式 (非打湿)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("4 ▌混合模式 (非打湿)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.ShaderProperty(blendMode, "混合模式");
     }
 
     private void DrawRenderSettings()
     {
-        GUILayout.Label("5 ▌渲染设置 (Rendering)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("5 ▌渲染设置 (Rendering)", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.ShaderProperty(cullMode, "剔除模式");
 
         // 渲染排序

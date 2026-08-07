@@ -3,6 +3,7 @@
 
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class TexGaussianBlurGUI : ShaderGUI
 {
@@ -70,7 +71,7 @@ public class TexGaussianBlurGUI : ShaderGUI
     {
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            GUILayout.Label("模糊设置", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("模糊设置", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
 
             if (performanceMode != null)
             {
@@ -103,7 +104,7 @@ public class TexGaussianBlurGUI : ShaderGUI
 
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            GUILayout.Label("场景颜色", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("场景颜色", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
             editor.ShaderProperty(useSceneColor, new GUIContent("使用场景颜色",
                 "开启后模糊对象为场景不透明物体渲染结果（需 URP 开启 Opaque Texture）"));
 
@@ -215,7 +216,7 @@ public class TexGaussianBlurGUI : ShaderGUI
 
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            GUILayout.Label("模糊源纹理", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("模糊源纹理", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
 
             if (sceneColorActive && singleFrameActive)
             {
@@ -238,7 +239,7 @@ public class TexGaussianBlurGUI : ShaderGUI
     {
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            GUILayout.Label("颜色调整", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("颜色调整", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
             editor.RangeProperty(texExposure, "曝光");
             editor.RangeProperty(contrast, "对比度");
         }
@@ -250,7 +251,7 @@ public class TexGaussianBlurGUI : ShaderGUI
 
         using (new GUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            GUILayout.Label("扰动", EditorStyles.boldLabel);
+            GUILayout.Label(HeaderStyle.Rich("扰动", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
             editor.ShaderProperty(useDistortion, "使用扰动");
 
             if (useDistortion.floatValue > 0.5f)
@@ -269,7 +270,7 @@ public class TexGaussianBlurGUI : ShaderGUI
 
     private void DrawRenderSettings(MaterialEditor editor)
     {
-        GUILayout.Label("渲染设置", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("渲染设置", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         editor.RenderQueueField();
         editor.EnableInstancingField();
         editor.DoubleSidedGIField();

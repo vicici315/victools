@@ -13,18 +13,18 @@ Shader "Custom/Fx/CustomParticle"
         [Header(UV Animation)]
         _ScrollSpeed ("UV Scroll Speed (XY)", Vector) = (0, 0, 0, 0)
 
-        [Header(Wet Decal)]
+        // [Header(Wet Decal)]
         // 勾选后：R通道蒙版压暗地面 + 反射高光模拟水面
         [Toggle(_WETDECAL_ON)] _UseWetDecal ("Wet Decal (R Mask)", Float) = 0
         _WetStrength ("Wet Darkness", Range(0, 1)) = 0.5
 
-        [Header(Wet Reflection)]
+        // [Header(Wet Reflection)]
         [Toggle(_USEREFLECTION)] _UseReflection ("Use Reflection Map", Float) = 0
         [NoScaleOffset] _ReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionStrength ("Reflection Strength", Range(0, 2)) = 1.8
         _Smoothness ("Smoothness", Range(0, 1)) = 0.9
 
-        [Header(Wet Normal)]
+        // [Header(Wet Normal)]
         [Toggle(_USENORMALMAP)] _UseNormalMap ("Use Normal Map", Float) = 0
         [Normal] _BumpMap ("Normal Map", 2D) = "bump" {}
         _BumpScale ("Normal Scale", Range(0, 2)) = 0.85
@@ -34,7 +34,7 @@ Shader "Custom/Fx/CustomParticle"
         _FresnelBias  ("Fresnel Bias",  Range(0, 1))    = 0.25
         _FresnelScale ("Fresnel Scale", Range(0, 2))    = 1.25
 
-        [Header(Blend Mode Non Wet)]
+        // [Header(Blend Mode Non Wet)]
         [KeywordEnum(Additive, AlphaBlend)] _BlendMode ("Blend Mode", Float) = 1
 
         [Header(Rendering)]

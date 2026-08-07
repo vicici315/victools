@@ -131,8 +131,8 @@ Shader "Custom/PBR_Mobile"
     {
         Tags
         {
-            "QUEUE" = "Geometry"
-            "RenderType" = "Transparent"
+            "Queue" = "Geometry"
+            "RenderType" = "Opaque"
             "DisableBatching" = "False"
             "RenderPipeline" = "UniversalPipeline"
             "UniversalMaterialType" = "Unlit"
@@ -144,7 +144,7 @@ Shader "Custom/PBR_Mobile"
             Name "Universal Forward"
             Tags
             {
-                "QUEUE" = "Geometry"
+                "Queue" = "Geometry"
                 "RenderType" = "Opaque"
                 "DisableBatching" = "False"
                 "RenderPipeline" = "UniversalPipeline"

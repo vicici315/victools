@@ -3,6 +3,12 @@
 // FPS5.1 文本显示使用TextMeshProUGUI
 // FPS5.2 修复从后台/休眠恢复时帧率刷新率设置失效问题
 // FPS5.3 TMPro 条件编译，无 TMP 时回退到 UnityEngine.UI.Text
+// FPS5.4 移除 TMP 支持，统一使用 UnityEngine.UI.Text：
+//   - TMP 资源在某些项目里会触发"字体 material 为空"等 UnassignedReferenceException，
+//     反而影响 FPS 显示的稳定性；Text 组件是 Unity 内置 UI，不依赖任何额外资源。
+//   - 行为保持完全一致：FPS 数值、CPU/GPU 帧耗时、颜色阈值、刷新频率等都不变。
+//   - 旧工程里使用 TMP 的 FPS 控件：升级后 [RequireComponent(typeof(Text))] 会自动补 Text，
+//     需要手动删掉原 TMP_Text 组件（避免重叠）。
 // ----------------------------------------------------------------------------
 // FPS 算法：指数移动平均（EMA）对 1/unscaledDeltaTime 做平滑
 //   Unity Stats 面板内部使用 1/Time.smoothDeltaTime，
@@ -16,15 +22,8 @@
 using UnityEngine;
 using UnityEngine.UI;
 using Unity.Profiling;
-#if TMP_PRESENT
-using TMPro;
-#endif
 
-#if TMP_PRESENT
-[RequireComponent(typeof(TextMeshProUGUI))]
-#else
 [RequireComponent(typeof(Text))]
-#endif
 public class FPS : MonoBehaviour
 {
     [Header("显示设置")]
@@ -51,11 +50,7 @@ public class FPS : MonoBehaviour
     public int  targetFrameRate = 60;
 
     // ---- 私有变量 ----
-#if TMP_PRESENT
-    private TextMeshProUGUI fpsText;
-#else
     private Text fpsText;
-#endif
     private float fpsEma;
     private float displayFps;
     private float elapsed;
@@ -70,11 +65,7 @@ public class FPS : MonoBehaviour
 
     void Start()
     {
-#if TMP_PRESENT
-        fpsText    = GetComponent<TextMeshProUGUI>();
-#else
         fpsText    = GetComponent<Text>();
-#endif
         fpsText.fontSize = 26;
         fpsEma     = 0f;
         displayFps = 0f;

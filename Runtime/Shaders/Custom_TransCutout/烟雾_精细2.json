@@ -1,0 +1,15 @@
+{
+  "_BaseMap": {"path": "Packages/com.youdoo.victools/Runtime/Testures/Smoke_GG_0005.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_BaseColor": [1, 1, 1, 1],
+  "_Cutoff": 0.55,
+  "_UseParticleAlpha": 1,
+  "_CutoffMin": 0.81,
+  "_CutoffMax": 0.619,
+  "_UseDither": 1,
+  "_DitherTexture": {"path": "Packages/com.youdoo.victools/Runtime/Testures/FurNoise.png", "tiling": [1, 1], "offset": [0, 0]},
+  "_DitherSize": 2,
+  "_SrcBlend": 5,
+  "_DstBlend": 3,
+  "_ZWrite": 0,
+  "_Cull": 2
+}

@@ -3,6 +3,7 @@
 
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class CustomTextureGUI : ShaderGUI
 {
@@ -37,7 +38,7 @@ public class CustomTextureGUI : ShaderGUI
 
         // ── 渲染模式 ──
         EditorGUILayout.Space();
-        EditorGUILayout.LabelField("渲染模式", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("渲染模式", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
 
         RenderMode currentMode = GetRenderMode(material);
         RenderMode newMode = (RenderMode)EditorGUILayout.EnumPopup("Render Mode", currentMode);
@@ -52,14 +53,14 @@ public class CustomTextureGUI : ShaderGUI
         if (currentMode == RenderMode.Cutout)
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("透明度设置", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(HeaderStyle.Rich("透明度设置", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
             materialEditor.RangeProperty(cutoff, "Alpha 裁剪阈值");
         }
 
         if (currentMode == RenderMode.Transparent)
         {
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("透明模式设置", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(HeaderStyle.Rich("透明模式设置", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
             EditorGUILayout.HelpBox("云朵透明效果建议：\n1. 调整渲染队列避免闪烁\n2. 确保物体不要重叠太多\n3. 使用合适的混合模式", MessageType.Info);
 
             int currentQueue = material.renderQueue;
@@ -77,7 +78,7 @@ public class CustomTextureGUI : ShaderGUI
 
         // ── 纹理设置 ──
         EditorGUILayout.Space();
-        EditorGUILayout.LabelField("纹理设置", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("纹理设置", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.TexturePropertySingleLine(new GUIContent("纹理"), mainTex);
         materialEditor.TextureScaleOffsetProperty(mainTex);
         materialEditor.ColorProperty(color, "颜色叠加");
@@ -86,7 +87,7 @@ public class CustomTextureGUI : ShaderGUI
 
         // ── 渲染设置 ──
         EditorGUILayout.Space();
-        EditorGUILayout.LabelField("渲染设置", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("渲染设置", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(cullMode, "剔除模式");
 
         // ── 高级设置 ──

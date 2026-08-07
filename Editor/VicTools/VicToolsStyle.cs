@@ -346,6 +346,40 @@ namespace VicTools
 			}
 		}
 
+		// ─── 富文本样式（EditorStyles.foldoutHeader / boldLabel 默认 richText=false，这里开启）───
+		private GUIStyle _foldoutHeaderRichStyle;
+		public GUIStyle FoldoutHeaderRichStyle
+		{
+			get
+			{
+				if (_foldoutHeaderRichStyle == null)
+					_foldoutHeaderRichStyle = new GUIStyle(EditorStyles.foldoutHeader != null ? EditorStyles.foldoutHeader : new GUIStyle()) { richText = true };
+				return _foldoutHeaderRichStyle;
+			}
+		}
+
+		private GUIStyle _boldLabelRichStyle;
+		public GUIStyle BoldLabelRichStyle
+		{
+			get
+			{
+				if (_boldLabelRichStyle == null)
+					_boldLabelRichStyle = new GUIStyle(EditorStyles.boldLabel != null ? EditorStyles.boldLabel : new GUIStyle()) { richText = true };
+				return _boldLabelRichStyle;
+			}
+		}
+
+		private GUIStyle _miniBoldLabelRichStyle;
+		public GUIStyle MiniBoldLabelRichStyle
+		{
+			get
+			{
+				if (_miniBoldLabelRichStyle == null)
+					_miniBoldLabelRichStyle = new GUIStyle(EditorStyles.miniBoldLabel != null ? EditorStyles.miniBoldLabel : new GUIStyle()) { richText = true };
+				return _miniBoldLabelRichStyle;
+			}
+		}
+
         // 创建纯色纹理的方法
         private Texture2D MakeTex(int width, int height, Color col)
         {
@@ -375,6 +409,141 @@ namespace VicTools
 			// 这解决了断言失败：'!(o->TestHideFlag(Object::kDontSaveInEditor) && (options & kAllowDontSaveObjectsToBePersistent) == 0)'
 			texture.hideFlags = HideFlags.HideAndDontSave;
 			return texture;
+		}
+	}
+
+	/// ShaderGUI 共享 Header 样式与配色（所有 ShaderGUI 脚本共用，避免重复定义）。
+	/// 颜色按"功能类型"统一分类，无论 ShaderGUI 脚本对应哪种材质，
+	/// 光照相关一律用 <see cref="Lighting"/>、边缘光一律用 <see cref="Fresnel"/> 等。
+	///
+	/// 用法：
+	///   // 简单 Label / LabelField：
+	///   GUILayout.Label(HeaderStyle.Rich("基础", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
+	///   // BeginFoldoutHeaderGroup：
+	///   EditorGUILayout.BeginFoldoutHeaderGroup(fold, HeaderStyle.ColoredHeader("基础", HeaderStyle.Base), EditorStyle.Get.FoldoutHeaderRichStyle);
+	public static class HeaderStyle
+	{
+		// ─── 功能类型配色（所有 ShaderGUI 共用） ───
+		public static readonly Color HeaderTitle = new Color(0.70f, 0.90f, 1.00f); // 顶部全局标题（带存档/读档按钮行）
+		public static readonly Color Base        = new Color(0.31f, 0.76f, 0.97f); // 基础属性 / 主色 / 贴图 / 法线 / UV
+		public static readonly Color Lighting    = new Color(1.00f, 0.83f, 0.31f); // 光照 / 高光 / 阴影 / 明暗 / PBR 参数
+		public static readonly Color Sparkle     = new Color(0.30f, 0.82f, 0.88f); // 闪烁 / 特效 / 动画 / 扰动
+		public static readonly Color Fresnel     = new Color(1.00f, 0.54f, 0.40f); // 边缘光 / Rim / Kajiya-Kay
+		public static readonly Color Interaction = new Color(0.73f, 0.41f, 0.78f); // 交互 / 物理 / 压痕 / 触摸 / 风力
+		public static readonly Color Render      = new Color(0.69f, 0.74f, 0.27f); // 渲染设置 / 输出 / 剔除
+
+		/// 生成带富文本颜色的字符串（加粗 + 着色），用于 GUILayout.Label / EditorGUILayout.LabelField。
+		/// 配合 <see cref="EditorStyle.Get.BoldLabelRichStyle"/> / MiniBoldLabelRichStyle 即可正确显示。
+		public static string Rich(string text, Color color)
+		{
+			string hex = ColorUtility.ToHtmlStringRGB(color);
+			return $"<color=#{hex}><b>{text}</b></color>";
+		}
+
+		/// 生成带富文本颜色的 Header 标题 GUIContent（加粗 + 着色），用于 EditorGUILayout.BeginFoldoutHeaderGroup。
+		/// 配合 <see cref="EditorStyle.Get.FoldoutHeaderRichStyle"/> 即可正确显示。
+		public static GUIContent ColoredHeader(string text, Color color)
+		{
+			string hex = ColorUtility.ToHtmlStringRGB(color);
+			return new GUIContent($"<color=#{hex}><b>{text}</b></color>");
+		}
+
+		/// 绘制指定颜色的 MaterialEditor.ShaderProperty（仅着色本行 label）。
+		/// 原理：MaterialEditor.ShaderProperty 内部用 EditorStyles.label 绘制 label，
+		/// 临时启用 richText 后用 <see cref="Rich"/> 包裹 label 文字即可显示颜色，绘制结束立刻还原样式。
+		public static void ShaderProperty(MaterialEditor editor, MaterialProperty prop, string label, Color color)
+		{
+			if (editor == null || prop == null) return;
+
+			var style = EditorStyles.label;
+			var savedRichText = style.richText;
+			style.richText = true;
+			try
+			{
+				editor.ShaderProperty(prop, Rich(label, color));
+			}
+			finally
+			{
+				style.richText = savedRichText;
+			}
+		}
+
+		/// 绘制指定颜色的 EditorGUILayout.Toggle（仅着色本行 label）。
+		/// 原理：EditorGUILayout.Toggle 内部用 EditorStyles.label 绘制 label，
+		/// 临时启用 richText 后用 <see cref="Rich"/> 包裹 label 文字即可显示颜色，绘制结束立刻还原样式。
+		public static bool Toggle(string label, bool value, Color color, params GUILayoutOption[] options)
+		{
+			var style = EditorStyles.label;
+			var savedRichText = style.richText;
+			style.richText = true;
+			try
+			{
+				return EditorGUILayout.Toggle(Rich(label, color), value, options);
+			}
+			finally
+			{
+				style.richText = savedRichText;
+			}
+		}
+
+		// ── 主纹理属性名集合（"仅非主纹理"读档选项读到这些属性时跳过，保留当前值） ──
+		// 所有 ShaderGUI 共用，GUI 脚本存读档循环通过 IsMainTexture() 判断。
+		// _BaseMap: URP 主纹理命名
+		// _MainTex: 内置 / Standard 模板命名
+		public static readonly System.Collections.Generic.HashSet<string> MainTexturePropertyNames =
+			new System.Collections.Generic.HashSet<string> { "_BaseMap", "_MainTex" };
+
+		/// 判断给定属性名是否为主纹理（用于"仅非主纹理"读档选项：读到主纹理时跳过，保留当前值）。
+		public static bool IsMainTexture(string propertyName)
+		{
+			return !string.IsNullOrEmpty(propertyName) && MainTexturePropertyNames.Contains(propertyName);
+		}
+
+		// ── 共享的"读档 - 是否读取纹理"对话框 ──
+		/// "读档"时弹出的"是否读取纹理"对话框结果。
+		/// <para><see cref="LoadTextures"/> = true 时读取纹理（tiling/offset 同步），= false 时跳过所有纹理只读数值参数。</para>
+		/// <para><see cref="LoadMainTex"/> = true 时主纹理（_BaseMap / _MainTex）也一起读取，= false 时保留当前主纹理。</para>
+		public struct LoadTextureChoice
+		{
+			/// 是否读取纹理（tiling/offset 同步）。false = 仅参数。
+			public bool LoadTextures;
+			/// 主纹理（_BaseMap / _MainTex）是否在本次读取范围内。仅在 LoadTextures=true 时有意义。
+			public bool LoadMainTex;
+
+			public LoadTextureChoice(bool loadTextures, bool loadMainTex)
+			{
+				LoadTextures = loadTextures;
+				LoadMainTex = loadMainTex;
+			}
+		}
+
+		/// 弹出"读档 - 是否读取纹理"三选项对话框，供所有 ShaderGUI 脚本共用。
+		/// <para>对话框选项：</para>
+		/// <list type="bullet">
+		///   <item><c>全部读取</c> → <see cref="LoadTextureChoice"/>(true, true)</item>
+		///   <item><c>仅参数</c> → <see cref="LoadTextureChoice"/>(false, false)</item>
+		/// <item><c>排除主纹理</c>（仅非主纹理） → <see cref="LoadTextureChoice"/>(true, false)</item>
+		/// </list>
+		/// <param name="title">对话框标题（默认"读取纹理"）。</param>
+		/// <param name="message">对话框说明文字（默认含三选项说明）。</param>
+		/// <param name="ok">第一个按钮文字（默认"全部读取"）。</param>
+		/// <param name="cancel">第二个按钮文字（默认"仅参数"）。</param>
+		/// <param name="alt">第三个按钮文字（默认"排除主纹理"）。</param>
+		public static LoadTextureChoice ShowLoadTextureDialog(
+			string title = "读取纹理",
+			string message = "存档中包含纹理贴图引用，请选择读取方式：\n\n" +
+			                "• 全部读取：还原所有纹理贴图及Tiling/Offset\n" +
+			                "• 排除主纹理：保留当前主纹理，仅读取其他纹理\n" +
+			                "• 仅参数：跳过所有纹理，只读取数值参数",
+			string ok = "全部读取",
+			string cancel = "仅参数",
+			string alt = "排除主纹理")
+		{
+			// 0 = ok（全部读取）  1 = cancel（仅参数）  2 = alt（排除主纹理）
+			int dialogResult = EditorUtility.DisplayDialogComplex(title, message, ok, cancel, alt);
+			bool loadTextures = (dialogResult == 0 || dialogResult == 2);
+			bool loadMainTex  = (dialogResult == 0);
+			return new LoadTextureChoice(loadTextures, loadMainTex);
 		}
 	}
 }

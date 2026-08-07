@@ -4,6 +4,8 @@
 
 using UnityEngine;
 using UnityEditor;
+using VicTools;
+using System.Runtime.InteropServices;
 
 public class CustomSnowGUI : ShaderGUI
 {
@@ -41,7 +43,7 @@ public class CustomSnowGUI : ShaderGUI
     private void DrawGlobalSettings()
     {
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("Custom/Snow", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.ColoredHeader("Custom/Snow", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
 
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f);
         if (GUILayout.Button("存档", GUILayout.Width(50)))
@@ -62,7 +64,7 @@ public class CustomSnowGUI : ShaderGUI
     // ─── 基础雪面 ───
     private void DrawBaseSection()
     {
-        _foldBase = EditorGUILayout.BeginFoldoutHeaderGroup(_foldBase, "基础雪面");
+        _foldBase = EditorGUILayout.BeginFoldoutHeaderGroup(_foldBase, HeaderStyle.ColoredHeader("基础雪面", HeaderStyle.Base), EditorStyle.Get.FoldoutHeaderRichStyle);
         if (_foldBase)
         {
             EditorGUI.indentLevel++;
@@ -79,7 +81,7 @@ public class CustomSnowGUI : ShaderGUI
     // ─── 光照 ───
     private void DrawLightingSection()
     {
-        _foldLighting = EditorGUILayout.BeginFoldoutHeaderGroup(_foldLighting, "光照");
+        _foldLighting = EditorGUILayout.BeginFoldoutHeaderGroup(_foldLighting, HeaderStyle.ColoredHeader("光照", HeaderStyle.Lighting), EditorStyle.Get.FoldoutHeaderRichStyle);
         if (_foldLighting)
         {
             EditorGUI.indentLevel++;
@@ -95,7 +97,7 @@ public class CustomSnowGUI : ShaderGUI
     // ─── 冰晶闪烁 ───
     private void DrawSparkleSection()
     {
-        _foldSparkle = EditorGUILayout.BeginFoldoutHeaderGroup(_foldSparkle, "冰晶闪烁");
+        _foldSparkle = EditorGUILayout.BeginFoldoutHeaderGroup(_foldSparkle, HeaderStyle.ColoredHeader("冰晶闪烁", HeaderStyle.Sparkle), EditorStyle.Get.FoldoutHeaderRichStyle);
         if (_foldSparkle)
         {
             EditorGUI.indentLevel++;
@@ -114,7 +116,7 @@ public class CustomSnowGUI : ShaderGUI
     // ─── 边缘光 ───
     private void DrawFresnelSection()
     {
-        _foldFresnel = EditorGUILayout.BeginFoldoutHeaderGroup(_foldFresnel, "边缘光 (Fresnel)");
+        _foldFresnel = EditorGUILayout.BeginFoldoutHeaderGroup(_foldFresnel, HeaderStyle.ColoredHeader("边缘光 (Fresnel)", HeaderStyle.Fresnel), EditorStyle.Get.FoldoutHeaderRichStyle);
         if (_foldFresnel)
         {
             EditorGUI.indentLevel++;
@@ -129,7 +131,7 @@ public class CustomSnowGUI : ShaderGUI
     // ─── 雪地交互 (压痕) ───
     private void DrawDeformSection()
     {
-        _foldDeform = EditorGUILayout.BeginFoldoutHeaderGroup(_foldDeform, "雪地交互 (压痕)");
+        _foldDeform = EditorGUILayout.BeginFoldoutHeaderGroup(_foldDeform, HeaderStyle.ColoredHeader("雪地交互 (压痕)", HeaderStyle.Interaction), EditorStyle.Get.FoldoutHeaderRichStyle);
         if (_foldDeform)
         {
             EditorGUI.indentLevel++;
@@ -140,7 +142,7 @@ public class CustomSnowGUI : ShaderGUI
             
             EditorGUILayout.Space(8);
             EditorGUILayout.BeginHorizontal();
-            
+            GUI.backgroundColor = Color.cyan;
             // 雪交互管理器按钮
             var existingManager = Object.FindObjectOfType<SnowDeformManager>();
             if (GUILayout.Button(existingManager != null ? "选择雪交互管理器" : "创建雪交互管理器"))
@@ -167,6 +169,7 @@ public class CustomSnowGUI : ShaderGUI
                 }
             }
             
+            GUI.backgroundColor = new Color(0.83f, 0.28f, 0.2f);
             // 创建脚印控制器按钮
             if (GUILayout.Button("创建脚印控制器"))
             {
@@ -185,7 +188,7 @@ public class CustomSnowGUI : ShaderGUI
                 Undo.RegisterCreatedObjectUndo(go, "Create SnowFootprintMarker");
                 Selection.activeGameObject = go;
             }
-            
+            GUI.backgroundColor = Color.white;
             EditorGUILayout.EndHorizontal();
             
             EditorGUI.indentLevel--;
@@ -196,7 +199,7 @@ public class CustomSnowGUI : ShaderGUI
     // ─── 渲染设置 ───
     private void DrawRenderSection()
     {
-        _foldRender = EditorGUILayout.BeginFoldoutHeaderGroup(_foldRender, "渲染设置");
+        _foldRender = EditorGUILayout.BeginFoldoutHeaderGroup(_foldRender, HeaderStyle.ColoredHeader("渲染设置", HeaderStyle.Render), EditorStyle.Get.FoldoutHeaderRichStyle);
         if (_foldRender)
         {
             EditorGUI.indentLevel++;

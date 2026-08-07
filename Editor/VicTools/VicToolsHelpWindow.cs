@@ -134,6 +134,20 @@ namespace VicTools
                 });
             }
 
+            Add("v2.11.0",
+                "材质GUI添加材质参数着色样式，根据参数类型进行分类着色，让材质参数更直观。",
+                "添加新工具【无限循环滚动v2.2】，可以快速对美术资源进行无限循环游走滚动，可以用于道路背景墙等无限移动模拟。",
+                "添加新材质【Texture-UI 1.0】 基于 Custom/Texture 改编的UI专用版本。",
+                "材质读档添加“排除主纹理”选项按钮，读取材质参数时可以选则不读取主要贴图包含PBR和自发光配套贴图。"
+            );
+
+            Add("v2.10.6",
+                "【新材质】TransCutout 2.4 全透明 stencil mask 材质，集成 DitherTemporalAA 函数（颗粒状渐变，模拟 UE 同名函数效果），支持粒子系统 ColorOverLifetime 驱动透明阈值。",
+                "Glass_carWindow 1.4 添加顶点风动位移，可用于模拟树叶飘动、生物游动效果。",
+                "[Material:URP]菜单完善各材质对应图标。",
+                "FPS 5.4 移除 TMP 支持，统一使用 UnityEngine.UI.Text。"
+            );
+
             Add("v2.10.5",
                 "LatticeModifierEditor v3.32 PlayMode 性能优化：进入运行时（Application.isPlaying）后，OnSceneGUI 跳过所有点/线着色计算（背面判断、深度排序、点拖拽、框选等），改为统一浅灰色立方体外壳，大幅降低 Play Mode 下的 Editor 性能开销。",
                 "PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)",

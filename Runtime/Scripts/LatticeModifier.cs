@@ -38,6 +38,7 @@
 // LatticeModifier v3.24 内部点压缩（surfaceOnly模式）：新增surfaceOnly序列化字段，开启时controlPoints只存外壳点（去掉6个内部面以内的点）；内部点对表面顶点影响极小（Bernstein基函数趋近0）可省去提升大晶格性能；PointCountX/Y/Z和TotalPoints仍按完整晶格逻辑；新增SurfacePointCount与3D索引→压缩索引表；DeformVertices内层累加按(ix,iy,iz)跳过内部索引（compressedLut[]查表）；Gizmo/动画CP Transform/轴心操作全按压缩索引走；新增外壳压缩按钮一键生成压缩索引无需重新InitializeLattice
 // LatticeModifier v3.25 瞬移出范围恢复原始形态：DeformTarget 新增 wasAnyInRange 标记，ApplyDeformation 中检测"上一帧在范围内、本帧离开"事件，上传原始顶点还原模型原始形态。仅触发一次（wasAnyInRange=false 后后续帧 continue 保留原性能优化），离开范围后的对象不受晶格变形影响。
 // LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos/initLatticeRot/initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。
+// LatticeModifier v3.33 位移按钮重定向：新增 ResetPositionToTarget() —— 把晶格体 Position 复位到目标对象的当前位置（targetRoot.position / targetRenderer.transform.position），不依赖 initTransformSaved。用于「目标物体被外部脚本移动后一键让晶格贴合上去」工作流。
 
 using System;
 using System.Collections.Generic;
@@ -746,6 +747,35 @@ public class LatticeModifier : MonoBehaviour
         transform.localScale = initLatticeScale;
         MarkDirty();
         return true;
+    }
+
+    // v3.33：将晶格体位置重置到目标对象的当前位置。
+    // 不依赖 initTransformSaved —— 直接从 targetRoot / targetRenderer 读取。
+    // 用于"目标物体被外部脚本移动后，让晶格贴合上去"的常见工作流。
+    // 返回 false 表示未指定任何目标对象（targetRoot 与 targetRenderer 都为空）。
+    public bool ResetPositionToTarget()
+    {
+        Transform target = GetTargetTransform();
+        if (target == null) return false;
+        transform.position = target.position;
+        MarkDirty();
+        return true;
+    }
+
+    // v3.33：取得当前变形目标对象的 Transform。
+    // 优先顺序：Inspector 里显式设置的 targetRoot → targetRenderer → InitializeLattice 已收集的 deformTargets[0].renderer。
+    // 兜底走 deformTargets 是因为很多晶格（特别是代码动态创建的）从未填过 Inspector 字段，
+    // 但 InitializeLattice 一旦调用，deformTargets 就已经有 Renderer 引用了。
+    private Transform GetTargetTransform()
+    {
+        if (targetRoot != null) return targetRoot;
+        if (targetRenderer != null) return targetRenderer.transform;
+        if (deformTargets != null && deformTargets.Count > 0)
+        {
+            var dt = deformTargets[0];
+            if (dt != null && dt.renderer != null) return dt.renderer.transform;
+        }
+        return null;
     }
 
     // v3.26：为旧场景晶格体首次记录当前位置作为重置基准。

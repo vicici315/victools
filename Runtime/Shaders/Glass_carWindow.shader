@@ -1,7 +1,7 @@
 // URP车窗玻璃Shader - 支持透明、菲涅尔反射、球形环境贴图
 // Glass_carWindow 1.2 添加"Reflection Scale"参数，控制反射图的明显度
 // Glass_carWindow 1.3 优化反射，添加反射贴图位移，添加GUI控制，Glass_carWindow添加Ramp渐变贴图，可用于模拟肥皂泡效果
-// Glass_carWindow 1.4 添加顶点风动位移，可用于模拟树叶飘动效果
+// Glass_carWindow 1.4 添加顶点风动位移，可用于模拟树叶飘动、生物游动效果
 
 Shader "Custom/Glass_carWindow"
 {
@@ -50,11 +50,12 @@ Shader "Custom/Glass_carWindow"
         // [Header(Vertex Wind Displacement)]
         [Toggle(_USEVERTEXDISPLACEMENT)] _UseVertexDisplacement("Use Vertex Wind Displacement", Float) = 0
         [NoScaleOffset] _Tree_NoiseTexture1 ("Wind Noise Texture (R, 可选)", 2D) = "white" {}
+        _WindDirection ("Wind Direction (XYZ 方向, W 无效)", Vector) = (1, 0, 0, 0)
         _Big_WindAmount ("Big Wind Amount (振幅)", Float) = 0.1
         _Small_WindSpeed ("Small Wind Speed (时间速度)", Float) = 0.5
         _Small_Wave ("Small Wave (空间频率, 0=无变化)", Range(0.01, 10)) =  0.5
 
-        [Header(Render Settings)]
+        // [Header(Render Settings)]
         // [Space(5)]
         [Enum(UnityEngine.Rendering.CullMode)] _Cull ("Cull Mode", Float) = 2
         [Toggle] _ZWrite ("ZWrite", Float) = 0
@@ -120,6 +121,7 @@ Shader "Custom/Glass_carWindow"
                 half _FresnelRampRow;
                 half _FresnelRampIntensity;
                 // 顶点风动位移参数
+                half4 _WindDirection;
                 half _Big_WindAmount;
                 half _Small_WindSpeed;
                 half _Small_Wave;
@@ -240,11 +242,12 @@ Shader "Custom/Glass_carWindow"
                 Varyings output;
 
                 #ifdef _USEVERTEXDISPLACEMENT
-                // 顶点风动位移（沿 X 轴风动，支持可选噪声贴图 + 程序化回退）
+                // 顶点风动位移（沿 _WindDirection.xyz 方向风动，支持可选噪声贴图 + 程序化回退）
                 // 公式: windU = vertexX · _Small_Wave + time · _Small_WindSpeed
                 // 全部使用 float 精度，避免 half 哈希函数在部分 GPU 上产生 NaN/Inf
                 float3 windDisplacedPos = input.positionOS.xyz;
-                float  windU     = windDisplacedPos.x * _Small_Wave
+                float3 windDir   = normalize(_WindDirection.xyz);
+                float  windU     = dot(windDisplacedPos.xyz, windDir) * _Small_Wave
                                  + _Time.y * _Small_WindSpeed;
                 float  windNoise = SAMPLE_TEXTURE2D_LOD(_Tree_NoiseTexture1, sampler_Tree_NoiseTexture1,
                                                         float2(windU, windU), 0).r;
@@ -255,7 +258,7 @@ Shader "Custom/Glass_carWindow"
                 p               = p * p + p;
                 float hashNoise = frac(p);
                 windNoise       = lerp(windNoise, hashNoise, useHash);
-                windDisplacedPos.x += _Big_WindAmount * windNoise;
+                windDisplacedPos.xyz += windDir * _Big_WindAmount * windNoise;
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(windDisplacedPos);
                 #else
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(input.positionOS.xyz);

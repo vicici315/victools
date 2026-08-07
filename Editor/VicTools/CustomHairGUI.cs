@@ -1,6 +1,7 @@
 // Custom/Hair ShaderGUI - 分组显示 + 存档/读档
 using UnityEngine;
 using UnityEditor;
+using VicTools;
 
 public class CustomHairGUI : ShaderGUI
 {
@@ -10,7 +11,7 @@ public class CustomHairGUI : ShaderGUI
 
         // ── 基础（标题 + 存档/读档/预设按钮同行） ──
         EditorGUILayout.BeginHorizontal();
-        EditorGUILayout.LabelField("基础", EditorStyles.boldLabel, GUILayout.Width(40));
+        EditorGUILayout.LabelField(HeaderStyle.Rich("基础", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle, GUILayout.Width(40));
         GUILayout.FlexibleSpace();
         GUI.backgroundColor = new Color(0.5f, 0.9f, 0.6f);
         bool doSave = GUILayout.Button("存档", GUILayout.Height(18), GUILayout.Width(50));
@@ -34,14 +35,13 @@ public class CustomHairGUI : ShaderGUI
 
         // ── 法线 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("法线", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("法线", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.TexturePropertySingleLine(new GUIContent("法线贴图"), FindProperty("_NormalMap", properties));
         materialEditor.ShaderProperty(FindProperty("_NormalScale", properties), "法线强度");
 
         // ── 各向异性高光 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("各向异性高光 (Kajiya-Kay)", EditorStyles.boldLabel);
-        materialEditor.ShaderProperty(FindProperty("_UseAnisoSpec", properties), "启用各向异性高光");
+        HeaderStyle.ShaderProperty(materialEditor, FindProperty("_UseAnisoSpec", properties), "启用各向异性高光", HeaderStyle.Lighting);
         if (material.IsKeywordEnabled("_USE_ANISO_SPEC"))
         {
             materialEditor.TexturePropertySingleLine(new GUIContent("Shift Map (R通道)"), FindProperty("_ShiftMap", properties));
@@ -57,14 +57,14 @@ public class CustomHairGUI : ShaderGUI
 
         // ── 环境光 & 边缘光 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("环境光 & 边缘光", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("环境光 & 边缘光", HeaderStyle.Fresnel), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(FindProperty("_AmbientColor", properties), "环境光颜色");
         materialEditor.ShaderProperty(FindProperty("_RimPower", properties), "边缘光衰减");
         materialEditor.ShaderProperty(FindProperty("_RimIntensity", properties), "边缘光强度");
 
         // ── 渲染 ──
         EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("渲染设置", EditorStyles.boldLabel);
+        EditorGUILayout.LabelField(HeaderStyle.Rich("渲染设置", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         materialEditor.ShaderProperty(FindProperty("_Cull", properties), "剔除模式");
     }
 

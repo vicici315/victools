@@ -4,6 +4,7 @@ using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using Vic.Runtime;
+using VicTools;
 
 public class GrassGUI : ShaderGUI
 {
@@ -103,7 +104,7 @@ public class GrassGUI : ShaderGUI
     private void DrawGlobalSettings()
     {
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("草地着色器", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("草地着色器", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
 
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f);
         if (GUILayout.Button("存档", GUILayout.Width(50)))
@@ -261,14 +262,14 @@ public class GrassGUI : ShaderGUI
 
     private void DrawTessellation()
     {
-        GUILayout.Label("1 ▌细分密度 (Tessellation)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("1 ▌细分密度 (Tessellation)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.RangeProperty(tessellation, "细分等级");
         EditorGUILayout.HelpBox("值越大草叶越密，性能消耗越高。建议 1~8 用于移动端。", MessageType.Info);
     }
 
     private void DrawShading()
     {
-        GUILayout.Label("2 ▌着色 (Shading)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("2 ▌着色 (Shading)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.ColorProperty(topColor, "顶部颜色");
         m_MaterialEditor.ColorProperty(bottomColor, "底部颜色（与贴图混合）");
         m_MaterialEditor.RangeProperty(gradientOffset, "渐变偏移（负=底色多, 正=顶色多）");
@@ -319,7 +320,7 @@ public class GrassGUI : ShaderGUI
 
     private void DrawBlade()
     {
-        GUILayout.Label("3 ▌草叶形态 (Blade)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("3 ▌草叶形态 (Blade)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.RangeProperty(bladeWidth, "宽度");
         m_MaterialEditor.RangeProperty(bladeBottomWidth, "底部宽度");
         m_MaterialEditor.RangeProperty(bladeWidthRandom, "宽度随机");
@@ -333,11 +334,10 @@ public class GrassGUI : ShaderGUI
         m_MaterialEditor.RangeProperty(bladeRootSink, "根部下沉");
 
         EditorGUILayout.Space(4);
-        GUILayout.Label("草体透贴", EditorStyles.miniBoldLabel);
 
         EditorGUI.BeginChangeCheck();
         bool overlayOn = useBladeOverlay.floatValue > 0.5f;
-        overlayOn = EditorGUILayout.Toggle("使用草体贴图", overlayOn);
+        overlayOn = HeaderStyle.Toggle("使用草体贴图", overlayOn, HeaderStyle.Base);
         if (EditorGUI.EndChangeCheck())
         {
             useBladeOverlay.floatValue = overlayOn ? 1.0f : 0.0f;
@@ -378,7 +378,7 @@ public class GrassGUI : ShaderGUI
 
     private void DrawWind()
     {
-        GUILayout.Label("4 ▌风力 (Wind)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("4 ▌风力 (Wind)", HeaderStyle.Sparkle), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.TexturePropertySingleLine(new GUIContent("风力扰动贴图"), windDistortionMap);
         m_MaterialEditor.ShaderProperty(windFrequency, "风力频率 (XY)");
         m_MaterialEditor.FloatProperty(windStrength, "风力强度");
@@ -386,7 +386,7 @@ public class GrassGUI : ShaderGUI
 
     private void DrawDistanceCulling()
     {
-        GUILayout.Label("5 ▌距离剔除 (Distance Culling)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("5 ▌距离剔除 (Distance Culling)", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         m_MaterialEditor.FloatProperty(grassFadeStart, "开始衰减距离");
         m_MaterialEditor.FloatProperty(grassFadeEnd, "完全剔除距离");
         EditorGUILayout.HelpBox("摄像机距离 < 开始衰减 → 全密度\n开始衰减 ~ 完全剔除 → 线性降低细分\n> 完全剔除 → 不生成草叶（细分=0）", MessageType.Info);
@@ -394,7 +394,7 @@ public class GrassGUI : ShaderGUI
 
     private void DrawInteraction()
     {
-        GUILayout.Label("6 ▌交互控制 (Interaction)", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("6 ▌交互控制 (Interaction)", HeaderStyle.Interaction), EditorStyle.Get.BoldLabelRichStyle);
 
         // 检查场景中是否已有 Controller
         var controller = Object.FindObjectOfType<GrassInteractionController>();
@@ -470,7 +470,7 @@ public class GrassGUI : ShaderGUI
     private void DrawRenderSettings()
     {
         EditorGUILayout.Space(5);
-        GUILayout.Label("7 ▌渲染设置", EditorStyles.boldLabel);
+        GUILayout.Label(HeaderStyle.Rich("7 ▌渲染设置", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
 
         // 单双面渲染选项
         Material mat = m_MaterialEditor.target as Material;
