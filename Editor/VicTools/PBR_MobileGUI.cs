@@ -3,6 +3,7 @@
 // 6.1 添加【统一阴影】按钮，用于统一设置“自身阴影衰减”值，使场景中阴影保持一致的明暗度（包括PBR_Mobile_Trans）
 // 6.3 优化读档，按属性值精确同步 shader 关键字（两个 shader 共用，仅同步各自实际声明的关键字）
 // PBR_Mobile.shader7.1 添加"同步设置"按钮，一键同步场景中所有PBR_Mobile.shader与PBR_Mobile_Trans.shader软阴影参数
+// PBR_MobileGUI 7.2 添加"查找贴图"按钮，一键自动赋予PBR配套贴图
 
 using UnityEngine;
 using UnityEditor;
@@ -222,6 +223,18 @@ public class PBR_MobileGUI : ShaderGUI
     {
         EditorGUILayout.BeginHorizontal();
         GUILayout.Label(HeaderStyle.Rich("全局设置", HeaderStyle.HeaderTitle), EditorStyle.Get.BoldLabelRichStyle);
+        // 查找贴图按钮（点击后按材质球名 / 模型对象名 在 Assets 中搜索 _D / _MRA / _N 三种后缀贴图并赋值）
+        GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f); // 黄色背景
+        if (GUILayout.Button(new GUIContent("查找贴图",
+            "根据材质球名或模型对象名在 Assets 中查找匹配的:\n" +
+            "  _D → （颜色贴图）\n" +
+            "  _MRA → （MRA 贴图）\n" +
+            "  _N → （法线贴图）\n" +
+            "找不到则降级到场景中模型对象名查找。"),
+            GUILayout.Width(60)))
+        {
+            EditorApplication.delayCall += FindAndAssignTextures;
+        }
         
         // 添加存档按钮
         GUI.backgroundColor = new Color(0.3f, 0.8f, 1.0f); // 蓝色背景
@@ -237,12 +250,6 @@ public class PBR_MobileGUI : ShaderGUI
             ShowLoadDropdown();
         }
         
-        // 添加重置按钮
-        GUI.backgroundColor = new Color(1.0f, 0.8f, 0.3f); // 黄色背景
-        if (GUILayout.Button(new GUIContent("重置参数", "重置材质参数为Default存档或Shader默认值"), GUILayout.Width(60)))
-        {
-            EditorApplication.delayCall += ResetMaterialParameters;
-        }
         
         // 预设下拉菜单
         GUI.backgroundColor = new Color(0.9f, 0.7f, 1.0f);
@@ -808,7 +815,6 @@ public class PBR_MobileGUI : ShaderGUI
     /// <list type="bullet">
     ///   <item>单材质读档（菜单项 / 预设）→ <see cref="LoadFromFile"/>（弹一次三选项对话框）</item>
     ///   <item>批量读档 → <see cref="LoadMaterialParameters"/>（弹一次三选项对话框后传入）</item>
-    ///   <item>重置参数 → <see cref="LoadMaterialParametersFromFile"/>（直接传 (false, false)，不弹框）</item>
     /// </list>
     private void LoadMaterialParametersToMaterial(Material material, string filePath, HeaderStyle.LoadTextureChoice choice)
     {
@@ -971,124 +977,281 @@ public class PBR_MobileGUI : ShaderGUI
         SyncToggle("_ZWrite",                  "_ZWWRITE");
     }
 
-    /// 从文件加载材质参数（单个材质，不弹纹理对话框）。
-    /// <para>由 <see cref="ResetMaterialParameters"/> 调用——重置参数时不需要再询问"是否读取纹理"，
-    /// Default 存档本身也无纹理（hasTexData=false），直接传 (false, false) 走底层加载。</para>
-    private void LoadMaterialParametersFromFile(string filePath)
-    {
-        Material material = m_MaterialEditor.target as Material;
-        if (material == null) return;
-        
-        LoadMaterialParametersToMaterial(material, filePath, new HeaderStyle.LoadTextureChoice(false, false));
-        
-        // 刷新材质编辑器
-        if (m_MaterialEditor != null)
-        {
-            m_MaterialEditor.Repaint();
-        }
-        
-        // 刷新场景视图
-        SceneView.RepaintAll();
-        
-        Debug.Log($"材质参数已从存档加载: {filePath}");
-    }
-    
-    /// 重置材质参数为默认值（使用Default存档或shader默认值）
-    private void ResetMaterialParameters()
+    /// 查找贴图：根据材质球名 / 模型对象名 在 Assets 中搜索并赋值 PBR 纹理。
+    /// <para>规则：</para>
+    /// <list type="bullet">
+    ///   <item>候选名（按优先级）：① 材质球名（去掉 .mat） ② 场景中使用此材质的所有 Renderer 的 GameObject 名（去重）</item>
+    ///   <item>后缀对照：_D → _BaseMap，_MRA → _MetallicGlossMap，_N → _BumpMap，
+    ///   <b>_E → _EmissionMap（仅当 _UseEmissionMap 开启时参与查找）</b></item>
+    ///   <item>匹配优先级（评分）：1000 精确匹配 > 500 子串匹配 > 200 同时包含 baseName+suffix > 100 仅包含 baseName</item>
+    ///   <item>找到 MRA / 法线贴图后自动启用对应 toggle（_UseMsaMap / _UseNormalMap）并同步 keyword；
+    ///   自发光 toggle 由用户预先决定，仅同步 _USEEMISSIONMAP keyword</item>
+    /// </list>
+    private void FindAndAssignTextures()
     {
         Material material = m_MaterialEditor.target as Material;
         if (material == null || material.shader == null) return;
-        
-        string defaultPresetPath = GetPresetPath("Default");
-        
-        // 检查Default存档是否存在
-        if (System.IO.File.Exists(defaultPresetPath))
+
+        // 收集候选基础名称（按优先级：材质球 → 模型对象）
+        string materialBaseName = System.IO.Path.GetFileNameWithoutExtension(material.name);
+        var searchSources = new System.Collections.Generic.List<System.Tuple<string, string>>();
+        searchSources.Add(new System.Tuple<string, string>(materialBaseName, "材质球"));
+
+        // 查找场景中使用此材质的所有 GameObject 名（去重）
+        var seenModelNames = new System.Collections.Generic.HashSet<string>();
+        Renderer[] renderers = Object.FindObjectsOfType<Renderer>();
+        foreach (Renderer renderer in renderers)
         {
-            // 使用Default存档
-            if (EditorUtility.DisplayDialog("重置参数", 
-                "将使用Default存档重置参数。\n\n注意：纹理不会被重置。", 
-                "确定", "取消"))
+            if (renderer == null) continue;
+            foreach (Material mat in renderer.sharedMaterials)
             {
-                LoadMaterialParametersFromFile(defaultPresetPath);
+                if (mat == material)
+                {
+                    string goName = renderer.gameObject.name;
+                    if (seenModelNames.Add(goName))
+                    {
+                        searchSources.Add(new System.Tuple<string, string>(goName, "模型"));
+                    }
+                    break;
+                }
             }
         }
-        else
+
+        // 后缀 → 纹理参数映射
+        // _E（自发光贴图）仅在 _UseEmissionMap 开启时才参与查找
+        var suffixMap = new System.Collections.Generic.Dictionary<string, string>
         {
-            // Default存档不存在，创建它
-            if (EditorUtility.DisplayDialog("创建Default存档", 
-                "Default存档不存在，将使用Shader默认值创建Default存档。\n\n注意：纹理不会被保存。", 
-                "确定", "取消"))
+            { "_D",   "_BaseMap" },
+            { "_MRA", "_MetallicGlossMap" },
+            { "_N",   "_BumpMap" }
+        };
+
+        // 自发光开关：仅当用户已勾选 _UseEmissionMap 时才查找并赋值 _E 贴图
+        bool useEmission = material.HasProperty("_UseEmissionMap")
+            && material.GetFloat("_UseEmissionMap") > 0.5f;
+        if (useEmission && material.HasProperty("_EmissionMap"))
+        {
+            suffixMap.Add("_E", "_EmissionMap");
+        }
+
+        var logBuilder = new System.Text.StringBuilder();
+        logBuilder.AppendLine($"[查找贴图] 材质: {material.name}");
+
+        Undo.RecordObject(material, "查找贴图");
+
+        foreach (var kvp in suffixMap)
+        {
+            string suffix = kvp.Key;
+            string paramName = kvp.Value;
+            if (!material.HasProperty(paramName)) continue;
+
+            // 逐个候选查找，按第一个命中就退出（保证优先级：材质球 > 模型）
+            Texture foundTex = null;
+            string foundLabel = null;
+            foreach (var source in searchSources)
             {
-                // 创建临时材质以获取shader默认值，用 try/finally 保证一定被销毁
-                Material tempMaterial = new Material(material.shader);
-                try
+                string baseName = source.Item1;
+                string sourceLabel = source.Item2;
+                if (string.IsNullOrEmpty(baseName)) continue;
+
+                string foundPath = FindBestTextureForBaseName(baseName, suffix);
+                if (!string.IsNullOrEmpty(foundPath))
                 {
-                    Shader shader = material.shader;
-                    int propertyCount = ShaderUtil.GetPropertyCount(shader);
-                    
-                    var parameters = new System.Collections.Generic.Dictionary<string, object>();
-                    
-                    for (int i = 0; i < propertyCount; i++)
+                    Texture tex = AssetDatabase.LoadAssetAtPath<Texture>(foundPath);
+                    if (tex != null)
                     {
-                        string propertyName = ShaderUtil.GetPropertyName(shader, i);
-                        ShaderUtil.ShaderPropertyType propertyType = ShaderUtil.GetPropertyType(shader, i);
-                        
-                        if (!tempMaterial.HasProperty(propertyName)) continue;
-                        if (propertyType == ShaderUtil.ShaderPropertyType.TexEnv) continue;
-                        if (propertyName == "_BaseColor") continue;
-                        
-                        switch (propertyType)
-                        {
-                            case ShaderUtil.ShaderPropertyType.Color:
-                                Color color = tempMaterial.GetColor(propertyName);
-                                parameters[propertyName] = new float[] { color.r, color.g, color.b, color.a };
-                                break;
-                                
-                            case ShaderUtil.ShaderPropertyType.Vector:
-                                Vector4 vector = tempMaterial.GetVector(propertyName);
-                                parameters[propertyName] = new float[] { vector.x, vector.y, vector.z, vector.w };
-                                break;
-                                
-                            case ShaderUtil.ShaderPropertyType.Float:
-                            case ShaderUtil.ShaderPropertyType.Range:
-                                parameters[propertyName] = tempMaterial.GetFloat(propertyName);
-                                break;
-                        }
+                        foundTex = tex;
+                        foundLabel = $"{sourceLabel} ({baseName}) → {foundPath}";
+                        break;
                     }
-                    
-                    // 序列化为JSON，float 使用 G9 格式保留完整精度
-                    var sb = new System.Text.StringBuilder();
-                    sb.AppendLine("{");
-                    bool first = true;
-                    foreach (var kvp in parameters)
-                    {
-                        if (!first) sb.AppendLine(",");
-                        first = false;
-                        
-                        sb.Append("  \"" + kvp.Key + "\": ");
-                        
-                        if (kvp.Value is float[] arr)
-                            sb.Append($"[{arr[0].ToString("G9")}, {arr[1].ToString("G9")}, {arr[2].ToString("G9")}, {arr[3].ToString("G9")}]");
-                        else if (kvp.Value is float f)
-                            sb.Append(f.ToString("G9"));
-                        else
-                            sb.Append(kvp.Value.ToString());
-                    }
-                    sb.AppendLine();
-                    sb.AppendLine("}");
-                    
-                    System.IO.File.WriteAllText(defaultPresetPath, sb.ToString());
-                    Debug.Log($"Default存档已创建: {defaultPresetPath}");
                 }
-                finally
-                {
-                    Object.DestroyImmediate(tempMaterial);
-                }
-                
-                // 加载Default存档
-                LoadMaterialParametersFromFile(defaultPresetPath);
+            }
+
+            if (foundTex != null)
+            {
+                material.SetTexture(paramName, foundTex);
+                logBuilder.AppendLine($"  ✅ {paramName} ← {foundLabel}");
+            }
+            else
+            {
+                logBuilder.AppendLine($"  ❌ {paramName} ({suffix}): 未找到匹配贴图");
             }
         }
+
+        // 找到贴图后自动启用对应 toggle 并同步 keyword
+        if (material.GetTexture("_MetallicGlossMap") != null && material.HasProperty("_UseMsaMap"))
+        {
+            material.SetFloat("_UseMsaMap", 1.0f);
+            material.EnableKeyword("_USEMSAMAP");
+            logBuilder.AppendLine("  ⚙️ 自动启用 _UseMsaMap");
+        }
+        if (material.GetTexture("_BumpMap") != null && material.HasProperty("_UseNormalMap"))
+        {
+            material.SetFloat("_UseNormalMap", 1.0f);
+            material.EnableKeyword("_NORMALMAP");
+            logBuilder.AppendLine("  ⚙️ 自动启用 _UseNormalMap");
+        }
+        // 自发光：_UseEmissionMap 已开启时，仅同步 keyword（保持用户勾选状态）
+        if (material.GetTexture("_EmissionMap") != null && material.HasProperty("_UseEmissionMap"))
+        {
+            material.EnableKeyword("_USEEMISSIONMAP");
+            logBuilder.AppendLine("  ⚙️ 同步 _USEEMISSIONMAP keyword");
+        }
+
+        SyncMaterialKeywords(material);
+        EditorUtility.SetDirty(material);
+
+        Debug.Log(logBuilder.ToString());
+        SceneView.RepaintAll();
+    }
+
+    /// 在 Assets 中按给定基础名称 + 后缀搜索最佳匹配贴图。
+    /// <para>评分：1000 精确匹配 (baseName + suffix) > 500 子串匹配 > 200 同时包含 baseName 和 suffix >
+    /// 150 包含核心名 + suffix > 100 仅包含 baseName > 50 仅包含核心名</para>
+    /// <para>「核心名」：去掉对象名常见前缀 (FQ_ / T_ / MAT_ / M_) 与末尾版本号 (_01 / _01 (1) / (1) 等)，
+    /// 用于处理 "FQ_yuanzhuxingrongqi_01 (1)" → "T_yuanzhuxingrongqi_D" 这类相似但不精确的匹配。</para>
+    private string FindBestTextureForBaseName(string baseName, string suffix)
+    {
+        if (string.IsNullOrEmpty(baseName)) return null;
+
+        string fileNameSuffix = "_" + suffix.TrimStart('_'); // "_D" / "_MRA" / "_N"
+        string expectedExact  = baseName + fileNameSuffix;
+
+        // 提取核心名（去掉前缀 / 末尾版本号），用于相似匹配
+        string coreName = ExtractCoreName(baseName);
+
+        // AssetDatabase 搜索：优先用核心名（更宽松），并清理 FindAssets 的关键字分隔符（空格 / 括号）
+        string searchKey = !string.IsNullOrEmpty(coreName)
+            ? coreName
+            : SanitizeForFindAssets(baseName);
+        string[] guids = AssetDatabase.FindAssets($"{searchKey} {fileNameSuffix} t:Texture");
+
+        string bestPath = null;
+        int bestScore = -1;
+
+        foreach (string guid in guids)
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            if (string.IsNullOrEmpty(path)) continue;
+            string fileName = System.IO.Path.GetFileNameWithoutExtension(path);
+            if (string.IsNullOrEmpty(fileName)) continue;
+
+            int score = 0;
+
+            // 1000 = 精确匹配 case-insensitive
+            if (string.Equals(fileName, expectedExact, System.StringComparison.OrdinalIgnoreCase))
+            {
+                score = 1000;
+            }
+            // 500 = 包含 expectedExact 子串
+            else if (fileName.IndexOf(expectedExact, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score = 500;
+            }
+            // 200 = 同时包含 baseName 和 fileNameSuffix
+            else if (fileName.IndexOf(baseName, System.StringComparison.OrdinalIgnoreCase) >= 0
+                  && fileName.IndexOf(fileNameSuffix, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score = 200;
+            }
+            // 150 = 同时包含 核心名 和 fileNameSuffix（处理 FQ_yuanzhuxingrongqi_01 (1) → T_yuanzhuxingrongqi_D）
+            else if (!string.IsNullOrEmpty(coreName)
+                  && fileName.IndexOf(coreName, System.StringComparison.OrdinalIgnoreCase) >= 0
+                  && fileName.IndexOf(fileNameSuffix, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score = 150;
+            }
+            // 100 = 仅包含 baseName（说明 Unity 搜索只命中了 baseName 部分）
+            else if (fileName.IndexOf(baseName, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score = 100;
+            }
+            // 50 = 仅包含核心名（最宽松匹配）
+            else if (!string.IsNullOrEmpty(coreName)
+                  && fileName.IndexOf(coreName, System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                score = 50;
+            }
+
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestPath = path;
+            }
+        }
+
+        return bestScore > 0 ? bestPath : null;
+    }
+
+    /// 提取对象名的核心部分（去掉常见前缀 FQ_/T_/MAT_/M_；去掉末尾版本号 _01 / _01 (1) / (1) 等）。
+    /// 用于相似匹配，例如：
+    ///   "FQ_yuanzhuxingrongqi_01 (1)" → "yuanzhuxingrongqi"
+    ///   "T_yuanzhuxingrongqi_D" 包含 "yuanzhuxingrongqi"，可匹配。
+    /// 提取后不足 4 个字符返回空（避免过短核心名引发误匹配）。
+    private static string ExtractCoreName(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+
+        // 1) 去掉常见前缀
+        string[] prefixes = { "FQ_", "T_", "MAT_", "M_" };
+        foreach (var p in prefixes)
+        {
+            if (name.StartsWith(p, System.StringComparison.OrdinalIgnoreCase))
+            {
+                name = name.Substring(p.Length);
+                break;
+            }
+        }
+
+        // 2) 去掉末尾 " (数字)"
+        int parenIdx = name.LastIndexOf(" (");
+        if (parenIdx > 0 && name.EndsWith(")", System.StringComparison.Ordinal))
+        {
+            string inside = name.Substring(parenIdx + 2, name.Length - parenIdx - 3);
+            if (IsAllDigits(inside))
+            {
+                name = name.Substring(0, parenIdx);
+            }
+        }
+
+        // 3) 去掉末尾 "_数字"
+        int lastUnderscore = name.LastIndexOf('_');
+        if (lastUnderscore > 0)
+        {
+            string tail = name.Substring(lastUnderscore + 1);
+            if (IsAllDigits(tail))
+            {
+                name = name.Substring(0, lastUnderscore);
+            }
+        }
+
+        return name.Length >= 4 ? name : "";
+    }
+
+    /// 清理 name 用于 AssetDatabase.FindAssets 搜索（去除空格、括号、点等会被 FindAssets 当作关键字分隔符的字符）。
+    private static string SanitizeForFindAssets(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return "";
+        var sb = new System.Text.StringBuilder(name.Length);
+        foreach (char c in name)
+        {
+            if (char.IsLetterOrDigit(c) || c == '_')
+            {
+                sb.Append(c);
+            }
+        }
+        return sb.ToString();
+    }
+
+    /// 判断字符串是否全为数字（空字符串返回 false）。
+    private static bool IsAllDigits(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return false;
+        foreach (char c in s)
+        {
+            if (!char.IsDigit(c)) return false;
+        }
+        return true;
     }
     
     /// 统一场景中所有PBR_Mobile材质的自身阴影衰减参数

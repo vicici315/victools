@@ -1658,12 +1658,6 @@ namespace VicTools
             VicToolsHelpWindow.ShowWindow();
         }
 
-        /// 显示 Tools 下拉菜单
-        private void ShowToolsDropdown(Rect buttonRect)
-        {
-            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Tools", BuildToolsItems());
-            dropdown.Show(buttonRect);
-        }
 
         // ═══════════════════════════════════════════
         //  AdvancedDropdown 菜单项构建
@@ -1699,8 +1693,11 @@ namespace VicTools
         {
             return new List<VicDropdownItemData>
             {
-                new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon(""), SceneTools.ApplyLightDirectionToMaterials)
-
+                new VicDropdownItemData("校正(PBR_Mobile)烘焙高光方向", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/lightDir.png"), SceneTools.ApplyLightDirectionToMaterials),
+                VicDropdownItemData.Separator(),
+                new VicDropdownItemData("镜像模型→X轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.X)),
+                new VicDropdownItemData("镜像模型→Y轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.Y)),
+                new VicDropdownItemData("镜像模型→Z轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.Z)),
             };
         }
 
@@ -1740,7 +1737,343 @@ namespace VicTools
             return AssetDatabase.LoadAssetAtPath<Texture2D>(assetPath);
         }
 
-        private void CreateRotationController()
+        /// 镜像轴枚举
+    public enum MirrorAxis
+    {
+        X = 0,
+        Y = 1,
+        Z = 2
+    }
+
+    /// 对选中的模型对象进行安全镜像（非负值缩放 + 法线/切线/碰撞体/BlendShape 同步修正）。
+    /// <para>为什么要"非负值缩放"？</para>
+    /// <list type="bullet">
+    ///   <item>Unity 引擎对负值缩放（scale.x &lt; 0 等）的法线计算依赖 <c>unity_WorldTransformParameters</c> 判定，
+    ///   当 <c>unity_Scale.w = 0</c>（负缩放）时反面剔除会"翻转"，模型背面变成正面出现。但**法线本身方向不会翻转**，
+    ///   光照方向相反 → 出现"黑面 / 阴影错乱"。</item>
+    ///   <item>使用负值缩放虽然不需要重写 Mesh，但会破坏物理碰撞体（如 BoxCollider）、遮挡剔除、
+    ///   材质 SRP Batcher 关键字批处理，且与 GPU Instancing 兼容性差。</item>
+    /// </list>
+    /// <para>非负值缩放 + 顶点翻转方案：</para>
+    /// <list type="bullet">
+    ///   <item>顶点 × axis_sign（X 镜像：x *= -1；Y 镜像：y *= -1；Z 镜像：z *= -1）</item>
+    ///   <item>法线 × (-1)（镜像后法线方向翻转，必须手动取反）</item>
+    ///   <item>切线 × (-1) （仅 w 分量翻转 XYZ 不变，因为镜像后切线空间方向相反）</item>
+    ///   <item>三角形绕序翻转（顺时针 ↔ 逆时针）使背面可见</item>
+    ///   <item>翻转 Mesh 索引，否则模型会"内外翻"</item>
+    ///   <item>对于 SkinnedMeshRenderer：同时翻转 BlendShape 关键帧，使表情/形变镜像后方向正确</item>
+    ///   <item>对于 MeshCollider：重建顶点，避免物理碰撞体缺失</item>
+    /// </list>
+    /// <para>作用范围：仅选中对象（不递归子节点）。</para>
+    private static void MirrorSelectedModel(MirrorAxis axis)
+    {
+        var selectedObjects = Selection.gameObjects;
+        if (selectedObjects == null || selectedObjects.Length == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "请先在场景中选中模型对象", "确定");
+            return;
+        }
+
+        // 开启 Undo 组：所有镜像相关修改（Renderer 引用、Collider 引用、新 Mesh 创建）合并到一次 Undo
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("镜像模型");
+
+        // 收集所有 Renderer（含激活的子物体，但 Parent 不选中时子物体单独处理）
+        var allRenderers = new System.Collections.Generic.List<Renderer>();
+        foreach (var sel in selectedObjects)
+        {
+            // Renderer 自身
+            var rend = sel.GetComponent<Renderer>();
+            if (rend != null && !allRenderers.Contains(rend)) allRenderers.Add(rend);
+
+            // 用户原话"只处理选中对象"——不递归子节点，但若选中本身是 Renderer 父节点时自动取自己的 Renderer
+            // 注意：这里不再扩展 GetComponentsInChildren，符合"只处理选中对象"的语义
+        }
+
+        if (allRenderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("提示", "选中的对象没有 Renderer 组件", "确定");
+            return;
+        }
+
+        // 扫描与勾选分离：先扫出所有未勾选 Read/Write 的源 FBX，弹窗让用户确认；
+        // 选"勾选并镜像" 才真正 SaveAndReimport + 镜像；选"取消" 则不勾选也不镜像。
+        var pendingImporters = new List<ModelImporter>();
+        var pendingPaths = new List<string>();
+        var scanDonePaths = new HashSet<string>();
+        foreach (var scanRend in allRenderers)
+        {
+            if (scanRend == null) continue;
+            Mesh scanMesh = scanRend is SkinnedMeshRenderer scanSmr
+                ? scanSmr.sharedMesh
+                : (scanRend.TryGetComponent<MeshFilter>(out var scanMf) ? scanMf.sharedMesh : null);
+            if (scanMesh == null) continue;
+            string scanPath = AssetDatabase.GetAssetPath(scanMesh);
+            if (string.IsNullOrEmpty(scanPath)) continue;  // 运行时 Mesh，无源资产
+            if (!scanDonePaths.Add(scanPath)) continue;   // 同源 FBX 只检测一次
+            var scanImporter = AssetImporter.GetAtPath(scanPath) as ModelImporter;
+            if (scanImporter == null) continue;  // 不是 ModelImporter 类型（可能是 .asset Mesh）
+            if (scanImporter.isReadable) continue; // 已勾选，跳过
+            pendingImporters.Add(scanImporter);
+            pendingPaths.Add(scanPath);
+        }
+        if (pendingImporters.Count > 0)
+        {
+            // 构造预览报告（尚未实际修改任何资产）
+            var preview = new System.Text.StringBuilder();
+            foreach (var p in pendingPaths) preview.AppendLine($"  • {p}");
+
+            // 弹窗让用户决定是否勾选 + 镜像
+            // 选"取消"则完全不动：不勾选 Read/Write，也不镜像
+            bool proceed = EditorUtility.DisplayDialog("检测到源 FBX 未勾选 Read/Write",
+                $"以下 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled 未勾选：\n\n{preview}\n\n" +
+                "原因：镜像操作需要源 Mesh 可读以复制顶点/法线/切线/BlendShape 完整通道，\n" +
+                "否则镜像后会丢失 boneWeights / bindposes / blendShapes 等 SkinnedMeshRenderer 必需数据。\n\n" +
+                "提示：\n• 点【勾选并镜像】自动勾选 Read/Write 并执行镜像\n• 点【取消】则不勾选也不镜像（保持原状）",
+                "勾选并镜像", "取消");
+            if (!proceed)
+            {
+                Debug.Log("[VicTools] 用户取消操作：未勾选 Read/Write，也未执行镜像。");
+                return;
+            }
+
+            // 用户确认后才真正执行勾选 + Reimport
+            var report = new System.Text.StringBuilder();
+            for (int i = 0; i < pendingImporters.Count; i++)
+            {
+                pendingImporters[i].isReadable = true;
+                pendingImporters[i].SaveAndReimport();
+                report.AppendLine($"  ✓ {pendingPaths[i]}");
+            }
+            Debug.Log($"[VicTools] 已自动勾选 {pendingImporters.Count} 个源 FBX 的 Read/Write Enabled：\n{report}\n" +
+                      "（镜像操作需要源 Mesh 可读以复制顶点/法线/切线/BlendShape 完整通道）");
+        }
+
+        // 用字典跟踪：同一源 Mesh（含运行时 _MirrorX 等）只镜像一次，所有引用它的 Renderer/Collider 共享新 Mesh。
+        // 关键：之前用 HashSet 去重会把重复的 Renderer 给 continue 掉，导致 sharedMesh 没被更新；
+        // 现在改用 Dictionary 复用，重复 Renderer 也能拿到 newMesh 正确替换。
+        var sourceToMirror = new System.Collections.Generic.Dictionary<Mesh, Mesh>();
+        int rendererCount = 0;
+
+        foreach (var rend in allRenderers)
+        {
+            if (rend == null) continue;
+            Mesh srcMesh = rend is SkinnedMeshRenderer smr
+                ? smr.sharedMesh
+                : (rend.TryGetComponent<MeshFilter>(out var mf) ? mf.sharedMesh : null);
+            if (srcMesh == null) continue;
+
+            // 同一源 Mesh 复用之前已生成的镜像（不重复创建）
+            if (!sourceToMirror.TryGetValue(srcMesh, out Mesh newMesh))
+            {
+                newMesh = MirrorMesh(srcMesh, axis);
+                if (newMesh == null) continue;
+                sourceToMirror[srcMesh] = newMesh;
+                // 只在新 Mesh 首次入字典时注册一次 Undo 创建
+                Undo.RegisterCreatedObjectUndo(newMesh, "镜像 Mesh");
+            }
+
+            // 替换 Renderer 上的 Mesh（先记录原状态以便 Undo 还原）
+            if (rend is SkinnedMeshRenderer smr2)
+            {
+                Undo.RegisterCompleteObjectUndo(smr2, "镜像模型");
+                smr2.sharedMesh = newMesh;
+            }
+            else if (rend.TryGetComponent<MeshFilter>(out var mf2))
+            {
+                // Renderer 自身 + MeshFilter 都要记录（Renderer 在父，MeshFilter 在同节点）
+                Undo.RegisterCompleteObjectUndo(rend, "镜像模型");
+                Undo.RegisterCompleteObjectUndo(mf2, "镜像模型");
+                mf2.sharedMesh = newMesh;
+            }
+
+            rendererCount++;
+        }
+
+        // 重建 MeshCollider（MeshCollider 缓存了原始顶点，镜像后必须重置）
+        // 直接按 Mesh 引用查表，不再依赖名称匹配（再镜像层叠后名称不可靠）
+        foreach (var go in selectedObjects)
+        {
+            var colliders = go.GetComponents<MeshCollider>();
+            foreach (var collider in colliders)
+            {
+                if (collider == null || collider.sharedMesh == null) continue;
+                if (sourceToMirror.TryGetValue(collider.sharedMesh, out Mesh newColliderMesh))
+                {
+                    Undo.RegisterCompleteObjectUndo(collider, "镜像模型");
+                    collider.sharedMesh = newColliderMesh;
+                }
+            }
+        }
+
+        // 折叠所有镜像相关 Undo 为一个原子操作
+        Undo.CollapseUndoOperations(undoGroup);
+
+        Debug.Log($"[镜像] 已完成 {axis} 轴镜像，处理了 {rendererCount} 个 Renderer");
+    }
+
+    /// 镜像 Mesh：复制一份顶点数据，执行翻转（顶点 × sign、法线 × -1 / 切线.w × -1 / 三角形绕序翻转），
+    /// 返回新 Mesh（避免修改原 Mesh 资产导致其他引用对象也被镜像）。
+    /// <para>返回 null 表示源 Mesh 没有可被镜像的顶点（处理失败）。</para>
+    private static Mesh MirrorMesh(Mesh srcMesh, MirrorAxis axis)
+    {
+        if (srcMesh == null) return null;
+
+        // 兜底：sRGB 配色模型镜像不会产生可读 Mesh
+        if (srcMesh.vertexCount == 0) return null;
+
+        Vector3[] vertices = srcMesh.vertices;
+        Vector3[] normals = srcMesh.normals;
+        Vector4[] tangents = srcMesh.tangents;
+        int[] triangles = srcMesh.triangles;
+        bool hasNormals = normals != null && normals.Length == vertices.Length;
+        bool hasTangents = tangents != null && tangents.Length == vertices.Length;
+
+        // 1. 顶点 × (-1) on selected axis
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            Vector3 v = vertices[i];
+            switch (axis)
+            {
+                case MirrorAxis.X: v.x = -v.x; break;
+                case MirrorAxis.Y: v.y = -v.y; break;
+                case MirrorAxis.Z: v.z = -v.z; break;
+            }
+            vertices[i] = v;
+        }
+
+        // 2. 法线 × (-1) on selected axis（法线必须随之翻转，否则光照方向错误）
+        if (hasNormals)
+        {
+            for (int i = 0; i < normals.Length; i++)
+            {
+                Vector3 n = normals[i];
+                switch (axis)
+                {
+                    case MirrorAxis.X: n.x = -n.x; break;
+                    case MirrorAxis.Y: n.y = -n.y; break;
+                    case MirrorAxis.Z: n.z = -n.z; break;
+                }
+                normals[i] = n;
+            }
+        }
+
+        // 3. 切线 XYZ × (-1)，w 分量（handedness）翻转
+        if (hasTangents)
+        {
+            for (int i = 0; i < tangents.Length; i++)
+            {
+                Vector4 t = tangents[i];
+                Vector3 t3 = new Vector3(t.x, t.y, t.z);
+                switch (axis)
+                {
+                    case MirrorAxis.X: t3.x = -t3.x; break;
+                    case MirrorAxis.Y: t3.y = -t3.y; break;
+                    case MirrorAxis.Z: t3.z = -t3.z; break;
+                }
+                tangents[i] = new Vector4(t3.x, t3.y, t3.z, -t.w);
+            }
+        }
+
+        // 4. 三角形绕序翻转：每个三角形的 0/1/2 索引颠倒 → 顺时针 ↔ 逆时针
+        //    （Unity 三角面默认逆时针为正面）
+        for (int i = 0; i < triangles.Length; i += 3)
+        {
+            int tmp = triangles[i + 1];
+            triangles[i + 1] = triangles[i + 2];
+            triangles[i + 2] = tmp;
+        }
+
+        // 5. 复制 Mesh 并写入新数据
+        Mesh newMesh = new Mesh
+        {
+            name = srcMesh.name + $"_Mirror{(char)('X' + (int)axis)}",
+            vertices = vertices,
+            normals = normals,
+            triangles = triangles,
+            uv = srcMesh.uv,
+            uv2 = srcMesh.uv2,
+            uv3 = srcMesh.uv3,
+            uv4 = srcMesh.uv4,
+            colors = srcMesh.colors,
+            colors32 = srcMesh.colors32,
+            bounds = srcMesh.bounds,
+            hideFlags = HideFlags.HideAndDontSave,
+        };
+        if (hasTangents) newMesh.tangents = tangents;
+
+        // 5.b 复制 SkinnedMeshRenderer 必需的骨骼绑定数据
+        //     （boneWeights + bindposes 是蒙皮网格变形的核心数据，缺失会导致 SkinnedMeshRenderer 失效或警告）
+        if (srcMesh.bindposes != null && srcMesh.bindposes.Length > 0)
+            newMesh.bindposes = srcMesh.bindposes;
+        if (srcMesh.boneWeights != null && srcMesh.boneWeights.Length > 0)
+            newMesh.boneWeights = srcMesh.boneWeights;
+
+        // 6. 翻转 BlendShape 关键帧（SkinnedMeshRenderer 必须）
+        for (int i = 0; i < srcMesh.blendShapeCount; i++)
+        {
+            string shapeName = srcMesh.GetBlendShapeName(i);
+            int frameCount = srcMesh.GetBlendShapeFrameCount(i);
+            for (int f = 0; f < frameCount; f++)
+            {
+                float weight = srcMesh.GetBlendShapeFrameWeight(i, f);
+                // GetBlendShapeFrameVertices 用 out 参数（dv=顶点位移, dn=法线变形, dt=切线变形）
+                Vector3[] deltaV = new Vector3[srcMesh.vertexCount];
+                Vector3[] deltaN = new Vector3[srcMesh.vertexCount];
+                Vector3[] deltaT = new Vector3[srcMesh.vertexCount];
+                srcMesh.GetBlendShapeFrameVertices(i, f, deltaV, deltaN, deltaT);
+
+                Vector3[] newDeltaV = new Vector3[deltaV.Length];
+                Vector3[] newDeltaN = new Vector3[deltaN.Length];
+                Vector3[] newDeltaT = new Vector3[deltaT.Length];
+
+                for (int v = 0; v < deltaV.Length; v++)
+                {
+                    Vector3 dv = deltaV[v];
+                    switch (axis)
+                    {
+                        case MirrorAxis.X: dv.x = -dv.x; break;
+                        case MirrorAxis.Y: dv.y = -dv.y; break;
+                        case MirrorAxis.Z: dv.z = -dv.z; break;
+                    }
+                    newDeltaV[v] = dv;
+
+                    Vector3 dn = deltaN[v];
+                    switch (axis)
+                    {
+                        case MirrorAxis.X: dn.x = -dn.x; break;
+                        case MirrorAxis.Y: dn.y = -dn.y; break;
+                        case MirrorAxis.Z: dn.z = -dn.z; break;
+                    }
+                    newDeltaN[v] = dn;
+
+                    Vector3 dt = deltaT[v];
+                    switch (axis)
+                    {
+                        case MirrorAxis.X: dt.x = -dt.x; break;
+                        case MirrorAxis.Y: dt.y = -dt.y; break;
+                        case MirrorAxis.Z: dt.z = -dt.z; break;
+                    }
+                    newDeltaT[v] = dt;
+                }
+                newMesh.AddBlendShapeFrame(shapeName, weight, newDeltaV, newDeltaN, newDeltaT);
+            }
+        }
+
+        return newMesh;
+    }
+
+    /// 去除 Mesh 名称末尾的镜像后缀（_MirrorX / _MirrorY / _MirrorZ），用于匹配源 Mesh。
+    private static string StripMirrorSuffix(string meshName)
+    {
+        if (string.IsNullOrEmpty(meshName)) return meshName;
+        if (meshName.EndsWith("_MirrorX", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
+        if (meshName.EndsWith("_MirrorY", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
+        if (meshName.EndsWith("_MirrorZ", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
+        return meshName;
+    }
+
+    private void CreateRotationController()
         {
             GameObject[] selectedObjects = Selection.gameObjects;
             int count = 0;
@@ -2094,32 +2427,30 @@ namespace VicTools
             Selection.activeGameObject = latticeObj;
         }
 
-        /// 显示Menu下拉菜单（传统无图标菜单）
+
+        /// 显示 Menu 下拉菜单（悬浮 AdvancedDropdown，悬停高亮、支持图标）
         private void ShowMenuDropdown(Rect buttonRect)
         {
-            var menu = new GenericMenu();
-            foreach (var item in BuildMenuItems())
-            {
-                if (item.isSeparator)
-                {
-                    menu.AddSeparator("");
-                }
-                else
-                {
-                    var action = item.action;
-                    if (action != null)
-                        menu.AddItem(new GUIContent(item.name), false, () => action());
-                    else
-                        menu.AddDisabledItem(new GUIContent(item.name));
-                }
-            }
-            menu.DropDown(buttonRect);
+            // 锚点下移到按钮底部 + 4px，避免菜单向上展开时盖住按钮
+            var anchor = new Rect(buttonRect.x, buttonRect.yMax + 20f, buttonRect.width, 0f);
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Menu", BuildMenuItems());
+            dropdown.Show(anchor);
         }
 
+        /// 显示 Tools 下拉菜单
+        private void ShowToolsDropdown(Rect buttonRect)
+        {
+            // 锚点下移到按钮底部 + 4px，与 Menu / Material 下拉保持一致
+            var anchor = new Rect(buttonRect.x + 55f, buttonRect.yMax + 20f, buttonRect.width, 0f);
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Tools", BuildToolsItems());
+            dropdown.Show(anchor);
+        }
         private void ShowMaterialDropdown(Rect buttonRect)
         {
+            // 锚点下移到按钮底部 + 4px，与 Menu / Tools 下拉保持一致
+            var anchor = new Rect(buttonRect.x + 109f, buttonRect.yMax + 20f, buttonRect.width, 0f);
             var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Material:URP", BuildMaterialItems());
-            dropdown.Show(buttonRect);
+            dropdown.Show(anchor);
         }
 
         private static void CreateMaterialFromShader(string shaderName, bool ctrlHeld = false)

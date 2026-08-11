@@ -310,6 +310,11 @@ public class TexGaussianBlurGUI : ShaderGUI
         }
     }
 
+    /// 将当前材质的高斯模糊参数 同步到场景中选中的 SingleFrameBlurCapture（单帧模糊捕获器）组件。
+    /// <para>作用：在 Material Inspector 调节 _BlurSize / _PixelSize / _Sigma / _SampleCount / _PERFORMANCE_MODE 等模糊参数
+    /// 后，无需手动复制到捕获器组件，点"同步到选中"按钮即可批量应用到当前 Hierarchy 中所有挂有
+    /// <see cref="SingleFrameBlurCapture"/> 的选中 GameObject，让材质参数与运行时捕获器保持一致。</para>
+    /// <para>被"同步到选中"按钮 与 "应用到同 Shader 选中材质"按钮 调用。</para>
     private static void SyncBlurParamsToSelection(Material mat)
     {
         float materialBlurSize = mat.GetFloat("_BlurSize");
