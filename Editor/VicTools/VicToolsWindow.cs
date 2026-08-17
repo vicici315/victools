@@ -1705,7 +1705,7 @@ namespace VicTools
         {
             return new List<VicDropdownItemData>
             {
-                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
+                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）Tools ▾: 主材质自定义灯光工具", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
                 new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
                 VicDropdownItemData.Separator(),
                 new VicDropdownItemData("AddTrans（透明叠加，可模拟灯光照射）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_light.png"), () => CreateMaterialFromShader("Custom/AddTrans")),
@@ -1723,7 +1723,7 @@ namespace VicTools
                 new VicDropdownItemData("ShadowReceiver（透明地面接收投影）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_gray.png"), () => CreateMaterialFromShader("Custom/ShadowReceiver")),
                 new VicDropdownItemData("TextureGaussianBlur（ScreenColor高斯模糊材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blur.png"), () => CreateMaterialFromShader("Custom/Blur/TextureGaussianBlur_HLSL")),
                 new VicDropdownItemData("Outline（普通描边材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/Outline")),
-                new VicDropdownItemData("OutlineZOffset（轮廓描边材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
+                new VicDropdownItemData("OutlineZOffset（轮廓描边材质）Tools ▾: 轮廓描边辅助工具", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
                 VicDropdownItemData.Separator(),
                 new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_particle.png"), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
                 new VicDropdownItemData("CustomTransCutout（Masked非半透明材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_red.png"), () => CreateMaterialFromShader("Custom/TransCutout")),
