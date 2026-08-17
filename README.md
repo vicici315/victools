@@ -15,7 +15,7 @@ VicTools(YD) 是一个功能强大的 Unity 编辑器工具集，提供高效的
 
 - PBR_Mobile 7.2 主材质添加[查找贴图]按钮，一键自动赋予PBR配套贴图，无需一张张贴图配置。
 
-<video controls="" title="UWA" src="./README.assets/cam 0114_1.mp4"></video>
+![cam0114](./README.assets/cam0114.gif)
 
 ---
 
