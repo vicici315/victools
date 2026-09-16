@@ -1,14 +1,18 @@
+// Compute Buffer Tool v4.2 材质按钮自动识别选中内容 - 选中灯光时按钮切换为"添加/剔除点灯·射灯"，其余情况仍为材质增删
+// Compute Buffer Tool v4.0 同步 ComputeBuffer 4.0 重构 - 依赖的反射字段与接口均未变动，工具侧无需改动
+// Compute Buffer Tool v3.7 修复工具管理器修改保存机制
+// Compute Buffer Tool v3.6 匹配PBR_Mobile_NEW材质
 // Compute Buffer Tool v3.0 支持最高2盏SpotLight，优化UI界面
 // Compute Buffer Tool v2.0.3 编辑器模式实时更新优化 - 增强Compute Buffer系统与编辑器集成，支持非运行模式下点光效果预览
 
 // Compute Buffer Tool v2.0
-// 场景中使用PBR_Mobile材质的材质列表与管理器材质列表分开
+// 场景中使用PBR_Mobile_NEW材质的材质列表与管理器材质列表分开
 
 // Compute Buffer Tool v1.1
-// 无需管理器可使用PBR_Mobile材质收集
+// 无需管理器可使用PBR_Mobile_NEW材质收集
 // 主要功能：
 // 1. Compute Buffer系统管理 - 管理GPU端的点光源数据缓冲区
-// 2. 材质管理 - 自动查找和管理使用PBR_Mobile着色器的材质
+// 2. 材质管理 - 自动查找和管理使用PBR_Mobile_NEW着色器的材质
 // 3. 点光源收集 - 自动收集场景中的点光源并转换为Compute Buffer格式
 // 4. 材质选择工具 - 根据材质快速选择场景中使用该材质的模型
 // 5. 缓冲区清理 - 完全重置Compute Buffer系统，释放GPU资源
@@ -20,6 +24,7 @@
 // - 场景对象快速选择
 #if UNITY_EDITOR
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using System.Collections.Generic;
 using System.IO;
@@ -47,7 +52,7 @@ public class ComputeBufferTool : EditorWindow
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度
-        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v3.5");
+        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v4.2");
         window.minSize = new Vector2(400, 600);  // 最小宽度，最小高度
         window.maxSize = new Vector2(1000, 1200); // 最大宽度1200，最大高度1000
         
@@ -83,6 +88,8 @@ public class ComputeBufferTool : EditorWindow
     /// 窗口关闭时保存当前位置到 EditorPrefs
     private void OnDestroy()
     {
+        // ● 取消订阅，避免窗口销毁后仍收到选择变化回调
+        Selection.selectionChanged -= Repaint;
         SaveWindowPosition();
     }
 
@@ -114,6 +121,10 @@ public class ComputeBufferTool : EditorWindow
         {
             Debug.LogWarning($"ComputeBuffer.cs文件不存在于路径: {computeBufferPath}");
         }
+
+        // ● 选中对象变化时重绘窗口，使"材质 / 灯光"按钮的自动识别文案即时切换
+        Selection.selectionChanged -= Repaint;
+        Selection.selectionChanged += Repaint;
 
         // 工具启动时执行指定函数
         OnToolStartup();
@@ -181,7 +192,9 @@ public class ComputeBufferTool : EditorWindow
                     {
                         if (_manager && !_manager.Equals(null))
                         {
+                            RecordManagerUndo("ComputeBuffer 更新材质参数");
                             _manager.UpdateAllMaterials();
+                            MarkManagerModified(_manager.targetMaterials);
                         }
                     }
 
@@ -189,7 +202,9 @@ public class ComputeBufferTool : EditorWindow
                     {
                         if (_manager && !_manager.Equals(null))
                         {
+                            RecordManagerUndo("ComputeBuffer 重置材质默认值");
                             _manager.ResetMaterialToDefaults();
+                            MarkManagerModified(_manager.targetMaterials);
                         }
                     }
 
@@ -225,8 +240,8 @@ public class ComputeBufferTool : EditorWindow
                                 EditorUtility.DisplayDialog("错误", $"刷新材质列表时出错: {e.Message}", "确定");
                             }
                         }
-                        // 添加查找PBR_Mobile材质的按钮
-                        if (GUILayout.Button(new GUIContent("●收集材质", "收集场景中所有PBR_Mobile材质到管理器"), GUILayout.Height(30)))
+                        // 添加查找PBR_Mobile_NEW材质的按钮
+                        if (GUILayout.Button(new GUIContent("●收集材质", "收集场景中所有PBR_Mobile_NEW材质到管理器"), GUILayout.Height(30)))
                         {
                             try
                             {
@@ -237,19 +252,21 @@ public class ComputeBufferTool : EditorWindow
                                 }
                                 if (_manager != null && !_manager.Equals(null))
                                 {
+                                    RecordManagerUndo("ComputeBuffer 收集材质");
                                     _manager.EditorFindPBRMobileMaterials();
+                                    MarkManagerModified(_manager.targetMaterials);
                                     RefreshTargetMaterials();
                                 }
                                 // else
                                 // {
-                                //     EditorUtility.DisplayDialog("错误", "无法创建或找到ComputeBufferLightManager实例，无法查找PBR_Mobile材质。", "确定");
+                                //     EditorUtility.DisplayDialog("错误", "无法创建或找到ComputeBufferLightManager实例，无法查找PBR_Mobile_NEW材质。", "确定");
                                 // }
                             }
                             catch (System.Exception e)
                             {
-                                Debug.LogError($"查找PBR_Mobile材质时出错: {e.Message}");
+                                Debug.LogError($"查找PBR_Mobile_NEW材质时出错: {e.Message}");
                                 Debug.LogException(e);
-                                EditorUtility.DisplayDialog("错误", $"查找PBR_Mobile材质时出错: {e.Message}", "确定");
+                                EditorUtility.DisplayDialog("错误", $"查找PBR_Mobile_NEW材质时出错: {e.Message}", "确定");
                             }
                         }
 
@@ -265,7 +282,9 @@ public class ComputeBufferTool : EditorWindow
 
                                 if (_manager && !_manager.Equals(null))
                                 {
+                                    RecordManagerUndo("ComputeBuffer 收集点光源");
                                     _manager.CollectScenePointLights();
+                                    MarkManagerModified();
                                     // 强制刷新UI以更新活动光源数量显示
                                     Repaint();
                                 }
@@ -294,7 +313,9 @@ public class ComputeBufferTool : EditorWindow
 
                                 if (_manager && !_manager.Equals(null))
                                 {
+                                    RecordManagerUndo("ComputeBuffer 收集聚光灯");
                                     _manager.CollectSceneSpotLights();
+                                    MarkManagerModified();
                                     // 强制刷新UI以更新活动光源数量显示
                                     Repaint();
                                 }
@@ -311,17 +332,38 @@ public class ComputeBufferTool : EditorWindow
                             }
                         }
                         EditorGUILayout.EndHorizontal();
-//选择按钮行
+//选择按钮行（自动识别选中内容：选中灯光 -> 灯光增删，其余 -> 材质增删）
+                        bool lightsSelected = HasSelectedLights();
                         EditorGUILayout.BeginHorizontal();
-                        GUI.backgroundColor = new Color(0.8f,0.5f,0.8f);
-                        if (GUILayout.Button(new GUIContent("剔除材质 ↑", "从管理器 剔除 场景中选中 模型的材质 或 Project中选择的材质球"), GUILayout.Height(22)))
+                        GUI.backgroundColor = new Color(0.98f,0.3f,0.5f);
+                        var removeButtonContent = lightsSelected
+                            ? new GUIContent("剔除点灯/射灯 ↑", "从管理器 剔除 场景中选中 的点光源 / 聚光灯")
+                            : new GUIContent("剔除材质 ↑", "从管理器 剔除 场景中选中 模型的材质 或 Project中选择的材质球");
+                        if (GUILayout.Button(removeButtonContent, GUILayout.Height(22)))
                         {
-                            DelMaterialsFromManager();
+                            if (lightsSelected)
+                            {
+                                DelLightsFromManager();
+                            }
+                            else
+                            {
+                                DelMaterialsFromManager();
+                            }
                         }
                         GUI.backgroundColor = Color.magenta;
-                        if (GUILayout.Button(new GUIContent("添加材质 ↓", "向管理器 添加 场景中选中 模型的材质 或 Project中选择的材质球"), GUILayout.Height(22)))
+                        var addButtonContent = lightsSelected
+                            ? new GUIContent("添加点灯/射灯 ↓", "向管理器 添加 场景中选中 的点光源 / 聚光灯")
+                            : new GUIContent("添加材质 ↓", "向管理器 添加 场景中选中 模型的材质 或 Project中选择的材质球");
+                        if (GUILayout.Button(addButtonContent, GUILayout.Height(22)))
                         {
-                            AddMaterialsToManager();
+                            if (lightsSelected)
+                            {
+                                AddLightsToManager();
+                            }
+                            else
+                            {
+                                AddMaterialsToManager();
+                            }
                         }
                         GUI.backgroundColor = Color.cyan;
                         if (GUILayout.Button(new GUIContent("选择材质", "选择管理器中收集的所有材质球"), GUILayout.Height(22)))
@@ -336,7 +378,7 @@ public class ComputeBufferTool : EditorWindow
                         // 显示材质列表并添加选择按钮，选择场景中使用了该材质的模型
                         if (_targetMaterials != null && _targetMaterials.Count > 0)
                         {
-                            EditorGUILayout.HelpBox($"管理器有 {_targetMaterials.Count} 个 PBR_Mobile 材质在列表中。选择一个材质来查找使用它的模型：", MessageType.Info);
+                            EditorGUILayout.HelpBox($"管理器有 {_targetMaterials.Count} 个 PBR_Mobile_NEW 材质在列表中。选择一个材质来查找使用它的模型：", MessageType.Info);
 
         // 第一部分：可滚动区域
                             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition, GUILayout.ExpandHeight(true));
@@ -365,7 +407,7 @@ public class ComputeBufferTool : EditorWindow
                         }
                         else
                         {
-                            EditorGUILayout.HelpBox("材质列表为空，请先点击【查找PBR_Mobile材质】按钮来填充列表。", MessageType.Warning);
+                            EditorGUILayout.HelpBox("材质列表为空，请先点击【查找PBR_Mobile_NEW材质】按钮来填充列表。", MessageType.Warning);
                         }
                     }
 
@@ -459,10 +501,23 @@ public class ComputeBufferTool : EditorWindow
 
         try
         {
-            var targetObject = GameObject.Find(_manager.name);
+            if (!_manager || _manager.Equals(null))
+            {
+                Debug.LogWarning("无法删除管理器载体：当前没有活动的ComputeBufferLightManager实例");
+                return;
+            }
+
+            var targetObject = _manager.gameObject;
             if (targetObject)
             {
-                DestroyImmediate(targetObject);
+                var scene = targetObject.scene;
+
+                // ● 使用Undo删除，使其可撤销，并让场景被标记为"未保存"
+                Undo.DestroyObjectImmediate(targetObject);
+                MarkSceneDirty(scene);
+                _manager = null;
+                _targetMaterials.Clear();
+                Repaint();
             }
         }
         catch (System.Exception e)
@@ -526,12 +581,19 @@ public class ComputeBufferTool : EditorWindow
             // 创建新的游戏对象
             var managerObject = new GameObject("ComputeBufferLightManager");
 
+            // ● 登记创建操作到撤销栈，使新建对象可撤销且场景被标记为"未保存"
+            Undo.RegisterCreatedObjectUndo(managerObject, "创建 ComputeBuffer 管理器");
+
             // 添加ComputeBufferLightManager组件
             _manager = managerObject.AddComponent<ComputeBufferLightManager>();
 
             // 选择并聚焦到新创建的对象
             Selection.activeObject = managerObject;
             EditorGUIUtility.PingObject(managerObject);
+
+            // ● 标记新对象与场景为已修改
+            EditorUtility.SetDirty(_manager);
+            MarkSceneDirty(managerObject.scene);
 
             // 刷新材质列表
             RefreshTargetMaterials();
@@ -575,6 +637,9 @@ public class ComputeBufferTool : EditorWindow
             Debug.LogWarning("无法清除计算缓冲区：未找到ComputeBufferLightManager实例");
             return;
         }
+
+        // ● 反射写入私有字段前登记撤销点
+        RecordManagerUndo("ComputeBuffer 清除计算缓冲区");
 
         try
         {
@@ -643,6 +708,9 @@ public class ComputeBufferTool : EditorWindow
             {
                 _manager.UpdateAllMaterials();
             }
+
+            // ● 标记管理器与场景为已修改
+            MarkManagerModified(_manager ? _manager.targetMaterials : null);
 
             Debug.Log("▲ 所有计算缓冲区已成功清除并重置！系统已恢复到初始状态。");
 
@@ -747,7 +815,7 @@ public class ComputeBufferTool : EditorWindow
         {
             foreach (var material in renderer.sharedMaterials)
             {
-                if (!material || material.shader.name != "Custom/PBR_Mobile") continue;
+                if (!material || material.shader.name != "Custom/PBR_Mobile_NEW") continue;
                 // ● 同时添加到targetMaterials列表，方便在Inspector中查看
                 if (!_toolTargetMaterials.Contains(material))
                 {
@@ -755,7 +823,7 @@ public class ComputeBufferTool : EditorWindow
                 }
             }
         }
-        Debug.Log($"找到 {_toolTargetMaterials.Count} 个使用PBR_Mobile Shader的材质");
+        Debug.Log($"找到 {_toolTargetMaterials.Count} 个使用PBR_Mobile_NEW Shader的材质");
     }
 
     private void RefreshTargetMaterials()
@@ -769,6 +837,69 @@ public class ComputeBufferTool : EditorWindow
         if (_manager)
         {
             _targetMaterials = new List<Material>(_manager.targetMaterials);
+        }
+    }
+
+    // ==========================================================
+    // ● 编辑器脏标记 / 保存机制
+    /// 在修改管理器序列化字段【之前】调用，登记撤销点
+    /// Undo.RecordObject 会在撤销栈中记录当前状态，同时把管理器所在场景标记为已修改
+    private void RecordManagerUndo(string undoName)
+    {
+        if (!_manager || _manager.Equals(null)) return;
+        Undo.RecordObject(_manager, undoName);
+    }
+
+    /// 在修改管理器序列化字段【之后】调用
+    /// 1. EditorUtility.SetDirty：让管理器组件本身的修改被识别
+    /// 2. MarkSceneDirty：让场景出现"未保存"标记（标题栏 *），可通过 File/Save 保存
+    /// 3. 若同时改动了材质资源，则标记材质为脏并写盘
+    private void MarkManagerModified(IEnumerable<Material> dirtyMaterials = null)
+    {
+        if (!_manager || _manager.Equals(null)) return;
+
+        EditorUtility.SetDirty(_manager);
+        MarkSceneDirty(_manager.gameObject.scene);
+        MarkMaterialsDirtyAndSave(dirtyMaterials);
+    }
+
+    /// 安全地把场景标记为"已修改/未保存"
+    /// EditorSceneManager.MarkSceneDirty 对未保存过的新场景会报错，这里做保护
+    private static void MarkSceneDirty(Scene scene)
+    {
+        if (!scene.IsValid() || !scene.isLoaded) return;
+        if (string.IsNullOrEmpty(scene.path)) return; // 新建但尚未保存到磁盘的场景无法标记
+
+        try
+        {
+            EditorSceneManager.MarkSceneDirty(scene);
+        }
+        catch (System.Exception e)
+        {
+            Debug.LogWarning($"标记场景为已修改时出错: {e.Message}");
+        }
+    }
+
+    /// 标记材质资源为脏并立即写盘，避免材质球参数修改在关闭编辑器后丢失
+    private static void MarkMaterialsDirtyAndSave(IEnumerable<Material> materials)
+    {
+        if (materials == null) return;
+
+        var hasPersistentAsset = false;
+        foreach (var material in materials)
+        {
+            if (!material || material.Equals(null)) continue;
+
+            EditorUtility.SetDirty(material);
+            if (!string.IsNullOrEmpty(AssetDatabase.GetAssetPath(material)))
+            {
+                hasPersistentAsset = true;
+            }
+        }
+
+        if (hasPersistentAsset)
+        {
+            AssetDatabase.SaveAssets();
         }
     }
 
@@ -822,8 +953,11 @@ public class ComputeBufferTool : EditorWindow
             // 销毁管理器对象
             if (managerObject)
             {
-                // 使用DestroyImmediate在编辑器模式下立即销毁对象
-                DestroyImmediate(managerObject);
+                var scene = managerObject.scene;
+
+                // 使用Undo.DestroyObjectImmediate在编辑器模式下立即销毁对象，保证可撤销且场景被标记为"未保存"
+                Undo.DestroyObjectImmediate(managerObject);
+                MarkSceneDirty(scene);
                 Debug.Log($"▲ 已成功删除ComputeBufferLightManager对象: {managerName}");
             }
 
@@ -1038,6 +1172,9 @@ public class ComputeBufferTool : EditorWindow
         List<Material> removedMaterials = new List<Material>();
         List<Material> notFoundMaterials = new List<Material>();
 
+        // ● 修改管理器序列化字段前登记撤销点，保证场景被标记为"未保存"且可 Ctrl+Z 撤销
+        RecordManagerUndo("ComputeBuffer 剔除材质");
+
         foreach (var material in materialsToRemove)
         {
             if (_manager.targetMaterials.Contains(material))
@@ -1061,8 +1198,6 @@ public class ComputeBufferTool : EditorWindow
                     material.SetFloat("_UseSpotTexture", 0);
                     material.DisableKeyword("_USESPOTTEXTURE");
                 }
-                
-                EditorUtility.SetDirty(material);
             }
             else
             {
@@ -1093,6 +1228,8 @@ public class ComputeBufferTool : EditorWindow
             // 刷新材质列表显示
             if (removedMaterials.Count > 0)
             {
+                // ● 标记管理器与场景为已修改（触发场景"未保存"标记），并保存被改动的材质资源
+                MarkManagerModified(removedMaterials);
                 RefreshTargetMaterials();
             }
         }
@@ -1160,6 +1297,9 @@ public class ComputeBufferTool : EditorWindow
         List<Material> addedMaterials = new List<Material>();
         List<Material> existingMaterials = new List<Material>();
 
+        // ● 修改管理器序列化字段前登记撤销点，保证场景被标记为"未保存"且可 Ctrl+Z 撤销
+        RecordManagerUndo("ComputeBuffer 添加材质");
+
         foreach (var material in materialsToAdd)
         {
             if (_manager.targetMaterials.Contains(material))
@@ -1221,8 +1361,6 @@ public class ComputeBufferTool : EditorWindow
                 {
                     material.SetTexture("_SpotTexture", spotTexture);
                 }
-                
-                EditorUtility.SetDirty(material);
             }
         }
 
@@ -1249,10 +1387,241 @@ public class ComputeBufferTool : EditorWindow
             // 刷新材质列表显示
             if (addedMaterials.Count > 0)
             {
+                // ● 标记管理器与场景为已修改（触发场景"未保存"标记），并保存被改动的材质资源
+                MarkManagerModified(addedMaterials);
                 RefreshTargetMaterials();
             }
         }
     }
+
+    // ==========================================================
+    // ● 灯光自动识别与增删（"添加点灯/射灯 ↓"、"剔除点灯/射灯 ↑"）
+
+    /// 当前选择中是否包含灯源 - 用于决定按钮显示材质操作还是灯光操作
+    /// 仅识别系统支持的点光源与聚光灯，方向光 / 面光源仍走材质模式
+    private static bool HasSelectedLights()
+    {
+        GameObject[] selectedGameObjects = Selection.gameObjects;
+        if (selectedGameObjects == null || selectedGameObjects.Length == 0) return false;
+
+        foreach (var go in selectedGameObjects)
+        {
+            if (!go) continue;
+
+            foreach (var light in go.GetComponentsInChildren<Light>(true))
+            {
+                if (light && (light.type == LightType.Point || light.type == LightType.Spot)) return true;
+            }
+        }
+        return false;
+    }
+
+    /// 收集场景中选中的灯光并按类型分组
+    /// 支持选中父物体：会递归查找其子级中的灯光
+    private static bool CollectSelectedLights(out List<Light> selectedPointLights, out List<Light> selectedSpotLights)
+    {
+        selectedPointLights = new List<Light>();
+        selectedSpotLights = new List<Light>();
+
+        GameObject[] selectedGameObjects = Selection.gameObjects;
+        if (selectedGameObjects == null || selectedGameObjects.Length == 0) return false;
+
+        foreach (var go in selectedGameObjects)
+        {
+            if (!go) continue;
+
+            foreach (var light in go.GetComponentsInChildren<Light>(true))
+            {
+                if (!light) continue;
+
+                if (light.type == LightType.Point)
+                {
+                    if (!selectedPointLights.Contains(light)) selectedPointLights.Add(light);
+                }
+                else if (light.type == LightType.Spot)
+                {
+                    if (!selectedSpotLights.Contains(light)) selectedSpotLights.Add(light);
+                }
+            }
+        }
+
+        return selectedPointLights.Count > 0 || selectedSpotLights.Count > 0;
+    }
+
+    /// 读取管理器的最大聚光灯数量
+    /// _spotLightAmount 为私有序列化字段，沿用本工具既有的反射访问方式
+    private int GetManagerSpotLightAmount()
+    {
+        if (!_manager || _manager.Equals(null)) return 0;
+
+        var field = typeof(ComputeBufferLightManager).GetField("_spotLightAmount",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        return field != null && field.GetValue(_manager) is int amount ? amount : 0;
+    }
+
+    /// 把场景中选中的点光源 / 聚光灯添加到管理器的对应列表
+    private void AddLightsToManager()
+    {
+        if (!_computeBufferFileExists)
+        {
+            Debug.LogWarning("ComputeBuffer.cs文件不存在，无法添加灯光");
+            EditorUtility.DisplayDialog("错误", "ComputeBuffer.cs文件不存在，无法添加灯光。", "确定");
+            return;
+        }
+
+        if (!_manager || _manager.Equals(null))
+        {
+            Debug.LogWarning("无法添加灯光：未找到ComputeBufferLightManager实例");
+            EditorUtility.DisplayDialog("错误", "未找到ComputeBufferLightManager实例，请先创建或查找管理器。", "确定");
+            return;
+        }
+
+        if (!CollectSelectedLights(out var selectedPointLights, out var selectedSpotLights))
+        {
+            EditorUtility.DisplayDialog("提示", "请先在场景中选择点光源或聚光灯，再点击此按钮。", "确定");
+            return;
+        }
+
+        List<Light> addedPointLights = new List<Light>();
+        List<Light> addedSpotLights = new List<Light>();
+        List<Light> existingLights = new List<Light>();
+
+        // ● 修改管理器序列化字段前登记撤销点，保证场景被标记为"未保存"且可 Ctrl+Z 撤销
+        RecordManagerUndo("ComputeBuffer 添加灯光");
+
+        foreach (var light in selectedPointLights)
+        {
+            if (_manager.pointLights.Contains(light))
+            {
+                existingLights.Add(light);
+            }
+            else
+            {
+                _manager.pointLights.Add(light);
+                addedPointLights.Add(light);
+            }
+        }
+
+        foreach (var light in selectedSpotLights)
+        {
+            if (_manager.spotLights.Contains(light))
+            {
+                existingLights.Add(light);
+            }
+            else
+            {
+                _manager.spotLights.Add(light);
+                addedSpotLights.Add(light);
+            }
+        }
+
+        if (addedPointLights.Count == 0 && addedSpotLights.Count == 0)
+        {
+            EditorUtility.DisplayDialog("添加灯光结果", "选中的灯光已全部存在于管理器中，未做任何改动。", "确定");
+            return;
+        }
+
+        // ● 立即刷新缓冲区，使新增灯光在场景中生效
+        if (addedPointLights.Count > 0) _manager.UpdateLightsBuffer();
+        if (addedSpotLights.Count > 0) _manager.UpdateSpotLightsBuffer();
+
+        // ● 标记管理器与场景为已修改
+        MarkManagerModified();
+        Repaint();
+
+        string message = "";
+        if (addedPointLights.Count > 0) message += $"成功添加 {addedPointLights.Count} 个点光源。\n";
+        if (addedSpotLights.Count > 0) message += $"成功添加 {addedSpotLights.Count} 个聚光灯。\n";
+
+        if (existingLights.Count > 0)
+        {
+            message += $"\n以下 {existingLights.Count} 个灯光已存在于管理器中：\n";
+            foreach (var light in existingLights) message += $"  • {light.name}\n";
+        }
+
+        int spotLightLimit = GetManagerSpotLightAmount();
+        if (spotLightLimit > 0 && _manager.spotLights.Count > spotLightLimit)
+        {
+            message += $"\n注意：管理器最大聚光灯数量为 {spotLightLimit}，当前列表已有 {_manager.spotLights.Count} 个，超出部分不会参与渲染。";
+        }
+
+        EditorUtility.DisplayDialog("添加灯光结果", message, "确定");
+        Debug.Log(message);
+    }
+
+    /// 从管理器的点光源 / 聚光灯列表中剔除场景中选中的灯光
+    private void DelLightsFromManager()
+    {
+        if (!_computeBufferFileExists)
+        {
+            Debug.LogWarning("ComputeBuffer.cs文件不存在，无法剔除灯光");
+            EditorUtility.DisplayDialog("错误", "ComputeBuffer.cs文件不存在，无法剔除灯光。", "确定");
+            return;
+        }
+
+        if (!_manager || _manager.Equals(null))
+        {
+            Debug.LogWarning("无法剔除灯光：未找到ComputeBufferLightManager实例");
+            EditorUtility.DisplayDialog("错误", "未找到ComputeBufferLightManager实例，请先创建或查找管理器。", "确定");
+            return;
+        }
+
+        if (!CollectSelectedLights(out var selectedPointLights, out var selectedSpotLights))
+        {
+            EditorUtility.DisplayDialog("提示", "请先在场景中选择点光源或聚光灯，再点击此按钮。", "确定");
+            return;
+        }
+
+        List<Light> removedPointLights = new List<Light>();
+        List<Light> removedSpotLights = new List<Light>();
+        List<Light> notFoundLights = new List<Light>();
+
+        // ● 修改管理器序列化字段前登记撤销点，保证场景被标记为"未保存"且可 Ctrl+Z 撤销
+        RecordManagerUndo("ComputeBuffer 剔除灯光");
+
+        foreach (var light in selectedPointLights)
+        {
+            if (_manager.pointLights.Remove(light)) removedPointLights.Add(light);
+            else notFoundLights.Add(light);
+        }
+
+        foreach (var light in selectedSpotLights)
+        {
+            if (_manager.spotLights.Remove(light)) removedSpotLights.Add(light);
+            else notFoundLights.Add(light);
+        }
+
+        if (removedPointLights.Count == 0 && removedSpotLights.Count == 0)
+        {
+            string emptyMessage = "选中的灯光均不在管理器中，未做任何改动。\n";
+            foreach (var light in notFoundLights) emptyMessage += $"  • {light.name}\n";
+            EditorUtility.DisplayDialog("剔除灯光结果", emptyMessage, "确定");
+            return;
+        }
+
+        // ● 立即刷新缓冲区，使剔除的灯光在场景中停止生效
+        if (removedPointLights.Count > 0) _manager.UpdateLightsBuffer();
+        if (removedSpotLights.Count > 0) _manager.UpdateSpotLightsBuffer();
+
+        // ● 标记管理器与场景为已修改
+        MarkManagerModified();
+        Repaint();
+
+        string message = "";
+        if (removedPointLights.Count > 0) message += $"成功从管理器剔除 {removedPointLights.Count} 个点光源。\n";
+        if (removedSpotLights.Count > 0) message += $"成功从管理器剔除 {removedSpotLights.Count} 个聚光灯。\n";
+
+        if (notFoundLights.Count > 0)
+        {
+            message += $"\n以下 {notFoundLights.Count} 个灯光不在管理器中：\n";
+            foreach (var light in notFoundLights) message += $"  • {light.name}\n";
+        }
+
+        EditorUtility.DisplayDialog("剔除灯光结果", message, "确定");
+        Debug.Log(message);
+    }
+
     /// 选择管理器中收集的所有材质球
     /// 这个方法会从ComputeBufferLightManager的targetMaterials列表中获取所有材质，
     /// 并在Project窗口中选择这些材质球

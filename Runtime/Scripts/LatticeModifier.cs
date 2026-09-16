@@ -39,6 +39,7 @@
 // LatticeModifier v3.25 瞬移出范围恢复原始形态：DeformTarget 新增 wasAnyInRange 标记，ApplyDeformation 中检测"上一帧在范围内、本帧离开"事件，上传原始顶点还原模型原始形态。仅触发一次（wasAnyInRange=false 后后续帧 continue 保留原性能优化），离开范围后的对象不受晶格变形影响。
 // LatticeModifier v3.26 重置晶格体位置：新增 initLatticePos/initLatticeRot/initLatticeScale 序列化字段，InitializeLattice 时保存初始 Transform，ResetToInitialTransform() 可复位到初始化时的位姿。
 // LatticeModifier v3.33 位移按钮重定向：新增 ResetPositionToTarget() —— 把晶格体 Position 复位到目标对象的当前位置（targetRoot.position / targetRenderer.transform.position），不依赖 initTransformSaved。用于「目标物体被外部脚本移动后一键让晶格贴合上去」工作流。
+// LatticeModifier v3.34 修复旧场景反序列化丢数据：targetMode 和 targetRenderer 保留字段声明（防止旧场景反序列化丢数据），但标记 HideInInspector，运行时不再使用 SingleRenderer 路径。
 
 using System;
 using System.Collections.Generic;
@@ -75,8 +76,10 @@ public class LatticeModifier : MonoBehaviour
              "内部点对表面顶点影响极小（Bernstein 基函数趋近 0），可大幅减少 FFD 累加计算量。\n" +
              "8x8x8 晶格控制点从 512 减到 296（-42%），4x4x4 从 64 减到 56（-12.5%）。\n" +
              "修改后需要重新初始化晶格。\n" +
-             "v3.24.1 改为 NonSerialized：不再污染旧场景（避免初次启动旧场景时 IndexOutOfRange）。")]
-    [System.NonSerialized] public bool surfaceOnly = true;
+             "v3.34 恢复 SerializeField：v3.24.1 设为 NonSerialized 是为了规避旧场景 IndexOutOfRange，" +
+             "但根因已经在 v3.24.2 修复（ApplyDeformation 入口按 (nx,ny,nz) 全量重建 controlPoints/initialControlPoints）。\n" +
+             "现在字段可以安全持久化：勾选状态会写入场景，重新打开后保留。")]
+    public bool surfaceOnly = true;
 
     [Header("边缘羽化")]
     [Range(0f, 0.5f)] public float feather = 0f;

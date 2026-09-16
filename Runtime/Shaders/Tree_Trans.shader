@@ -1,6 +1,13 @@
 // ============================================================================
 // Tree_Trans 1.1 植被透明材质，虚拟光照，ShadowMap 只带投影，Noise 纹理风动
+//
+// 重构说明：共享片段已抽取到 Tree_Trans_Common.hlsl（CBUFFER、纹理、ApplyWind、
+// alpha clip、Ramp、法线扰动、虚拟阴影 tint）。每个 Pass 的 HLSLPROGRAM 内
+// 只保留本 Pass 特有的 vert/frag 与少量本地 helpers，体量与职责都大幅收敛。
+// 视觉行为/编译变体与重构前 100% 等价。
 // ============================================================================
+// Tree_Trans 2.0 共享片段已抽取到 Tree_Trans_Common.hlsl（CBUFFER、纹理、ApplyWind、
+// alpha clip、Ramp、法线扰动、虚拟阴影 tint）；添加GUI。
 Shader "Custom/Tree_Trans"
 {
     Properties
@@ -54,7 +61,7 @@ Shader "Custom/Tree_Trans"
         }
 
         // ====================================================================
-        // ForwardLit
+        // ForwardLit：主光照 Pass（虚拟阴影 + Half Lambert + Ramp + Wind）
         // ====================================================================
         Pass
         {
@@ -71,38 +78,8 @@ Shader "Custom/Tree_Trans"
             #pragma multi_compile_fog
             #pragma multi_compile_instancing
 
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Tree_Trans_Common.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
-
-            TEXTURE2D(_BaseMap);         SAMPLER(sampler_BaseMap);
-            TEXTURE2D(_ShadowNormalMap); SAMPLER(sampler_ShadowNormalMap);
-            TEXTURE2D(_RampMap);         SAMPLER(sampler_RampMap);
-            TEXTURE2D(_WindNoiseTex);    SAMPLER(sampler_WindNoiseTex);
-
-            CBUFFER_START(UnityPerMaterial)
-                float4 _BaseMap_ST;
-                half4  _BaseColor;
-                half   _Cutoff;
-                half   _HalfLambert;
-                half4  _ShadowColor;
-                half   _ShadowStrength;
-                half   _ShadowSoftness;
-                half   _VirtualShadowBias;
-                half   _ShadowBrightness;
-                float4 _ShadowNormalMap_ST;
-                half   _ShadowNormalScale;
-                half   _WindSpeed;
-                half   _WindStrength;
-                float4 _WindDirection;
-                half   _WindRadius;
-                float4 _WindNoiseTex_ST;
-                half   _WindNoiseScale;
-                half   _WindNoiseStrength;
-                half   _RampStrength;
-                half   _RampRow;
-                half   _RampHeight;
-                half   _RampOffset;
-            CBUFFER_END
 
             struct Attributes
             {
@@ -115,44 +92,16 @@ Shader "Custom/Tree_Trans"
 
             struct Varyings
             {
-                float4 positionCS    : SV_POSITION;
-                float2 uv            : TEXCOORD0;
-                float3 positionWS    : TEXCOORD1;
-                half3  normalWS      : TEXCOORD2;
-                half   fogFactor     : TEXCOORD3;
-                half4  tangentWS     : TEXCOORD4;
+                float4 positionCS     : SV_POSITION;
+                float2 uv             : TEXCOORD0;
+                float3 positionWS     : TEXCOORD1;
+                half3  normalWS       : TEXCOORD2;
+                half   fogFactor      : TEXCOORD3;
+                half4  tangentWS      : TEXCOORD4;
                 half   heightGradient : TEXCOORD5;
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
-
-            // 风力：主摆动 + noise 纹理局部随机抖动
-            float3 ApplyWind(float3 positionOS)
-            {
-                #ifdef _WIND
-                    half dist = length(positionOS.xyz);
-                    half radialWeight = saturate(dist / _WindRadius);
-                    radialWeight *= radialWeight;
-
-                    float time = _Time.y * _WindSpeed;
-                    float3 worldPos = TransformObjectToWorld(positionOS);
-
-                    // 主摆动：两层正弦叠加
-                    float phase = dot(worldPos.xz, float2(0.7, 0.3));
-                    float sway = sin(time + phase) * 0.6 + sin(time * 2.3 + phase * 1.5) * 0.25;
-
-                    // Noise 纹理采样：世界坐标 XZ * 缩放 + 时间滚动
-                    // 产生局部随机抖动，每片叶子的偏移量不同
-                    float2 noiseUV = worldPos.xz * _WindNoiseScale + time * 0.15;
-                    half noiseSample = SAMPLE_TEXTURE2D_LOD(_WindNoiseTex, sampler_WindNoiseTex, noiseUV, 0).r;
-                    half noiseValue = (noiseSample * 2.0 - 1.0) * _WindNoiseStrength;
-                    sway += noiseValue;
-
-                    float3 windDir = normalize(_WindDirection.xyz);
-                    positionOS.xyz += windDir * sway * _WindStrength * radialWeight;
-                #endif
-                return positionOS;
-            }
 
             Varyings vert(Attributes input)
             {
@@ -163,15 +112,14 @@ Shader "Custom/Tree_Trans"
 
                 float3 posOS = ApplyWind(input.positionOS.xyz);
                 VertexPositionInputs vertexInput = GetVertexPositionInputs(posOS);
-                output.positionCS = vertexInput.positionCS;
-                output.positionWS = vertexInput.positionWS;
-                output.normalWS  = TransformObjectToWorldNormal(input.normalOS);
-                half sign = input.tangentOS.w * GetOddNegativeScale();
-                output.tangentWS = half4(TransformObjectToWorldDir(input.tangentOS.xyz), sign);
-                output.uv        = TRANSFORM_TEX(input.uv, _BaseMap);
-                output.fogFactor = ComputeFogFactor(vertexInput.positionCS.z);
-                // _RampOffset 偏移渐变底部起始高度：正值让渐变从更高处开始，负值从更低处开�?
-                output.heightGradient = saturate((posOS.y - _RampOffset) / _RampHeight);
+                output.positionCS     = vertexInput.positionCS;
+                output.positionWS     = vertexInput.positionWS;
+                output.normalWS       = TransformObjectToWorldNormal(input.normalOS);
+                output.tangentWS      = half4(TransformObjectToWorldDir(input.tangentOS.xyz),
+                                              input.tangentOS.w * GetOddNegativeScale());
+                output.uv             = TRANSFORM_TEX(input.uv, _BaseMap);
+                output.fogFactor      = ComputeFogFactor(vertexInput.positionCS.z);
+                output.heightGradient = ComputeHeightGradient(posOS);
                 return output;
             }
 
@@ -179,52 +127,35 @@ Shader "Custom/Tree_Trans"
             {
                 UNITY_SETUP_INSTANCE_ID(input);
 
+                // 1) BaseColor + Alpha clip
                 half4 baseMap = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv);
                 half4 albedo  = baseMap * _BaseColor;
                 clip(albedo.a - _Cutoff);
 
-                half3 rampColor = SAMPLE_TEXTURE2D(_RampMap, sampler_RampMap, half2(input.heightGradient, _RampRow)).rgb;
-                albedo.rgb = lerp(albedo.rgb, albedo.rgb * rampColor, _RampStrength);
+                // 2) 高度 ramp 颜色
+                albedo.rgb = ApplyHeightRamp(albedo.rgb, input.heightGradient);
 
-                half3 normalWS = normalize(input.normalWS);
+                // 3) Shadow normal 扰动 + 虚拟阴影 tint
+                half3 N           = normalize(input.normalWS);
+                half3 perturbedN  = PerturbNormal(input.uv, N, input.tangentWS.xyz, input.tangentWS.w);
+                Light mainLight   = GetMainLight();
+                half3 shadowTint  = ComputeVirtualShadowTint(perturbedN, mainLight.direction);
 
-                float2 shadowNormalUV = input.uv * _ShadowNormalMap_ST.xy + _ShadowNormalMap_ST.zw;
-                half3 normalTS = UnpackNormal(SAMPLE_TEXTURE2D(_ShadowNormalMap, sampler_ShadowNormalMap, shadowNormalUV));
-                normalTS.xy *= _ShadowNormalScale;
-                normalTS = normalize(normalTS);
+                // 4) Half Lambert diffuse + SH ambient
+                half  halfLambert = dot(N, mainLight.direction) * (1.0 - _HalfLambert) + _HalfLambert;
+                half3 diffuse     = mainLight.color * halfLambert;
+                half3 ambient     = SampleSH(N);
 
-                half3 tangentWS = normalize(input.tangentWS.xyz);
-                half3 bitangentWS = cross(normalWS, tangentWS) * input.tangentWS.w;
-                half3 perturbedNormal = normalize(
-                    normalTS.x * tangentWS +
-                    normalTS.y * bitangentWS +
-                    normalTS.z * normalWS
-                );
-
-                Light mainLight = GetMainLight();
-
-                half NdotL_biased = dot(perturbedNormal, mainLight.direction) + _VirtualShadowBias;
-                half shadowMask = smoothstep(-_ShadowSoftness, _ShadowSoftness, NdotL_biased);
-
-                half3 fullShadowTint = lerp(_ShadowColor.rgb, half3(1, 1, 1), shadowMask);
-                half3 shadowTint = lerp(half3(1, 1, 1), fullShadowTint * _ShadowBrightness, _ShadowStrength);
-
-                half NdotL_raw = dot(normalWS, mainLight.direction);
-                half halfLambert = NdotL_raw * (1.0 - _HalfLambert) + _HalfLambert;
-                half3 diffuse = mainLight.color * halfLambert;
-
-                half3 ambient = SampleSH(normalWS);
-
+                // 5) 合成 + fog
                 half3 finalColor = albedo.rgb * (diffuse + ambient) * shadowTint;
-                finalColor = MixFog(finalColor, input.fogFactor);
-
+                finalColor       = MixFog(finalColor, input.fogFactor);
                 return half4(finalColor, 1.0);
             }
             ENDHLSL
         }
 
         // ====================================================================
-        // DepthOnly
+        // DepthOnly：深度预 Pass（仅 alpha clip，影响深度图）
         // ====================================================================
         Pass
         {
@@ -240,57 +171,10 @@ Shader "Custom/Tree_Trans"
             #pragma shader_feature_local _WIND
             #pragma multi_compile_instancing
 
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-
-            TEXTURE2D(_BaseMap);      SAMPLER(sampler_BaseMap);
-            TEXTURE2D(_WindNoiseTex); SAMPLER(sampler_WindNoiseTex);
-
-            CBUFFER_START(UnityPerMaterial)
-                float4 _BaseMap_ST;
-                half4  _BaseColor;
-                half   _Cutoff;
-                half   _HalfLambert;
-                half4  _ShadowColor;
-                half   _ShadowStrength;
-                half   _ShadowSoftness;
-                half   _VirtualShadowBias;
-                half   _ShadowBrightness;
-                float4 _ShadowNormalMap_ST;
-                half   _ShadowNormalScale;
-                half   _WindSpeed;
-                half   _WindStrength;
-                float4 _WindDirection;
-                half   _WindRadius;
-                float4 _WindNoiseTex_ST;
-                half   _WindNoiseScale;
-                half   _WindNoiseStrength;
-                half   _RampStrength;
-                half   _RampRow;
-                half   _RampHeight;
-                half   _RampOffset;
-            CBUFFER_END
+            #include "Tree_Trans_Common.hlsl"
 
             struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
             struct Varyings  { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
-
-            float3 ApplyWind(float3 positionOS)
-            {
-                #ifdef _WIND
-                    half dist = length(positionOS.xyz);
-                    half radialWeight = saturate(dist / _WindRadius);
-                    radialWeight *= radialWeight;
-                    float time = _Time.y * _WindSpeed;
-                    float3 worldPos = TransformObjectToWorld(positionOS);
-                    float phase = dot(worldPos.xz, float2(0.7, 0.3));
-                    float sway = sin(time + phase) * 0.6 + sin(time * 2.3 + phase * 1.5) * 0.25;
-                    float2 noiseUV = worldPos.xz * _WindNoiseScale + time * 0.15;
-                    half noiseSample = SAMPLE_TEXTURE2D_LOD(_WindNoiseTex, sampler_WindNoiseTex, noiseUV, 0).r;
-                    sway += (noiseSample * 2.0 - 1.0) * _WindNoiseStrength;
-                    float3 windDir = normalize(_WindDirection.xyz);
-                    positionOS.xyz += windDir * sway * _WindStrength * radialWeight;
-                #endif
-                return positionOS;
-            }
 
             Varyings DepthVert(Attributes input)
             {
@@ -304,14 +188,14 @@ Shader "Custom/Tree_Trans"
 
             half4 DepthFrag(Varyings input) : SV_Target
             {
-                clip(SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a * _BaseColor.a - _Cutoff);
+                clip(GetBaseAlpha(input.uv) - _Cutoff);
                 return 0;
             }
             ENDHLSL
         }
 
         // ====================================================================
-        // ShadowCaster
+        // ShadowCaster：阴影投射 Pass（仅 alpha clip，影响其他物体投到此树的影）
         // ====================================================================
         Pass
         {
@@ -328,65 +212,18 @@ Shader "Custom/Tree_Trans"
             #pragma shader_feature_local _WIND
             #pragma multi_compile_instancing
 
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Tree_Trans_Common.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
-
-            TEXTURE2D(_BaseMap);      SAMPLER(sampler_BaseMap);
-            TEXTURE2D(_WindNoiseTex); SAMPLER(sampler_WindNoiseTex);
-
-            CBUFFER_START(UnityPerMaterial)
-                float4 _BaseMap_ST;
-                half4  _BaseColor;
-                half   _Cutoff;
-                half   _HalfLambert;
-                half4  _ShadowColor;
-                half   _ShadowStrength;
-                half   _ShadowSoftness;
-                half   _VirtualShadowBias;
-                half   _ShadowBrightness;
-                float4 _ShadowNormalMap_ST;
-                half   _ShadowNormalScale;
-                half   _WindSpeed;
-                half   _WindStrength;
-                float4 _WindDirection;
-                half   _WindRadius;
-                float4 _WindNoiseTex_ST;
-                half   _WindNoiseScale;
-                half   _WindNoiseStrength;
-                half   _RampStrength;
-                half   _RampRow;
-                half   _RampHeight;
-                half   _RampOffset;
-            CBUFFER_END
 
             struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; float2 uv : TEXCOORD0; UNITY_VERTEX_INPUT_INSTANCE_ID };
             struct Varyings  { float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; };
-
-            float3 ApplyWind(float3 positionOS)
-            {
-                #ifdef _WIND
-                    half dist = length(positionOS.xyz);
-                    half radialWeight = saturate(dist / _WindRadius);
-                    radialWeight *= radialWeight;
-                    float time = _Time.y * _WindSpeed;
-                    float3 worldPos = TransformObjectToWorld(positionOS);
-                    float phase = dot(worldPos.xz, float2(0.7, 0.3));
-                    float sway = sin(time + phase) * 0.6 + sin(time * 2.3 + phase * 1.5) * 0.25;
-                    float2 noiseUV = worldPos.xz * _WindNoiseScale + time * 0.15;
-                    half noiseSample = SAMPLE_TEXTURE2D_LOD(_WindNoiseTex, sampler_WindNoiseTex, noiseUV, 0).r;
-                    sway += (noiseSample * 2.0 - 1.0) * _WindNoiseStrength;
-                    float3 windDir = normalize(_WindDirection.xyz);
-                    positionOS.xyz += windDir * sway * _WindStrength * radialWeight;
-                #endif
-                return positionOS;
-            }
 
             Varyings ShadowVert(Attributes input)
             {
                 Varyings output;
                 UNITY_SETUP_INSTANCE_ID(input);
-                float3 posOS = ApplyWind(input.positionOS.xyz);
-                float3 posWS = TransformObjectToWorld(posOS);
+                float3 posOS    = ApplyWind(input.positionOS.xyz);
+                float3 posWS    = TransformObjectToWorld(posOS);
                 float3 normalWS = TransformObjectToWorldNormal(input.normalOS);
                 output.positionCS = TransformWorldToHClip(ApplyShadowBias(posWS, normalWS, _MainLightPosition.xyz));
                 #if UNITY_REVERSED_Z
@@ -400,7 +237,7 @@ Shader "Custom/Tree_Trans"
 
             half4 ShadowFrag(Varyings input) : SV_Target
             {
-                clip(SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a * _BaseColor.a - _Cutoff);
+                clip(GetBaseAlpha(input.uv) - _Cutoff);
                 return 0;
             }
             ENDHLSL
@@ -408,4 +245,5 @@ Shader "Custom/Tree_Trans"
     }
 
     FallBack "Universal Render Pipeline/Unlit"
+    CustomEditor "TreeTransGUI"
 }

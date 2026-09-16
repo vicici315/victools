@@ -36,6 +36,8 @@ public class PBR_MobileGUI : ShaderGUI
     // 缓存属性
     private MaterialProperty disableEnvironment;
     private MaterialProperty disableLightColor;
+    private MaterialProperty disableLightIntensity;
+    private MaterialProperty lightIntensity;
     private MaterialProperty useVerShadow;
     private MaterialProperty baseColor;
     private MaterialProperty baseMap;
@@ -160,6 +162,8 @@ public class PBR_MobileGUI : ShaderGUI
     {
         disableEnvironment = FindProperty("_DisableEnvironment", m_Properties, false);
         disableLightColor = FindProperty("_DisableLightColor", m_Properties, false);
+        disableLightIntensity = FindProperty("_DisableLightIntensity", m_Properties, false);
+        lightIntensity = FindProperty("_LightIntensity", m_Properties, false);
         useVerShadow = FindProperty("_UseVerShadow", m_Properties, false);
         useSoftShadow = FindProperty("_UseSoftShadow", m_Properties, false);
         baseColor = FindProperty("_BaseColor", m_Properties);
@@ -270,14 +274,39 @@ public class PBR_MobileGUI : ShaderGUI
         // 只在非 Trans 版本显示禁用环境光选项
         if (disableEnvironment != null)
         {
-            m_MaterialEditor.ShaderProperty(disableEnvironment, "禁用环境光");
+            m_MaterialEditor.ShaderProperty(disableEnvironment, "◎禁用环境光");
         }
         
         if (disableLightColor != null)
         {
-            m_MaterialEditor.ShaderProperty(disableLightColor, "禁用主光颜色（使用白色）");
+            m_MaterialEditor.ShaderProperty(disableLightColor, "◎禁用主光颜色（使用白色）");
         }
-        
+
+        // 禁用主光亮度（仅 PBR_Mobile 声明；勾选时显示自定义亮度滑条）
+        if (disableLightIntensity != null)
+        {
+            m_MaterialEditor.ShaderProperty(disableLightIntensity, new GUIContent(
+                "◎禁用主光亮度（使用自定义↓）",
+                "启用后用【自定义主光亮度】参数替换主光真实亮度。\n" +
+                "•仅勾选本项（未勾【禁用主光颜色】）：保留主光颜色方向，强度由【自定义主光亮度】控制。\n" +
+                "•同时勾选【禁用主光颜色】：漫反射去色为灰度，高光也用纯灰度，完全排除主灯颜色。\n" +
+                "•注意：主光Intensity=0时，因颜色方向无法提取，整体无亮度（物理约束，无法避免）。"));
+            if (disableLightIntensity.floatValue > 0.5f && lightIntensity != null)
+            {
+                EditorGUI.indentLevel++;
+                m_MaterialEditor.RangeProperty(lightIntensity, "◎自定义主光亮度");
+                EditorGUI.indentLevel--;
+            }
+            // 安全措施：显式同步 _DISABLELIGHTINTENSITY keyword
+            // （Unity 通常会自动处理 [Toggle] 属性的 keyword，但显式同步可避免老材质/外部脚本修改时漏同步）
+            foreach (Material mat in m_MaterialEditor.targets)
+            {
+                if (mat == null || mat.shader == null) continue;
+                if (disableLightIntensity.floatValue > 0.5f) mat.EnableKeyword("_DISABLELIGHTINTENSITY");
+                else mat.DisableKeyword("_DISABLELIGHTINTENSITY");
+            }
+        }
+
         if (useVerShadow != null)
         {
             m_MaterialEditor.ShaderProperty(useVerShadow, "使用顶点阴影");
@@ -286,7 +315,7 @@ public class PBR_MobileGUI : ShaderGUI
         if (useSoftShadow != null)
         {
             EditorGUILayout.BeginHorizontal();
-            m_MaterialEditor.ShaderProperty(useSoftShadow, "使用优化软阴影");
+            m_MaterialEditor.ShaderProperty(useSoftShadow, "使用自定义软阴影↓");
             GUI.backgroundColor = new Color(1.0f, 0.6f, 0.3f);
             if (GUILayout.Button(new GUIContent("同步设置", "将当前材质的（使用优化软阴影）与（阴影柔化半径）参数同步到场景中所有使用 PBR_Mobile 及Trans材质"), GUILayout.Width(65)))
             {
@@ -316,7 +345,20 @@ public class PBR_MobileGUI : ShaderGUI
 
     private void DrawMetallicRoughnessAO()
     {
+        EditorGUILayout.BeginHorizontal();
         GUILayout.Label(HeaderStyle.Rich("2 ▌PBR参数 (Metallic、Roughness、AO)", HeaderStyle.Lighting), EditorStyle.Get.BoldLabelRichStyle);
+        GUILayout.FlexibleSpace();
+        
+        // 重置PBR参数按钮：还原6个数值参数为Shader声明的默认值
+        GUI.backgroundColor = new Color(1.0f, 0.6f, 0.3f); // 橙色背景
+        if (GUILayout.Button(new GUIContent("重置PBR",
+            "还原PBR相关6个数值参数为默认值"),
+            GUILayout.Width(62), GUILayout.Height(18)))
+        {
+            ResetPBRParameters();
+        }
+        GUI.backgroundColor = Color.white;
+        EditorGUILayout.EndHorizontal();
         
         m_MaterialEditor.RangeProperty(metallic, "金属度");
         m_MaterialEditor.RangeProperty(roughness, "粗糙度");
@@ -328,7 +370,35 @@ public class PBR_MobileGUI : ShaderGUI
         // 只在非 Trans 版本显示烘焙高光方向
         if (disableEnvironment != null && disableEnvironment.floatValue < 0.5f && bakedSpecularDirection != null)
         {
+            // 生效条件提示：_BakedSpecularDirection 仅在 LIGHTMAP_ON 且未禁用烘焙高光时才参与计算
+            if (disableBakedSpecular != null && disableBakedSpecular.floatValue > 0.5f)
+            {
+                EditorGUILayout.HelpBox("烘焙高光已禁用：请在下方【性能】面板关闭【禁用烘焙高光】，否则此方向参数不会生效", MessageType.Warning);
+            }
+            else
+            {
+                EditorGUILayout.HelpBox("此方向仅对烘焙光照贴图(LIGHTMAP_ON)的物体生效，实时光照物体无效果", MessageType.Info);
+            }
+            
             m_MaterialEditor.VectorProperty(bakedSpecularDirection, "烘焙高光方向");
+            
+            // 使用负间距抵消 EditorGUILayout 的默认垂直间距，使按钮紧贴上方控件
+            GUILayout.Space(-18);
+            
+            // 创建紧凑按钮样式，移除上下 margin 消除空白间距
+            GUIStyle compactButton = new GUIStyle(GUI.skin.button);
+            compactButton.margin = new RectOffset(4, 4, 0, 0);
+            compactButton.padding = new RectOffset(4, 4, 2, 2);
+            
+            // 校正(PBR_Mobile)烘焙高光方向：将场景主方向光方向应用到所有PBR_Mobile材质
+            GUI.backgroundColor = new Color(1.0f, 0.6f, 0.3f); // 橙色背景
+            if (GUILayout.Button(new GUIContent("校正烘焙高光方向",
+                "将场景中主方向光的方向应用到所有 PBR_Mobile / PBR_Mobile_Trans 材质的烘焙高光方向参数上"),
+                compactButton, GUILayout.Height(20)))
+            {
+                EditorApplication.delayCall += SceneTools.ApplyLightDirectionToMaterials;
+            }
+            GUI.backgroundColor = Color.white;
         }
         
         if (useMsaMap != null)
@@ -382,6 +452,18 @@ public class PBR_MobileGUI : ShaderGUI
                 mat.DisableKeyword("_PREVIEWAO");
             }
         }
+    }
+
+    /// 还原PBR相关6个数值参数为Shader声明的默认值
+    /// 默认值来源：PBR_Mobile.shader 属性声明
+    private void ResetPBRParameters()
+    {
+        if (metallic != null) metallic.floatValue = 1.0f;
+        if (roughness != null) roughness.floatValue = 1.0f;
+        if (specularScale != null) specularScale.floatValue = 1.0f;
+        if (halfLambert != null) halfLambert.floatValue = 0.4f;
+        if (shadowScale != null) shadowScale.floatValue = 0.3f;
+        if (brightness != null) brightness.floatValue = 1.0f;
     }
 
     private void DrawNormalMap()
@@ -957,6 +1039,7 @@ public class PBR_MobileGUI : ShaderGUI
 
         SyncToggle("_DisableEnvironment", "_DISABLEENVIRONMENT");
         SyncToggle("_DisableLightColor",  "_DISABLELIGHTCOLOR");
+        SyncToggle("_DisableLightIntensity", "_DISABLELIGHTINTENSITY");
         SyncToggle("_UseVerShadow",       "_USEVERSHADOW");
         SyncToggle("_UseSoftShadow",      "_USESOFTSHADOW");
         SyncToggle("_UseMsaMap",          "_USEMSAMAP");

@@ -295,16 +295,24 @@ public class LatticeModifierEditor : Editor
         EditorGUILayout.PropertyField(serializedObject.FindProperty("feather"), new GUIContent("边缘羽化", "控制晶格边界的变形衰减带宽度。0 = 无羽化（硬切），0.5 = 最大羽化（整个范围平滑过渡）"));
         EditorGUILayout.PropertyField(serializedObject.FindProperty("liveUpdate"), new GUIContent("实时更新"));
 
-        // v3.24.1：surfaceOnly 改为 NonSerialized 后不能用 PropertyField，手动 Toggle
+        // 进入 OnInspectorGUI 时先记录"上次确认值"，用于两步切换设计：
+        // 用户在 Inspector 改 Toggle → 进入"待应用"状态，显示"应用压缩模式"按钮 →
+        // 用户按按钮 → 真正调 ApplySurfaceOnlyMode() 重生成数据。
         bool prevSurfaceOnly = lattice.surfaceOnly;
-        bool currSurfaceOnly = EditorGUILayout.Toggle(
+
+        // v3.34：surfaceOnly 恢复 SerializeField 后，走 SerializedProperty / PropertyField 流程
+        //         → Undo / MarkDirty / 场景持久化全部自动；用户取消勾选后重新打开场景，状态保留。
+        EditorGUILayout.PropertyField(serializedObject.FindProperty("surfaceOnly"),
             new GUIContent("忽略内部控制点（v3.24）",
                 "开启后控制点只保留 6 个外壳面，去掉立方体内部的点。\n" +
                 "内部点对表面顶点影响极小（Bernstein 基函数趋近 0），\n" +
-                "可大幅减少 FFD 累加计算量。8x8x8 晶格控制点从 512 减到 296（-42%）。"),
-            prevSurfaceOnly);
-        if (currSurfaceOnly != prevSurfaceOnly)
-            lattice.surfaceOnly = currSurfaceOnly;
+                "可大幅减少 FFD 累加计算量。8x8x8 晶格控制点从 512 减到 296（-42%）。\n" +
+                "勾选状态会持久化到场景，重新打开场景后保留。"));
+
+        // PropertyField 已经把用户在 Inspector 上的最新选择写到 SerializedProperty 上；
+        // 紧接着 ApplyModifiedProperties 把改动同步到 lattice.surfaceOnly 并标记场景脏，
+        // 这样下次 OnInspectorGUI 进入时 prevSurfaceOnly 仍是"上次确认值"，避免反复显示应用按钮。
+        bool currSurfaceOnly = serializedObject.FindProperty("surfaceOnly").boolValue;
         serializedObject.ApplyModifiedProperties();
 
         if (lattice.IsInitialized)

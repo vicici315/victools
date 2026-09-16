@@ -34,7 +34,10 @@
 // PBR_Mobile6.4 添加Meta Pass支持烘焙器正确读取材质albedo和emission；修正GI合成公式分离间接漫反射与间接高光（与URP Lit能量分配一致）；Subtractive混合光照改用URP标准算法
 // PBR_Mobile6.5 P0性能优化：MRA贴图条件采样（仅_USEMSAMAP开启时采样）、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关（按需裁剪烘焙高光与间接高光计算）
 // PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
-
+// PBR_Mobile7.2 添加“禁用主光强度”选项，勾选时使用自定义亮度值控制主光亮度（直接乘法，避免归一化在场景光强/颜色变化时失控）。
+// PBR_Mobile7.3 跨场景保护：新增全局安全位 _CustomLightSystemActive（由 ComputeBufferLightManager 独占写入），
+//                  缓冲区释放时同步关闭，避免材质残留 _USEPOINTLIGHT/_USESPOTLIGHT 关键字时采样已销毁的
+//                  StructuredBuffer 产生 NaN，导致材质变黑。
 
 Shader "Custom/PBR_Mobile"
 {
@@ -42,6 +45,8 @@ Shader "Custom/PBR_Mobile"
     {
         [Toggle(_DISABLEENVIRONMENT)] _DisableEnvironment ("Disable Environment", Float) = 0
         [Toggle(_DISABLELIGHTCOLOR)] _DisableLightColor ("Disable LightColor", Float) = 0
+        [Toggle(_DISABLELIGHTINTENSITY)] _DisableLightIntensity ("Disable LightIntensity", Float) = 0
+        _LightIntensity ("Light Intensity", Range(0, 8)) = 1.0
         [Toggle(_USEVERSHADOW)] _UseVerShadow ("Use Vertex Shadow", Float) = 0
         [Toggle(_USESOFTSHADOW)] _UseSoftShadow ("Use Optimized Soft Shadow", Float) = 1
         [Header(1  (Base Properties))]
@@ -55,7 +60,7 @@ Shader "Custom/PBR_Mobile"
         _Roughness ("Roughness", Range(0, 2)) = 0.5
         _SpecularScale ("Specular Scale", Range(0.1, 5)) = 2
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
-        _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
+        _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.4
         _Softness ("Shadow Softness（纹素数）", Range(0, 4)) = 1.5
         _Brightness ("Brightness", Range(0.5, 20)) = 1.0
         _BakedSpecularDirection ("Baked Specular Direction", Vector) = (0, 0, 1)
@@ -98,7 +103,7 @@ Shader "Custom/PBR_Mobile"
         _PointLightIntensity ("Point Light Intensity", Range(0, 8)) = 1.0
         _PointLightRangeMultiplier ("Range Multiplier", Range(0.1, 3)) = 1.0
         _PointLightFalloff ("Falloff Power", Range(0.5, 8)) = 2.0
-        _PointLightAmount ("Light Amount", Range(1, 16)) = 4
+        _PointLightAmount ("Light Amount", Range(1, 8)) = 8
 
         // [Header(7  (Custom Spot Lights))]
         [Toggle(_USESPOTLIGHT)] _UseSpotlight("Use Spot Lighting", Float) = 0
@@ -175,7 +180,8 @@ Shader "Custom/PBR_Mobile"
             #pragma shader_feature_local _PREVIEWAO
             #pragma shader_feature_local _DISABLEENVIRONMENT
             #pragma shader_feature_local _DISABLELIGHTCOLOR
-            
+            #pragma shader_feature_local _DISABLELIGHTINTENSITY
+
             #pragma shader_feature_local _DEBUGNORMAL
             #pragma shader_feature_local _DISABLEBAKEDSPECULAR
             #pragma shader_feature_local _DISABLEINDIRECTSPECULAR
@@ -252,7 +258,8 @@ Shader "Custom/PBR_Mobile"
                 half _OcclusionStrength;
                 half _EmissionScale;
                 half4 _EmissionColor;
-                
+                half _LightIntensity;
+
                 half _PointLightIntensity;
                 half _PointLightRangeMultiplier;
                 half _PointLightFalloff;
@@ -280,6 +287,11 @@ Shader "Custom/PBR_Mobile"
             
             StructuredBuffer<CustomSpotLight> _CustomSpotLights;
             int _CustomSpotLightCount;
+
+            // ● 全局安全位：由 ComputeBufferLightManager 独占写入，1 = 灯光系统已接管，0 = 未接管
+            //   缓冲区释放后若残留材质关键字会采样已销毁的 StructuredBuffer 产生 NaN，导致材质变黑，
+            //   此守卫确保没有活跃管理器时自定义光照一律跳过。
+            float _CustomLightSystemActive;
 
             struct Attributes
             {
@@ -846,7 +858,26 @@ Shader "Custom/PBR_Mobile"
 #endif
                 
                 #ifndef _DISABLEENVIRONMENT
-                // _DISABLELIGHTCOLOR：漫反射去色只保留强度，高光保留原始颜色影响金属度
+                // _DISABLELIGHTINTENSITY：用 _LightIntensity 替换主光强度（替换 color × intensity 中的 intensity 分量）
+                // - 仅启用 _DISABLELIGHTINTENSITY（未启用 _DISABLELIGHTCOLOR）：保留 mainLight.color 颜色方向，强度替换为 _LightIntensity
+                // - 同时启用 _DISABLELIGHTINTENSITY 和 _DISABLELIGHTCOLOR：漫反射去色为灰度（取 _LightIntensity 强度），高光也用纯灰度
+                // 注意：主光 Intensity=0（mainLight.color≈0）时颜色方向无法提取（max≈0），光强最终为 0，这是物理约束无法避免。
+                #ifdef _DISABLELIGHTINTENSITY
+                half _origMainBright = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                half3 _mainColorDir = _origMainBright > 0.0001 ? mainLight.color / _origMainBright : half3(0, 0, 0);
+                half3 _mainLightEffective = _mainColorDir * _LightIntensity;
+                #ifdef _DISABLELIGHTCOLOR
+                // 漫反射去色仅保留 _LightIntensity 强度；高光保留颜色方向（影响金属反射的色相）
+                half _grayScale = max(_mainLightEffective.r, max(_mainLightEffective.g, _mainLightEffective.b));
+                lightColor = half3(_grayScale, _grayScale, _grayScale) * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = _mainLightEffective * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
+                // 保留主光颜色方向 + _LightIntensity 强度
+                lightColor = _mainLightEffective * mainLight.distanceAttenuation * shadowAttenuation;
+                half3 specularLightColor1 = lightColor;
+                #endif
+                #else
+                // 标准路径：_DISABLELIGHTCOLOR 把漫反射灰度化、高光保留原色（让金属反射保留主光颜色）
                 #ifdef _DISABLELIGHTCOLOR
                 half lightIntensity1 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
                 lightColor = half3(lightIntensity1, lightIntensity1, lightIntensity1) * mainLight.distanceAttenuation * shadowAttenuation;
@@ -854,6 +885,7 @@ Shader "Custom/PBR_Mobile"
                 #else
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
                 half3 specularLightColor1 = lightColor;
+                #endif
                 #endif
                 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
                 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, specularLightColor1, shadowAttenuation);
@@ -870,10 +902,18 @@ Shader "Custom/PBR_Mobile"
                 #endif
                 
                 // Subtractive模式：使用URP标准方法从lightmap中减去主光贡献
+                // _DISABLELIGHTINTENSITY 时：用替换后的 _mainLightEffective 替代 mainLight.color，保持
+                //   与直接光照通道一致；否则当主光被禁用时 lambert=0 不会减任何东西，符合"排除主光"语义。
                 #if defined(LIGHTMAP_ON) && defined(LIGHTMAP_SHADOW_MIXING) && !defined(SHADOWS_SHADOWMASK)
                     half contributionTerm = saturate(dot(lightDir, mat.normalWS));
+                    #ifdef _DISABLELIGHTINTENSITY
+                    half3 lambert = _mainLightEffective * contributionTerm;
+                    half _effectiveShadowAtt = shadowAttenuation;
+                    #else
                     half3 lambert = mainLight.color * contributionTerm;
-                    half3 estimatedLightContribution = lambert * (1.0 - mainLight.shadowAttenuation);
+                    half _effectiveShadowAtt = mainLight.shadowAttenuation;
+                    #endif
+                    half3 estimatedLightContribution = lambert * (1.0 - _effectiveShadowAtt);
                     half3 subtractedLightmap = bakedGI - estimatedLightContribution;
                     half3 realtimeShadow = max(subtractedLightmap, unity_ShadowColor.xyz);
                     realtimeShadow = lerp(bakedGI, realtimeShadow, GetMainLightShadowStrength());
@@ -901,11 +941,24 @@ Shader "Custom/PBR_Mobile"
                 #endif
                 #else
                 // 禁用环境光时，只使用实时光照
+                // _DISABLELIGHTINTENSITY：用 _LightIntensity 替换主光强度（保留颜色方向除非同时 _DISABLELIGHTCOLOR）
+                #ifdef _DISABLELIGHTINTENSITY
+                half _origMainBright2 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
+                half3 _mainColorDir2 = _origMainBright2 > 0.0001 ? mainLight.color / _origMainBright2 : half3(0, 0, 0);
+                half3 _mainLightEffective2 = _mainColorDir2 * _LightIntensity;
+                #ifdef _DISABLELIGHTCOLOR
+                half _grayScale2 = max(_mainLightEffective2.r, max(_mainLightEffective2.g, _mainLightEffective2.b));
+                lightColor = half3(_grayScale2, _grayScale2, _grayScale2) * mainLight.distanceAttenuation * shadowAttenuation;
+                #else
+                lightColor = _mainLightEffective2 * mainLight.distanceAttenuation * shadowAttenuation;
+                #endif
+                #else
                 #ifdef _DISABLELIGHTCOLOR
                 half lightIntensity2 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
                 lightColor = half3(lightIntensity2, lightIntensity2, lightIntensity2) * mainLight.distanceAttenuation * shadowAttenuation;
                 #else
                 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
+                #endif
                 #endif
                 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
                 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, lightColor, shadowAttenuation);
@@ -932,13 +985,21 @@ Shader "Custom/PBR_Mobile"
                 
                 half3 pointLightContrib = 0;
                 #ifdef _USEPOINTLIGHT
-                    pointLightContrib = CalculateCustomPointLights(input.positionWS_shadow.xyz, mat, viewDirWS);
+                    // ● 安全位守卫：缓冲区可能已被释放，仅在系统接管时才采样，避免 NaN 污染 finalColor
+                    if (_CustomLightSystemActive > 0.5)
+                    {
+                        pointLightContrib = CalculateCustomPointLights(input.positionWS_shadow.xyz, mat, viewDirWS);
+                    }
                 #endif
                 finalColor += pointLightContrib;
                 
                 half3 spotLightContrib = 0;
                 #ifdef _USESPOTLIGHT
-                    spotLightContrib = CalculateCustomSpotLights(input.positionWS_shadow.xyz, mat, viewDirWS);
+                    // ● 安全位守卫：同上，防止读取已释放的聚光灯缓冲区
+                    if (_CustomLightSystemActive > 0.5)
+                    {
+                        spotLightContrib = CalculateCustomSpotLights(input.positionWS_shadow.xyz, mat, viewDirWS);
+                    }
                 #endif
                 finalColor += spotLightContrib;
                 
@@ -1137,7 +1198,8 @@ Shader "Custom/PBR_Mobile"
                 half _OcclusionStrength;
                 half _EmissionScale;
                 half4 _EmissionColor;
-                
+                half _LightIntensity;
+
                 half _PointLightIntensity;
                 half _PointLightRangeMultiplier;
                 half _PointLightFalloff;

@@ -50,8 +50,8 @@ namespace VicTools
             
             // 主要功能部分
             DrawSection("包含工具模块", new string[] {
-                "• 场景工具 - 快速选择和操作场景中的对象",
-                "• 材质查找 - 高速查找和管理材质",
+                "• 场景工具 - 场景编辑资源管理高效辅助工具",
+                "• 材质查找 - 高速查找和全局管理材质",
                 "• 资源工具 - 项目资源文件管理批量配置；安全的批量重命名（将保留资源引用）",
                 "• 性能分析 - 对场景进行资源暂用评估，显示内存资源等基础信息，可以对场景内容分类统计快速选择"
             });
@@ -134,9 +134,63 @@ namespace VicTools
                 });
             }
 
+            Add("v2.12.6",
+                "[Tools] Compute Buffer Tool 4.0 性能与可维护性重构 - 消除重复逻辑、修复聚光灯自适应间隔失效、清理死代码。",
+                "[Tools] ComputeBuffer 4.1 跨场景渲染保护 - 修复共享材质在缺少灯光管理器的场景变黑/跳过渲染；对外接口与既有功能保持不变。",
+                "[Tools] Compute Buffer Tool v4.2 材质按钮自动识别选中内容 - 选中灯光时按钮切换为“添加/剔除点灯·射灯”，其余情况仍为材质增删；最高支持8盏点灯、2盏聚光灯。",
+                "[Material:URP] CustomParticle 1.3 修改主纹理键名统一_BaseMap。",
+                "[Material:URP] Custom_Ocean 2.0 性能优化重构（渲染结果与原版保持一致，无可察觉差异）。"
+            );
+
+            Add("v2.12.5",
+                "【新】[Material:URP] Custom_Ocean 1.7 海面材质，ForwardLit Pass 接入 URP 雾，处理方式对齐 PBR_Mobile_NEW：multi_compile_fog + 顶点 ComputeFogFactor 存入 Varyings.fogFactor + 片元末尾 MixFog，不新增任何雾参数。",
+                "[Tools] Compute Buffer Tool v3.7 修复自定义灯光模拟工具管理器修改保存机制。",
+                "[Material:URP] Glass_MobileNew.v3.2 性能重构（渲染结果不变）：移除无用的 _SHADOWS_SOFT 变体（ForwardLit 变体数减半）。"
+            );
+
+            Add("v2.12.4",
+                "[Edit] RoadScroll v2.6 修复 ESC 选中脚本对象功能在 roadSegment 包含子对象时失效。",
+                "[Material:URP] TransCutout3.0 透明计算统一移至 DepthOnly pass，v3.0 关键改版（基于PreZ）",
+                "[Material:URP] PBR_Mobile_NEW8.4 PBR 粗糙度钳制对齐 URP 标准：perceptualRoughness 允许到 0（不再硬钳 0.01）。",
+                "[Material:URP] PBR_Mobile_Trans8.0 继承 PBR_Mobile_NEW8.4：替换高光算法为GGX（ARM Siggraph 2015 移动优化版，D*V*F合并近似）",
+                "[Material:URP] Glass_MobileNew.v3.1 添加法线贴图交错游走，实现波浪起伏效果，修复法线强度参数影响反射图错位。"
+            );
+
+            Add("v2.12.3",
+                "[Material:URP] PBR_Mobile_NEW8.2 优化“禁用环境光”半兰伯特参数控制效果，当“禁用全局光”参数打开时使用优化算法。",
+                "[Tools] SpotLightVolume【探照灯体积雾 v6.4】工具更新创建性能，叠加曝光过度问题，增加“后处理优化”分组：曝光系数 + 软饱和开关；兼容旧存档读取。",
+                "[Material:URP] Glass_MobileNew.v3.0 添加自发光参数，存档兼容旧版本。",
+                "[Material:URP] Tree_Trans 2.0 共享片段已抽取到 Tree_Trans_Common.hlsl（CBUFFER、纹理、ApplyWind、alpha clip、Ramp、法线扰动、虚拟阴影 tint）；添加GUI。",
+                "[Material:URP] PBR_Mobile7.2 添加“禁用主光亮度”选项，取消勾选时使用自定义亮度值（解决室内角色照明方案）。",
+                "[Material:URP] PBR_Mobile_NEW8.3 阴影高光衰减优化：高光在阴影处按拟合曲线 x²·(0.2+0.8x)（等价 x^2.8）衰减（加强阴影清晰同时保留暗部高光细节）。"
+            );
+
+            Add("v2.12.2",
+                "【场景工具 v2.32】①添加继承位移旋转功能按钮；②PBR_Lighting材质切换按钮更新适配PBR_Mobile_NEW。",
+                "【场景工具 v2.33】资源箱打开场景按钮兼容团结引擎（Tuanjie）使用的 .scene 文件，与 Unity 原生 .unity 同时识别。",
+                "PBR_Lighting 添加亮度参数以适配接近PBR_Mobile_NEW效果，优化PBR参数。",
+                "[Tools] LatticeModifier v3.34 修复旧场景反序列化丢数据：targetMode 和 targetRenderer 保留字段声明（防止旧场景反序列化丢数据），但标记 HideInInspector，运行时不再使用 SingleRenderer 路径。"
+            );
+
+            Add("v2.12.1",
+                "[Material:URP] PBR_Mobile_NEW8.0 新增 GGXSpecularTerm（ARM Siggraph 2015 移动优化版），高光形状更宽、尾部更长，粗糙表面高光更自然，优化室内无光场景表现。",
+                "[Material:URP] PBR_Mobile_NEW8.1 间接高光：使用反射方向SH增强法线依赖（Lit反射探针的轻量替代）无光照贴图时额外采样反射方向SH，光滑度越高反射方向权重越大（物理正确）添加PBR参数重置按钮。",
+                "[Edit] 添加镜像模型保存菜单，解决镜像模型重开场景丢失问题。",
+                "[Tools] Compute Buffer Tool v3.6 匹配PBR_Mobile_NEW材质。"
+            );
+            Add("v2.11.2",
+                "[Tools] RoadScroll v2.3 无限循环偏移支持旋转方向，便以创建倾斜的滚动效果。",
+                "[Tools] RoadScroll v2.4 启动时新增对挂载脚本的 RoadScroll 自身 transform.localPosition 按其局部坐标系下的 scrollDirection 方向，偏移做初始矫正。",
+                "[Tools] RoadScroll v2.5 优化超大段对象（segmentLength >> 段 mesh 真实尺寸）下\"初始偏移矫正产生大偏差\"的问题。",
+                "[Tools] RoadScrollEditor v2.8 Inspector 实时编辑：间距 segmentLength / scrollDirection 任一变化 → 实时重排段。",
+                "[Tools] RoadScrollEditorHelper v2.6 添加 ESC 快捷键：选中 roadSegment 时按 ESC 跳转到所属 RoadScroll 父对象。",
+                "[Material:URP] Grass 2.5 阴影接收改为顶点阴影：阴影衰减值经 varying 插值后 fragment 直接使用，不再逐像素采样 shadow map _UseVertexShadow 开关：关闭时回退为原 GetMainLight(shadowCoord) 像素阴影路径。",
+                "【场景工具 v2.31】防御：obj 可能是纹理 / Prefab / .meta / 子资产等非场景资产，只接受 .unity 场景资产（含可选的 .unity.meta 后缀防御）。"
+            );
+
             Add("v2.11.1",
-                "【Menu】菜单添加镜像模型功能，对选中对象进行快速安全镜像处理，避免出现法线贴图反转问题。",
-                "PBR_Mobile 7.2 主材质添加[查找贴图]按钮，一键自动赋予PBR配套贴图，无需一张张贴图配置。"
+                "[Edit] 菜单添加镜像模型功能，对选中对象进行快速安全镜像处理，避免出现法线贴图反转问题。",
+                "[Material:URP] PBR_Mobile 7.2 主材质添加[查找贴图]按钮，一键自动赋予PBR配套贴图，无需一张张贴图配置。"
             );
 
             Add("v2.11.0",

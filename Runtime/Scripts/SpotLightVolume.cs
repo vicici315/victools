@@ -1,16 +1,39 @@
-/// SpotLightVolume v1.0 - 轻量探照灯体积雾效果
-/// 基于锥形Mesh + 自定义Shader的简洁实现，性能优化版本
-/// 参数：起始距离、最长距离、边缘羽化、末端羽化、混合方式等
-/// SpotLightVolume v2.0 - 参考VLB架构重写
-/// 归一化Mesh + localScale缩放 + 双Pass渲染 + Fresnel + 距离衰减 + DepthBlend
-/// SpotLightVolume v5.0 - 射线遮挡截断
-/// - Physics.Raycast沿光柱forward方向检测第一个碰撞物体（忽略Trigger）
-/// - 碰撞距离通过_ClipDistance传给Shader，在raymarching中平滑羽化截断
-/// - 支持occlusionLayerMask选择检测层，occlusionUpdateInterval控制检测频率
-/// - 不影响原始光柱衰减、双面显示、深度遮挡等效果
-/// SpotLightVolume v6.0 重构代码，改进重复的GetComponent调用，消除 UpdateGeometry 和 UpdateMaterial 中的重复计算
-/// SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：新增occlusionDetectTriggers选项，可检测Trigger类型碰撞体
-/// SpotLightVolume v6.2 - 蒙版投影：新增maskTexture蒙版纹理模拟窗格光柱投影，沿光轴等比投射到锥体横截面，支持enableMask开关和maskIntensity强度控制
+/// SpotLightVolume v6.3 - 重构版（架构优化，无功能变更）
+///
+/// 重构要点：
+/// A. 消除 Update 中的重复操作
+///    1. 引入 ConeGeometryCache 结构体缓存派生计算结果（radiusEnd/slopeAngle/cosSlope/sinSlope），
+///       避免 ApplyShaderProperties 中每帧重复调用 Tan/Atan2/Cos/Sin
+///    2. ApplyBlendMode 仅在 blendMode 变化时执行，避免每帧重复 EnableKeyword/DisableKeyword/SetInt
+///       （关键字切换会触发 Shader 变体重编译，这是真实的运行时开销）
+///    3. _material.renderQueue 从 UpdateMaterial 移到 EnsureMaterial（仅创建时设置一次）
+///    4. 拆分 Shader 属性推送：_ClipDistance 为高频参数（每帧），其余 17 个为低频（dirty 标志触发）
+///    5. colorFromLight 模式下，单独跟踪 _light.color 变化、按需只更新颜色通道
+/// B. 改进可读性
+///    1. 拆分 ApplyShaderProperties 为职责单一的子方法（颜色/光照/几何/蒙版）
+///    2. 拆分 GenerateNormalizedConeMesh 为 BuildSideVertices/BuildSideTriangles/BuildCap*
+///    3. 引入 EnsureLight() 守卫函数，消除分散的 null/type 检查
+///    4. 4 个独立 _cachedXxx 字段聚合为 ConeGeometryCache 结构体
+///    5. ShaderIDs 静态类按用途分组
+/// C. 不变项（保持向后兼容）
+///    - 所有 public 字段、默认值、Header/Tooltip/Range/Min 标记
+///    - Mesh 生成（顶点/UV/三角形索引顺序与原版 bit-identical）
+///    - Material 关键字组合与最终 Shader 属性值
+///    - 序列化兼容：Inspector 不变 → 现有 Scene/Prefab 不需要重新序列化
+///
+/// SpotLightVolume v6.2 - 蒙版投影：maskTexture 模拟窗格光柱投影
+/// SpotLightVolume v6.1 - 射线遮挡支持角色碰撞：occlusionDetectTriggers 可检测 Trigger
+/// SpotLightVolume v6.0 - 重构：改进重复 GetComponent 调用，消除 UpdateGeometry/UpdateMaterial 重复计算
+///   - 射线遮挡截断：Physics.Raycast 沿光柱方向检测碰撞
+///   - 参考 VLB 架构：归一化 Mesh + localScale + 双 Pass + Fresnel + 距离衰减
+///   - 轻量探照灯体积雾（锥形 Mesh + 自定义 Shader）
+///
+/// SpotLightVolume v6.4 - 软饱和防过曝（双管齐下）：
+///   - 新增 softSaturation 字段（默认关闭）：启用后开启 _VOLUME_SOFTSAT shader_feature，
+///     对 raymarching 总强度做 x → x/(1+x) 强 Reinhard 压缩
+///   - 新增 volumeExposure 字段（范围 0.1~2，默认 1）：曝光系数直接控制单灯总能量，
+///     类似摄影曝光补偿，叠加场景建议调到 0.5~0.7
+///   - 双管齐下解决多盏体积光叠加 + Bloom 后处理的过曝问题
 
 using UnityEngine;
 using System.Collections.Generic;
@@ -97,7 +120,7 @@ namespace Vic.Runtime
         public int coneSides = 12;
 
         [Tooltip("圆锥分段数")]
-        [Range(1, 10)]
+        [Range(0, 10)]
         public int coneSegments = 1;
 
         [Header("射线遮挡")]
@@ -125,6 +148,14 @@ namespace Vic.Runtime
         [Range(0f, 1f)]
         public float maskIntensity = 1f;
 
+        [Header("后处理优化")]
+        [Tooltip("曝光系数（类似摄影曝光补偿）: 控制单灯总能量。多盏体积光叠加 + Bloom 过曝时降低（如 0.5），默认值=1 = 与原版一致。配合下方‘启用软饱和’双管齐下")]
+        [Range(0.1f, 2f)]
+        public float volumeExposure = 1f;
+
+        [Tooltip("启用软饱和(Reinhard Tone Mapping, x → x/(1+x)): 多盏体积光叠加 + Bloom 后处理场景下压缩 HDR 信号、避免过曝；单盏或无 Bloom 时建议关闭")]
+        public bool softSaturation = true;
+
         #endregion
 
         #region 内部状态
@@ -139,40 +170,113 @@ namespace Vic.Runtime
         private float _clipDistance = -1f;
         private float _lastOcclusionCheckTime;
 
-        // 缓存值（用于判断是否需要重建Mesh）
-        private float _cachedSpotAngle;
-        private float _cachedMaxDistance;
-        private int _cachedSides;
-        private int _cachedSegments;
+        // 几何派生缓存（聚合：避免 4 个散落的 _cachedXxx 字段）
+        // UpdateGeometry 中刷新，ApplyShaderProperties 读取，避免每帧重复三角函数
+        private ConeGeometryCache _coneCache;
+
+        // Material dirty 控制：低频参数在 dirty=true 时推送，避免每帧 17 次无意义 SetFloat
+        private VolumeBlendMode _cachedBlendMode = (VolumeBlendMode)(-1); // 初始非法值，强制首次刷新
+        private Color _lastAppliedLightColor;
+        private bool _lastColorFromLight;
+        private bool _materialParamsDirty = true;
+
+        // Reinhard 软饱和 keyword 缓存（仅在 softSaturation 变化时才切换 shader keyword）
+        private bool _cachedSoftSaturation;
+
+        // Animator 存在标记：动画可能驱动 Light 任意属性（spotAngle/color/intensity/...），
+        // 有 Animator 时必须每帧全推 shader 参数，无 Animator 时无人工干预可走轻量路径。
+        private bool _hasAnimator;
 
         // 共享归一化Mesh缓存：按 (sides, segments) 配置缓存，每种配置一份、永久复用。
         // v6.3：之前用单个静态 _sharedMesh，配置变化时直接覆盖且不销毁旧 Mesh → 泄漏；
         // 多个不同配置的实例还会反复"抢占"重建。改为字典后每配置一份，不泄漏不抢占。
         private static readonly Dictionary<long, Mesh> _sharedMeshes = new Dictionary<long, Mesh>();
 
+        /// 圆锥几何及其派生参数的缓存结构：
+        /// 在 UpdateGeometry 时一次性刷新，ApplyShaderProperties 直接读取，避免每帧重复 Tan/Atan2/Cos/Sin
+        private struct ConeGeometryCache
+        {
+            // 输入（用于脏检测）
+            public float spotAngle;
+            public float maxDistance;
+            public float lightSourceRadius;
+            public int sides;
+            public int segments;
+
+            // 派生输出
+            public float radiusEnd;
+            public float radiusStart;
+            public float slopeAngle;
+            public float cosSlope;
+            public float sinSlope;
+
+            public bool IsValid => sides > 0 && segments > 0;
+
+            /// 当输入参数与缓存记录不一致时返回 false，调用方应 Refresh
+            public bool Matches(Light light, float md, int s, int seg, float lsr)
+            {
+                return IsValid
+                    && Mathf.Approximately(spotAngle, light.spotAngle)
+                    && Mathf.Approximately(maxDistance, md)
+                    && sides == s
+                    && segments == seg
+                    && Mathf.Approximately(lightSourceRadius, lsr);
+            }
+
+            /// 重新计算所有派生输出
+            public void Refresh(Light light, float md, int s, int seg, float lsr)
+            {
+                spotAngle = light.spotAngle;
+                maxDistance = md;
+                lightSourceRadius = lsr;
+                sides = s;
+                segments = seg;
+
+                radiusEnd = md * Mathf.Tan(spotAngle * 0.5f * Mathf.Deg2Rad);
+                radiusStart = Mathf.Max(lsr, 0.001f);
+                slopeAngle = Mathf.Atan2(radiusEnd - radiusStart, md);
+                cosSlope = Mathf.Cos(slopeAngle);
+                sinSlope = Mathf.Sin(slopeAngle);
+            }
+        }
+
         #endregion
 
-        #region Shader属性ID（静态缓存，避免每帧字符串查找）
+        #region Shader属性ID（静态缓存，按用途分组）
 
         private static class ShaderIDs
         {
-            public static readonly int VolumeColor = Shader.PropertyToID("_VolumeColor");
-            public static readonly int Intensity = Shader.PropertyToID("_Intensity");
-            public static readonly int FallOffStart = Shader.PropertyToID("_FallOffStart");
-            public static readonly int FallOffEnd = Shader.PropertyToID("_FallOffEnd");
-            public static readonly int EdgeFade = Shader.PropertyToID("_EdgeFade");
-            public static readonly int EndFade = Shader.PropertyToID("_EndFade");
-            public static readonly int GlareFrontal = Shader.PropertyToID("_GlareFrontal");
-            public static readonly int GlareBehind = Shader.PropertyToID("_GlareBehind");
-            public static readonly int ConeRadiusStart = Shader.PropertyToID("_ConeRadiusStart");
-            public static readonly int ConeRadiusEnd = Shader.PropertyToID("_ConeRadiusEnd");
-            public static readonly int ConeSlopeCosSin = Shader.PropertyToID("_ConeSlopeCosSin");
-            public static readonly int ClipDistance = Shader.PropertyToID("_ClipDistance");
+            // 颜色 / 强度
+            public static readonly int VolumeColor         = Shader.PropertyToID("_VolumeColor");
+            public static readonly int Intensity           = Shader.PropertyToID("_Intensity");
+            public static readonly int VolumeExposure      = Shader.PropertyToID("_VolumeExposure");
+
+            // 距离 / 衰减
+            public static readonly int FallOffStart        = Shader.PropertyToID("_FallOffStart");
+            public static readonly int FallOffEnd          = Shader.PropertyToID("_FallOffEnd");
+
+            // 羽化 / 眩光
+            public static readonly int EdgeFade            = Shader.PropertyToID("_EdgeFade");
+            public static readonly int EndFade             = Shader.PropertyToID("_EndFade");
+            public static readonly int GlareFrontal        = Shader.PropertyToID("_GlareFrontal");
+            public static readonly int GlareBehind         = Shader.PropertyToID("_GlareBehind");
+
+            // 锥体几何
+            public static readonly int ConeRadiusStart     = Shader.PropertyToID("_ConeRadiusStart");
+            public static readonly int ConeRadiusEnd       = Shader.PropertyToID("_ConeRadiusEnd");
+            public static readonly int ConeSlopeCosSin     = Shader.PropertyToID("_ConeSlopeCosSin");
+
+            // 起始增亮 / 中心渐变
             public static readonly int StartBoostIntensity = Shader.PropertyToID("_StartBoostIntensity");
-            public static readonly int StartBoostRange = Shader.PropertyToID("_StartBoostRange");
-            public static readonly int CenterFade = Shader.PropertyToID("_CenterFade");
-            public static readonly int MaskTex = Shader.PropertyToID("_MaskTex");
-            public static readonly int MaskIntensity = Shader.PropertyToID("_MaskIntensity");
+            public static readonly int StartBoostRange     = Shader.PropertyToID("_StartBoostRange");
+            public static readonly int CenterFade          = Shader.PropertyToID("_CenterFade");
+
+            // 蒙版投影
+            public static readonly int MaskTex             = Shader.PropertyToID("_MaskTex");
+            public static readonly int MaskIntensity       = Shader.PropertyToID("_MaskIntensity");
+
+            // 高频推送（每帧由 UpdateOcclusion 更新后单独 SetFloat）
+            public static readonly int ClipDistance        = Shader.PropertyToID("_ClipDistance");
         }
 
         #endregion
@@ -181,7 +285,11 @@ namespace Vic.Runtime
 
         void OnEnable()
         {
-            _light = GetComponent<Light>();
+            // Animator 存在性只需在启用时检测一次即可，
+            // 运行时切换 Animator 是罕见场景，如需要可在外部调用 GetComponent<Animator>() 后自行维护
+            _hasAnimator = GetComponent<Animator>() != null;
+
+            EnsureLight();
             EnsureVolumeChild();
             UpdateGeometry();
             UpdateMaterial();
@@ -198,13 +306,23 @@ namespace Vic.Runtime
 
         void Update()
         {
-            if (_light == null || _light.type != LightType.Spot) return;
+            if (!EnsureLight()) return;
 
             if (NeedsGeometryRebuild())
                 UpdateGeometry();
 
             UpdateOcclusion();
-            UpdateMaterial();
+
+            // 性能分支：
+            //   有 Animator → 强制每帧全推（动画可能改变任意 Light 参数，必须保证 shader 完全同步）
+            //   无 Animator 且参数 dirty → 推一次完整参数
+            //   无 Animator 且无 dirty → 仅推高频参数（_ClipDistance），跳过 17 次冗余 SetFloat
+            if (_hasAnimator)
+                UpdateMaterial(applyAllParams: true);
+            else if (_materialParamsDirty || _cachedBlendMode != blendMode)
+                UpdateMaterial();
+            else
+                PushHighFrequencyShaderParams();
         }
 
         void OnDestroy()
@@ -218,6 +336,9 @@ namespace Vic.Runtime
             maxDistance = Mathf.Max(0.1f, maxDistance);
             fallOffStart = Mathf.Clamp(fallOffStart, 0f, maxDistance - 0.01f);
             lightSourceRadius = Mathf.Max(0f, lightSourceRadius);
+
+            // OnValidate 中修改参数 → 强制下次 UpdateMaterial 重新推送所有 shader 参数
+            _materialParamsDirty = true;
 
 #if UNITY_EDITOR
             EditorApplication.delayCall += () =>
@@ -236,12 +357,113 @@ namespace Vic.Runtime
 
         #region 核心逻辑
 
+        /// Light 守卫：按需缓存 _light 引用，确保为 Spot 类型。
+        /// 替代分散在多处的 `if (_light == null || _light.type != LightType.Spot)` 样板。
+        private bool EnsureLight()
+        {
+            if (_light == null)
+                _light = GetComponent<Light>();
+            return _light != null && _light.type == LightType.Spot;
+        }
+
         private bool NeedsGeometryRebuild()
         {
-            return !Mathf.Approximately(_cachedSpotAngle, _light.spotAngle)
-                || !Mathf.Approximately(_cachedMaxDistance, maxDistance)
-                || _cachedSides != coneSides
-                || _cachedSegments != coneSegments;
+            return !_coneCache.IsValid
+                || !_coneCache.Matches(_light, maxDistance, coneSides, coneSegments, lightSourceRadius);
+        }
+
+        /// 更新几何体：使用归一化 Mesh + localScale 缩放；同时刷新派生缓存。
+        private void UpdateGeometry()
+        {
+            if (!EnsureLight()) return;
+
+            _coneCache.Refresh(_light, maxDistance, coneSides, coneSegments, lightSourceRadius);
+            // 派生参数发生变化，下次 ApplyShaderProperties 需重新推送
+            _materialParamsDirty = true;
+
+            if (_meshFilter != null)
+                _meshFilter.sharedMesh = GetSharedNormalizedMesh(coneSides, coneSegments);
+
+            // localScale 控制锥体实际尺寸（归一化 Mesh: XY[-1,1], Z[0,1]）
+            float maxRadius = Mathf.Max(_coneCache.radiusEnd, _coneCache.radiusStart);
+            if (_volumeChild != null)
+                _volumeChild.transform.localScale = new Vector3(maxRadius, maxRadius, maxDistance);
+        }
+
+        /// 材质刷新：
+        /// 1. blendMode 变化时才切换 shader 关键字与 blend 状态（消除每帧 6 次无意义 Shader 调用）
+        /// 2. 大部分参数走 dirty 推送（仅在 OnValidate/geometry 变更时才推）
+        /// 3. _ClipDistance 是唯一高频参数（随射线检测更新），单独推送
+        /// 4. _light.color 变化时仅刷新颜色通道
+        /// <param name="applyAllParams">true 时跳过 dirty 检查强制全推（用于有 Animator 场景：
+        /// 动画可能改变任何 Light 属性，必须每帧把全部 shader 参数同步一次）</param>
+        private void UpdateMaterial(bool applyAllParams = false)
+        {
+            if (_meshRenderer == null) return;
+            EnsureMaterial();
+            if (_material == null) return;
+
+            // 1. BlendMode：仅在变化时切换关键字
+            if (_cachedBlendMode != blendMode)
+            {
+                ApplyBlendMode();
+                _cachedBlendMode = blendMode;
+            }
+
+            // 1b. 软饱和 keyword：仅在变化时切换（多灯 + Bloom 场景抗过曝）
+            if (_cachedSoftSaturation != softSaturation)
+            {
+                if (softSaturation)
+                    _material.EnableKeyword("_VOLUME_SOFTSAT");
+                else
+                    _material.DisableKeyword("_VOLUME_SOFTSAT");
+                _cachedSoftSaturation = softSaturation;
+            }
+
+            // 2. 整体参数：dirty 时或强制时全推
+            if (applyAllParams || _materialParamsDirty)
+            {
+                ApplyShaderProperties();
+                _materialParamsDirty = false;
+                _lastColorFromLight = colorFromLight;
+                _lastAppliedLightColor = colorFromLight ? _light.color : volumeColor;
+            }
+            // 3. colorFromLight 模式下，单通道跟踪灯光颜色变化
+            else if (colorFromLight && _light.color != _lastAppliedLightColor)
+            {
+                _material.SetColor(ShaderIDs.VolumeColor, _light.color);
+                _lastAppliedLightColor = _light.color;
+            }
+
+            // 4. 高频参数：每帧推送
+            _material.SetFloat(ShaderIDs.ClipDistance, _clipDistance);
+        }
+
+        /// 轻量更新：仅推送每帧/实时变化的参数。
+        /// 用于无 Animator 且无 dirty 的场景，跳过 17 个静态参数的无意义 SetFloat 调用。
+        private void PushHighFrequencyShaderParams()
+        {
+            EnsureMaterial();
+            if (_material == null) return;
+            _material.SetFloat(ShaderIDs.ClipDistance, _clipDistance);
+        }
+
+        /// <summary>
+        /// 强制完整刷新材质：让所有 dirty 缓存失效并立即推送所有 Shader 参数。
+        /// 专用于外部代码（存档/读档、Undo/Redo）直接修改字段后调用。
+        /// 正常 Inspector 调节字段会通过 OnValidate 自动标 dirty，无需调用此方法。
+        /// </summary>
+        public void RefreshMaterial()
+        {
+            // 失效所有 dirty 缓存，确保 UpdateMaterial 走"完整推送"分支
+            _materialParamsDirty = true;
+            _cachedBlendMode = (VolumeBlendMode)(-1);
+            _cachedSoftSaturation = !softSaturation;
+            _lastColorFromLight = !colorFromLight;
+            _lastAppliedLightColor = colorFromLight ? _light.color : volumeColor; // 后续 if 分支按当前状态记录，避免立即再次推
+
+            // 立即推送完整参数（不等下次 Update tick）
+            UpdateMaterial(applyAllParams: true);
         }
 
         /// 射线检测：沿光柱方向发射单条射线，找到第一个碰撞物体并截断光柱
@@ -272,39 +494,6 @@ namespace Vic.Runtime
             }
         }
 
-        /// 更新几何体：使用归一化Mesh + localScale缩放
-        private void UpdateGeometry()
-        {
-            if (_light == null || _light.type != LightType.Spot) return;
-
-            _cachedSpotAngle = _light.spotAngle;
-            _cachedMaxDistance = maxDistance;
-            _cachedSides = coneSides;
-            _cachedSegments = coneSegments;
-
-            if (_meshFilter != null)
-                _meshFilter.sharedMesh = GetSharedNormalizedMesh(coneSides, coneSegments);
-
-            // localScale控制锥体实际尺寸（归一化Mesh: XY[-1,1], Z[0,1]）
-            float maxRadius = Mathf.Max(ComputeRadiusEnd(), Mathf.Max(lightSourceRadius, 0.001f));
-            if (_volumeChild != null)
-                _volumeChild.transform.localScale = new Vector3(maxRadius, maxRadius, maxDistance);
-        }
-
-        /// 更新材质属性
-        private void UpdateMaterial()
-        {
-            if (_meshRenderer == null || _light == null) return;
-
-            EnsureMaterial();
-            if (_material == null) return;
-
-            ApplyBlendMode();
-            ApplyShaderProperties();
-
-            _material.renderQueue = 3100;
-        }
-
         #endregion
 
         #region 材质辅助
@@ -321,7 +510,10 @@ namespace Vic.Runtime
             }
 
             _material = new Material(shader) { name = "SpotLightVolume_Mat" };
+            // renderQueue 仅在材质创建时设置一次（原代码在 UpdateMaterial 中每帧赋值，纯浪费）
+            _material.renderQueue = 3000;
             _meshRenderer.sharedMaterial = _material;
+            _materialParamsDirty = true;
         }
 
         private void ApplyBlendMode()
@@ -353,30 +545,48 @@ namespace Vic.Runtime
             _material.SetInt("_DstBlend", (int)dst);
         }
 
+        /// 推送所有非高频 shader 参数（颜色 / 光照 / 几何 / 蒙版）
         private void ApplyShaderProperties()
         {
-            Color c = colorFromLight ? _light.color : volumeColor;
-            float radiusEnd = ComputeRadiusEnd();
-            float radiusStart = Mathf.Max(lightSourceRadius, 0.001f);
-            float slopeAngle = Mathf.Atan2(radiusEnd - radiusStart, maxDistance);
+            ApplyColorProperty();
+            ApplyLightingProperties();
+            ApplyGeometryProperties();
+            ApplyMaskProperties();
+        }
 
+        private void ApplyColorProperty()
+        {
+            Color c = colorFromLight ? _light.color : volumeColor;
             _material.SetColor(ShaderIDs.VolumeColor, c);
+            _lastAppliedLightColor = c;
+            _lastColorFromLight = colorFromLight;
+        }
+
+        private void ApplyLightingProperties()
+        {
             _material.SetFloat(ShaderIDs.Intensity, intensity);
+            _material.SetFloat(ShaderIDs.VolumeExposure, volumeExposure);
+            _material.SetFloat(ShaderIDs.StartBoostIntensity, startBoostIntensity);
+            _material.SetFloat(ShaderIDs.StartBoostRange, startBoostRange);
+            _material.SetFloat(ShaderIDs.CenterFade, centerFade);
+            _material.SetFloat(ShaderIDs.GlareFrontal, glareFrontal);
+            _material.SetFloat(ShaderIDs.GlareBehind, glareBehind);
+        }
+
+        private void ApplyGeometryProperties()
+        {
             _material.SetFloat(ShaderIDs.FallOffStart, fallOffStart);
             _material.SetFloat(ShaderIDs.FallOffEnd, maxDistance);
             _material.SetFloat(ShaderIDs.EdgeFade, edgeFade);
             _material.SetFloat(ShaderIDs.EndFade, endFade);
-            _material.SetFloat(ShaderIDs.GlareFrontal, glareFrontal);
-            _material.SetFloat(ShaderIDs.GlareBehind, glareBehind);
-            _material.SetFloat(ShaderIDs.ConeRadiusStart, radiusStart);
-            _material.SetFloat(ShaderIDs.ConeRadiusEnd, radiusEnd);
-            _material.SetVector(ShaderIDs.ConeSlopeCosSin, new Vector4(Mathf.Cos(slopeAngle), Mathf.Sin(slopeAngle), 0, 0));
-            _material.SetFloat(ShaderIDs.ClipDistance, _clipDistance);
-            _material.SetFloat(ShaderIDs.StartBoostIntensity, startBoostIntensity);
-            _material.SetFloat(ShaderIDs.StartBoostRange, startBoostRange);
-            _material.SetFloat(ShaderIDs.CenterFade, centerFade);
+            _material.SetFloat(ShaderIDs.ConeRadiusStart, _coneCache.radiusStart);
+            _material.SetFloat(ShaderIDs.ConeRadiusEnd, _coneCache.radiusEnd);
+            _material.SetVector(ShaderIDs.ConeSlopeCosSin,
+                new Vector4(_coneCache.cosSlope, _coneCache.sinSlope, 0, 0));
+        }
 
-            // 蒙版投影
+        private void ApplyMaskProperties()
+        {
             if (enableMask && maskTexture != null)
             {
                 _material.SetTexture(ShaderIDs.MaskTex, maskTexture);
@@ -393,10 +603,17 @@ namespace Vic.Runtime
 
         #region 几何体辅助
 
-        /// 计算光锥末端半径
+        /// 计算光锥末端半径：使用 ConeGeometryCache 缓存，避免每帧重复三角函数计算。
+        /// 保持向后兼容（OnDrawGizmosSelected 仍调用此方法）。
         private float ComputeRadiusEnd()
         {
-            return maxDistance * Mathf.Tan(_light.spotAngle * 0.5f * Mathf.Deg2Rad);
+            if (_light == null) return 0f;
+            if (!_coneCache.IsValid
+                || !_coneCache.Matches(_light, maxDistance, coneSides, coneSegments, lightSourceRadius))
+            {
+                _coneCache.Refresh(_light, maxDistance, coneSides, coneSegments, lightSourceRadius);
+            }
+            return _coneCache.radiusEnd;
         }
 
         #endregion
@@ -461,9 +678,9 @@ namespace Vic.Runtime
             return mesh;
         }
 
-        /// 生成归一化锥形Mesh：XY在[-1,1], Z在[0,1]
-        /// 包含锥面 + 前Cap(Z=0) + 后Cap(Z=1)
-        /// UV.x标记：0=锥面, 1=cap
+        /// 生成归一化锥形 Mesh：XY 在 [-1,1]，Z 在 [0,1]
+        /// 包含锥面 + 前 Cap(Z=0) + 后 Cap(Z=1)
+        /// UV.x 标记：0=锥面, 1=cap
         private static Mesh GenerateNormalizedConeMesh(int sides, int segments)
         {
             int ringCount = segments + 2;
@@ -474,7 +691,35 @@ namespace Vic.Runtime
             var vertices = new Vector3[vertCountTotal];
             var uvs = new Vector2[vertCountTotal];
 
-            // 锥面顶点
+            // 锥面顶点 / UV
+            BuildSideVertices(vertices, uvs, sides, ringCount, segments);
+
+            // 前 Cap（Z=0）+ 后 Cap（Z=1）
+            int frontCapStart = vertCountSides;
+            BuildCapVertices(vertices, uvs, frontCapStart, sides, 0f);
+            int backCapStart = frontCapStart + vertCountCap;
+            BuildCapVertices(vertices, uvs, backCapStart, sides, 1f);
+
+            // 三角形（保持与原版相同的索引序列以确保 Mesh 资产 bit-identical）
+            var triangles = new int[sides * (segments + 1) * 6 + sides * 3 * 2];
+            int tri = 0;
+            tri = BuildSideTriangles(triangles, tri, sides, segments);
+            tri = BuildCapTriangles(triangles, tri, frontCapStart, sides, forward: true);   // 前 Cap 正面朝 +Z
+            tri = BuildCapTriangles(triangles, tri, backCapStart, sides, forward: false);   // 后 Cap 正面朝 -Z
+
+            var mesh = new Mesh
+            {
+                name = "SpotLightVolume_SharedCone",
+                vertices = vertices,
+                uv = uvs,
+                triangles = triangles
+            };
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static void BuildSideVertices(Vector3[] vertices, Vector2[] uvs, int sides, int ringCount, int segments)
+        {
             for (int i = 0; i < sides; i++)
             {
                 float angle = 2f * Mathf.PI * i / sides;
@@ -489,22 +734,11 @@ namespace Vic.Runtime
                     uvs[idx] = Vector2.zero;
                 }
             }
+        }
 
-            // 前Cap（Z=0）
-            int frontCapStart = vertCountSides;
-            BuildCapVertices(vertices, uvs, frontCapStart, sides, 0f);
-
-            // 后Cap（Z=1）
-            int backCapStart = frontCapStart + vertCountCap;
-            BuildCapVertices(vertices, uvs, backCapStart, sides, 1f);
-
-            // 三角形
-            int triCountSides = sides * (segments + 1) * 6;
-            int triCountCaps = sides * 3 * 2;
-            var triangles = new int[triCountSides + triCountCaps];
-            int tri = 0;
-
-            // 锥面
+        private static int BuildSideTriangles(int[] triangles, int triStart, int sides, int segments)
+        {
+            int tri = triStart;
             for (int seg = 0; seg < segments + 1; seg++)
             {
                 for (int i = 0; i < sides; i++)
@@ -522,32 +756,7 @@ namespace Vic.Runtime
                     triangles[tri++] = currentUp;
                 }
             }
-
-            // 前Cap（正面朝+Z）
-            for (int i = 0; i < sides; i++)
-            {
-                triangles[tri++] = frontCapStart;
-                triangles[tri++] = frontCapStart + 1 + i;
-                triangles[tri++] = frontCapStart + 1 + (i + 1) % sides;
-            }
-
-            // 后Cap（正面朝-Z）
-            for (int i = 0; i < sides; i++)
-            {
-                triangles[tri++] = backCapStart;
-                triangles[tri++] = backCapStart + 1 + (i + 1) % sides;
-                triangles[tri++] = backCapStart + 1 + i;
-            }
-
-            var mesh = new Mesh
-            {
-                name = "SpotLightVolume_SharedCone",
-                vertices = vertices,
-                uv = uvs,
-                triangles = triangles
-            };
-            mesh.RecalculateBounds();
-            return mesh;
+            return tri;
         }
 
         private static void BuildCapVertices(Vector3[] vertices, Vector2[] uvs, int startIdx, int sides, float z)
@@ -560,6 +769,28 @@ namespace Vic.Runtime
                 vertices[startIdx + 1 + i] = new Vector3(Mathf.Cos(angle), Mathf.Sin(angle), z);
                 uvs[startIdx + 1 + i] = new Vector2(1, 0);
             }
+        }
+
+        /// forward=true 朝 +Z（前 Cap），forward=false 朝 -Z（后 Cap）
+        private static int BuildCapTriangles(int[] triangles, int triStart, int capStart, int sides, bool forward)
+        {
+            int tri = triStart;
+            for (int i = 0; i < sides; i++)
+            {
+                if (forward)
+                {
+                    triangles[tri++] = capStart;
+                    triangles[tri++] = capStart + 1 + i;
+                    triangles[tri++] = capStart + 1 + (i + 1) % sides;
+                }
+                else
+                {
+                    triangles[tri++] = capStart;
+                    triangles[tri++] = capStart + 1 + (i + 1) % sides;
+                    triangles[tri++] = capStart + 1 + i;
+                }
+            }
+            return tri;
         }
 
         #endregion

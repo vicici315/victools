@@ -20,6 +20,7 @@
 //               解决 URP DepthPrimingMode=Forced 下 GS 双面薄片 Z 精度不一致导致的黑色面重叠问题
 //               原理：DepthOnly 写"草根深度"，Forward 阶段 ZTest Equal 比较"草根深度==草根深度"，永远命中
 //               alpha test 改在 DepthOnly fragment 中用 _BaseMap 采样裁剪，保留 _BLADE_OVERLAY_ON 关键字支持
+// Grass 2.5 阴影接收改为顶点阴影：阴影衰减值经 varying 插值后 fragment 直接使用，不再逐像素采样 shadow map _UseVertexShadow 开关：关闭时回退为原 GetMainLight(shadowCoord) 像素阴影路径
 
 Shader "Custom/Grass"
 {
@@ -27,7 +28,8 @@ Shader "Custom/Grass"
     {
         [Header(Tessellation)]
         _TessellationUniform("Tessellation Uniform", Range(1, 64)) = 1
-        [Header(Shading)]
+        // [Header(Shading)]
+        [Toggle(_USE_VERTEX_SHADOW)] _UseVertexShadow("Use Vertex Shadow (顶点阴影)", Float) = 1
         _TopColor("Top Color", Color) = (0.45, 0.86, 0.17, 1)
         _BottomColor("Bottom Color", Color) = (0.02, 0.25, 0.08, 1)
         _GradientOffset("Gradient Offset", Range(-1, 1)) = 0
@@ -85,6 +87,7 @@ Shader "Custom/Grass"
         #pragma warning (disable : 3205)
         #define PREFER_HALF 0
         #pragma shader_feature_local _BLADE_OVERLAY_ON
+        #pragma shader_feature_local _USE_VERTEX_SHADOW
 
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
@@ -211,6 +214,69 @@ Shader "Custom/Grass"
             );
         }
 
+        // ─── Grass 2.5 顶点阴影 ───
+        // 真正的顶点阴影：shadow map 深度在 GS 顶点阶段采样并计算阴影衰减值，
+        // 草叶上逐顶点插值，fragment 直接使用插值结果，不再逐像素采样 shadow map。
+        // 平台限制：GLES/GLES3 的 shadow map 是比较纹理(sampler2DShadow)，
+        //           顶点阶段无法普通采样，退化回 fragment 阶段用 shadowCoord 采样。
+        half ComputeVertexMainLightShadow(float3 worldPos)
+        {
+            #if !defined(_USE_VERTEX_SHADOW)
+                return half(1.0); // 顶点阴影开关关闭 → 顶点阶段不计算阴影，fragment 回退像素阴影
+            #elif defined(MAIN_LIGHT_CALCULATE_SHADOWS) && !defined(SHADER_API_GLES3) && !defined(SHADER_API_GLES)
+                float4 shadowCoord = TransformWorldToShadowCoord(worldPos);
+
+                // 超出阴影贴图有效范围 → 完全受光
+                if (shadowCoord.z <= 0.0 || shadowCoord.z >= 1.0 ||
+                    shadowCoord.x < 0.0 || shadowCoord.x > 1.0 ||
+                    shadowCoord.y < 0.0 || shadowCoord.y > 1.0)
+                    return half(1.0);
+
+                half4 shadowParams = GetMainLightShadowParams(); // x=阴影强度, y=软阴影质量(0=硬,1=低,2=中,3=高)
+                float2 texelSize = _MainLightShadowmapSize.xy;   // 单个 texel 的 UV 大小 (1/width, 1/height)
+
+                half attenuation = half(0.0);
+                if (shadowParams.y > 0.5)
+                {
+                    // 软阴影：2x2 手动 PCF（顶点阶段无法使用比较采样器 SampleCmp，故手动深度比较）
+                    // reverse-Z 平台(D3D11/Vulkan/Metal)：occluder 离光源越近 → depth 值越大 → occluder > receiver = 阴影
+                    // forward-Z 平台(OpenGL/GLES)：occluder 离光源越近 → depth 值越小 → occluder < receiver = 阴影
+                    [unroll]
+                    for (int x = 0; x < 2; x++)
+                    {
+                        [unroll]
+                        for (int y = 0; y < 2; y++)
+                        {
+                            float2 sampleUV = shadowCoord.xy + (float2(x, y) - 0.5) * texelSize;
+                            float shadowMapDepth = SAMPLE_TEXTURE2D_LOD(_MainLightShadowmapTexture, sampler_PointClamp, sampleUV, 0).r;
+                            #if UNITY_REVERSED_Z
+                            bool inShadow = (shadowMapDepth + _ShadowBias.x >= shadowCoord.z);
+                            #else
+                            bool inShadow = (shadowMapDepth + _ShadowBias.x <= shadowCoord.z);
+                            #endif
+                            attenuation += inShadow ? half(0.0) : half(0.25);
+                        }
+                    }
+                }
+                else
+                {
+                    // 硬阴影：单点采样
+                    float shadowMapDepth = SAMPLE_TEXTURE2D_LOD(_MainLightShadowmapTexture, sampler_PointClamp, shadowCoord.xy, 0).r;
+                    #if UNITY_REVERSED_Z
+                    bool inShadow = (shadowMapDepth + _ShadowBias.x >= shadowCoord.z);
+                    #else
+                    bool inShadow = (shadowMapDepth + _ShadowBias.x <= shadowCoord.z);
+                    #endif
+                    attenuation = inShadow ? half(0.0) : half(1.0);
+                }
+
+                // 应用阴影强度
+                return lerp(half(1.0), attenuation, shadowParams.x);
+            #else
+                return half(1.0); // 该平台下 fragment 阶段会使用 shadowCoord 重新计算
+            #endif
+        }
+
         struct geometryOutput
         {
             float4 pos : SV_POSITION;
@@ -221,6 +287,8 @@ Shader "Custom/Grass"
             #ifdef _BLADE_OVERLAY_ON
             float2 overlayUV : TEXCOORD4;
             #endif
+            float4 shadowCoord : TEXCOORD5; // 顶点阴影坐标（GLES 回退方案使用）
+            half shadow : TEXCOORD6;        // Grass 2.6 顶点阴影：顶点阶段采样的阴影衰减值
         };
 
         geometryOutput VertexOutput(float3 pos, float2 uv, float3 normal, float4 grassColor, float2 overlayUV)
@@ -231,6 +299,9 @@ Shader "Custom/Grass"
             o.uv = uv;
             o.normal = TransformObjectToWorldNormal(normal);
             o.grassColor = grassColor;
+            // Grass 2.5 顶点阴影：顶点阶段直接采样阴影衰减值，fragment 插值使用
+            o.shadowCoord = TransformWorldToShadowCoord(o.worldPos);
+            o.shadow = ComputeVertexMainLightShadow(o.worldPos);
             #ifdef _BLADE_OVERLAY_ON
             o.overlayUV = overlayUV;
             #endif
@@ -358,6 +429,8 @@ Shader "Custom/Grass"
                     oL.uv = float2(0, colorV);
                     oL.normal = TransformObjectToWorldNormal(faceNormal);
                     oL.grassColor = grassColor;
+                    oL.shadowCoord = TransformWorldToShadowCoord(oL.worldPos);
+                    oL.shadow = ComputeVertexMainLightShadow(oL.worldPos);
                     oL.overlayUV = float2(0, colorV);
                     triStream.Append(oL);
 
@@ -367,6 +440,8 @@ Shader "Custom/Grass"
                     oR.uv = float2(1, colorV);
                     oR.normal = TransformObjectToWorldNormal(faceNormal);
                     oR.grassColor = grassColor;
+                    oR.shadowCoord = TransformWorldToShadowCoord(oR.worldPos);
+                    oR.shadow = ComputeVertexMainLightShadow(oR.worldPos);
                     oR.overlayUV = float2(1, colorV);
                     triStream.Append(oR);
                 }
@@ -475,8 +550,14 @@ Shader "Custom/Grass"
             {
                 // 草叶为薄片，正反面使用相同法线计算光照，保持亮度一致
                 float3 normal = i.normal;
-                float4 shadowCoord = TransformWorldToShadowCoord(i.worldPos);
-                Light mainLight = GetMainLight(shadowCoord);
+                // Grass 2.5 顶点阴影：fragment 直接使用顶点阶段采样并插值后的阴影衰减值，不再逐像素采样 shadow map
+                #if defined(_USE_VERTEX_SHADOW) && defined(MAIN_LIGHT_CALCULATE_SHADOWS) && !defined(SHADER_API_GLES3) && !defined(SHADER_API_GLES)
+                    Light mainLight = GetMainLight();
+                    mainLight.shadowAttenuation = i.shadow;
+                #else
+                    // 顶点阴影关闭 / GLES 平台回退：fragment 像素级阴影采样
+                    Light mainLight = GetMainLight(i.shadowCoord);
+                #endif
                 float shadow = mainLight.shadowAttenuation;
                 float NdotL = saturate(dot(normal, mainLight.direction));
                 float3 ambient = SampleSH(normal);

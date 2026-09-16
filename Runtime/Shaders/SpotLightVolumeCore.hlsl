@@ -22,6 +22,13 @@
 //      - 增亮直接融入_Intensity倍率，效果明显可控
 //      - 新增_CenterFade（中心渐变距离）参数，控制光轴中心高亮向外扩散的范围
 //      - 所有新参数纳入存读档系统
+// v6.4 软饱和（Reinhard Tone Mapping）+ 曝光系数：
+//      - 新增_VOLUME_SOFTSAT shader_feature（默认关闭，保持向后兼容）
+//      - 多盏体积光叠加 + Bloom 后处理时，启用后对 raymarching 总强度做 x → x/(1+x) 强压缩
+//        （相较 1-exp(-x) 更陡，弱信号也明显压缩、多灯叠加后总量受限）
+//      - 新增_VolumeExposure 曝光系数（0.1~2，默认 1）：手动控制单灯总能量，
+//        类似摄影曝光补偿，可单独降低以应对叠加过曝
+//      - 自适应：弱信号压缩但保留细节、强信号渐进逼近 1.0 + 用户可控曝光，双管齐下避免 Bloom 过曝
 
 
 #ifndef SPOT_LIGHT_VOLUME_CORE_INCLUDED
@@ -47,6 +54,7 @@ struct Varyings
 CBUFFER_START(UnityPerMaterial)
     half4 _VolumeColor;
     half _Intensity;
+    half _VolumeExposure;  // 曝光系数（类似摄影曝光补偿），手动控制单灯总能量, 1.0=默认
     float _FallOffStart;
     float _FallOffEnd;
     half _EdgeFade;
@@ -260,7 +268,8 @@ half4 frag(Varyings input) : SV_Target
     float zOut = cameraPosOS.z + rayDir.z * tOut;
     float avgZ = (zIn + zOut) * 0.5;
     float boostFalloff = 1.0 - smoothstep(0.0, max(_StartBoostRange, 0.01), avgZ);
-    float finalIntensity = _Intensity * (1.0 + boostFalloff * _StartBoostIntensity);
+    // 引入 _VolumeExposure 作为曝光系数（类似摄影曝光补偿），手动控制单灯总能量以应对多灯+Bloom 场景
+    float finalIntensity = _Intensity * _VolumeExposure * (1.0 + boostFalloff * _StartBoostIntensity);
 
     // 正面/背面眩光
     float facingLight = saturate(-rayDir.z);
@@ -269,6 +278,17 @@ half4 frag(Varyings input) : SV_Target
 
     // 最终
     totalIntensity *= finalIntensity;
+
+    // === 软饱和：强化 Reinhard Tone Mapping（可选）===
+    // 多盏体积光叠加 + Bloom 后处理时，原始 HDR 信号远超 Bloom 阈值，
+    // 引发大范围泛白（过曝）。启用 _VOLUME_SOFTSAT 时按 x → x/(1+x) 软压缩：
+    //   - 弱信号（x<1）：明显压缩但保留细节
+    //   - 强信号（x>=2）：渐进逼近 1.0，大幅避免 Bloom 无限放大
+    // 配合 Inspector 的 VolumeExposure 滑块（0.1~2）可手动调节单灯能量，做到更细致控制。
+    // 单盏使用或无 Bloom 场景建议关闭，避免不必要的色调映射损失。
+#if _VOLUME_SOFTSAT
+    totalIntensity = totalIntensity / (1.0 + totalIntensity);
+#endif
 
     half4 color = half4(_VolumeColor.rgb, 1.0);
 

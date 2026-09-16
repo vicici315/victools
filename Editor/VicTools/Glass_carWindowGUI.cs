@@ -1,4 +1,4 @@
-// Glass_carWindow.shader GUI控制脚本
+﻿// Glass_carWindow.shader GUI控制脚本
 // 基于PBR_MobileGUI的控制逻辑实现
 // Glass_carWindowGUIv1.1 修复Glass_MobileNew.shader的读档排序错误问题
 // Glass_carWindowGUIv2.0 添加预设列表菜单，读档使用下拉菜单模式
@@ -40,6 +40,11 @@ public class Glass_carWindowGUI : ShaderGUI
     private MaterialProperty fresnelRampTexture; // Glass_carWindow独有
     private MaterialProperty fresnelRampRow; // Glass_carWindow独有
     private MaterialProperty fresnelRampIntensity; // Glass_carWindow独有
+    // 自发光（emission，参考 PBR_Mobile_NEW.shader 命名）— Glass_MobileNew 独有
+    private MaterialProperty useEmissionMap;
+    private MaterialProperty emissionColor;
+    private MaterialProperty emissionMap;
+    private MaterialProperty emissionScale;
     // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
     private MaterialProperty useVertexDisplacement;
     private MaterialProperty treeNoiseTexture1;
@@ -90,6 +95,13 @@ public class Glass_carWindowGUI : ShaderGUI
         using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
         DrawFresnel();
         }
+        // 自发光（Glass_MobileNew 独有，参考 PBR_Mobile_NEW.shader 的 emission 字段）
+        if (useEmissionMap != null)
+        {
+            using(new GUILayout.VerticalScope(EditorStyles.helpBox)){
+                DrawEmission();
+            }
+        }
         // Glass_carWindow独有：菲涅尔渐变贴图（Glass_MobileNew 无此属性，跳过防止空盒）
         if (useFresnelRamp != null)
         {
@@ -128,6 +140,11 @@ public class Glass_carWindowGUI : ShaderGUI
         fresnelRampTexture = FindProperty("_FresnelRampTexture", m_Properties, false); // Glass_carWindow独有
         fresnelRampRow = FindProperty("_FresnelRampRow", m_Properties, false); // Glass_carWindow独有
         fresnelRampIntensity = FindProperty("_FresnelRampIntensity", m_Properties, false); // Glass_carWindow独有
+        // 自发光（Glass_MobileNew 独有）
+        useEmissionMap = FindProperty("_UseEmissionMap", m_Properties, false);
+        emissionColor   = FindProperty("_EmissionColor",   m_Properties, false);
+        emissionMap     = FindProperty("_EmissionMap",     m_Properties, false);
+        emissionScale   = FindProperty("_EmissionScale",   m_Properties, false);
         // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
         useVertexDisplacement = FindProperty("_UseVertexDisplacement", m_Properties, false);
         treeNoiseTexture1 = FindProperty("_Tree_NoiseTexture1", m_Properties, false);
@@ -472,6 +489,45 @@ public class Glass_carWindowGUI : ShaderGUI
 
     }
 
+    // 自发光（Glass_MobileNew 独有；参考 PBR_Mobile_NEW.shader 命名：_UseEmissionMap/_EmissionColor/_EmissionMap/_EmissionScale）
+    private void DrawEmission()
+    {
+        // 章节编号：插入自发光后，原 6/7 → 7/8
+        string sectionNumber = (useRefraction != null) ? "8" : "7";
+
+        // 显式监听 toggle：强制同步 keyword（防止 [Toggle] 自动处理在某些 Editor 场景下失效）
+        EditorGUI.BeginChangeCheck();
+        HeaderStyle.ShaderProperty(m_MaterialEditor, useEmissionMap, $"{sectionNumber} ▌使用自发光贴图 (Emission)", HeaderStyle.Lighting);
+        if (EditorGUI.EndChangeCheck())
+        {
+            foreach (var obj in m_MaterialEditor.targets)
+            {
+                Material mat = obj as Material;
+                if (mat == null) continue;
+                if (useEmissionMap.floatValue > 0.5f)
+                    mat.EnableKeyword("_USEEMISSIONMAP");
+                else
+                    mat.DisableKeyword("_USEEMISSIONMAP");
+            }
+        }
+
+        if (useEmissionMap.floatValue > 0.5f)
+        {
+            EditorGUI.indentLevel++;
+            EditorGUILayout.HelpBox(
+                "算法：emissionMap.rgb × _EmissionColor.rgb × _EmissionScale，加到 finalColor。\n" +
+                "_EmissionColor 是 [HDR] 颜色，>1.0 数值可触发 Bloom 后处理。",
+                MessageType.Info);
+
+            if (emissionMap != null)
+                m_MaterialEditor.TexturePropertySingleLine(new GUIContent("自发光贴图 (RGB)"), emissionMap);
+            if (emissionColor != null) m_MaterialEditor.ColorProperty(emissionColor, "自发光颜色 (HDR)");
+            if (emissionScale != null) m_MaterialEditor.RangeProperty(emissionScale, "自发光强度");
+
+            EditorGUI.indentLevel--;
+        }
+    }
+
     private void DrawFresnelRamp()
     {
         // Glass_carWindow独有的菲涅尔渐变贴图功能
@@ -479,8 +535,8 @@ public class Glass_carWindowGUI : ShaderGUI
             fresnelRampRow != null && fresnelRampIntensity != null)
         {
             // 根据是否有折射功能来决定标题编号
-            // 插入顶点风动位移后，原 6/7 → 7/8
-            string sectionNumber = (useRefraction != null) ? "8" : "7";
+            // 插入自发光后，原 7/8 → 8/9
+            string sectionNumber = (useRefraction != null) ? "9" : "8";
             HeaderStyle.ShaderProperty(m_MaterialEditor, useFresnelRamp, $"{sectionNumber} ▌使用菲涅尔渐变贴图", HeaderStyle.Fresnel);
             
             if (useFresnelRamp.floatValue > 0.5f)
@@ -500,8 +556,8 @@ public class Glass_carWindowGUI : ShaderGUI
 
     private void DrawRenderSettings()
     {
-        // 章节编号：插入顶点风动位移后，原 7 → 8 (有折射时 9)
-        string sectionNumber = (useRefraction != null) ? "9" : "8";
+        // 章节编号：插入自发光后，原 8 → 9 (有折射时 10)
+        string sectionNumber = (useRefraction != null) ? "10" : "9";
         GUILayout.Label(HeaderStyle.Rich($"{sectionNumber} ▌渲染设置 (Render Settings)", HeaderStyle.Render), EditorStyle.Get.BoldLabelRichStyle);
         
         // Glass_MobileNew 渲染模式切换
@@ -788,7 +844,7 @@ public class Glass_carWindowGUI : ShaderGUI
 
         // 手动解析JSON
         var lines = json.Split(new[] { '\n', '\r' }, System.StringSplitOptions.RemoveEmptyEntries);
-        
+
         // 收集缺失纹理的警告信息
         System.Collections.Generic.List<string> missingTextures = new System.Collections.Generic.List<string>();
         
@@ -805,8 +861,8 @@ public class Glass_carWindowGUI : ShaderGUI
             string valueStr = trimmed.Substring(colonIndex + 1).Trim();
             
             if (!material.HasProperty(propertyName)) continue;
-            
-            // 纹理类型：值以 { 开头
+
+                        // 纹理类型：值以 { 开头
             if (valueStr.StartsWith("{"))
             {
                 // 拼接多行直到找到 }
@@ -911,7 +967,7 @@ public class Glass_carWindowGUI : ShaderGUI
                 }
             }
         }
-        
+
         // 显示缺失纹理警告
         if (missingTextures.Count > 0)
         {
@@ -926,11 +982,11 @@ public class Glass_carWindowGUI : ShaderGUI
         EditorUtility.SetDirty(material);
         if (m_MaterialEditor != null) m_MaterialEditor.Repaint();
         SceneView.RepaintAll();
-        
+
         string texInfo = loadTextures ? "（含纹理）" : "（仅参数）";
         Debug.Log($"玻璃材质参数已从存档加载{texInfo}: {filePath}");
     }
-    
+
     /// 从简易JSON中提取字符串值
     private static string ExtractJsonStringValue(string json, string key)
     {
@@ -983,6 +1039,7 @@ public class Glass_carWindowGUI : ShaderGUI
             { "_DeformUseUV",          "_DEFORM_USE_UV"         },  // Glass_MobileNew 顶点变形UV模式
             { "_UseFresnelRamp",       "_USEFRESNELRAMP"        },  // Glass_carWindow
             { "_UseVertexDisplacement","_USEVERTEXDISPLACEMENT" },  // 顶点风动位移（移植自 SyntyStudios/SciFiPlant）
+            { "_UseEmissionMap",       "_USEEMISSIONMAP"        },  // 自发光（Glass_MobileNew / 参考 PBR_Mobile_NEW.shader）
         };
 
         foreach (var pair in toggleKeywords)
@@ -995,9 +1052,11 @@ public class Glass_carWindowGUI : ShaderGUI
             else
                 material.DisableKeyword(pair.Value);
         }
-        
-        // 同步渲染模式（Glass_MobileNew）
-        ApplyRenderMode(material);
+
+        // 注意：不在此处调用 ApplyRenderMode，避免读档 / 重置路径覆盖用户自定义的
+        // material.renderQueue / _ZWrite / SetOverrideTag("RenderType")。
+        // ApplyRenderMode 仅在 DrawRenderSettings 的 _RenderMode toggle 改变时被调用（手动切模式场景）。
+        // _RENDERMODE_TRANSPARENT / _RENDERMODE_OPAQUE keywords 仍会通过 [KeywordEnum] 自动同步。
     }
 
     /// 重置材质参数为默认值（使用Default存档或shader默认值）

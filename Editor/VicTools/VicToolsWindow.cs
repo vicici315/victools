@@ -1445,12 +1445,13 @@ namespace VicTools
             
             // 添加帮助和配置按钮 - 放在窗口右上角
             EditorGUILayout.BeginHorizontal();
-            if (GUILayout.Button(new GUIContent("Menu ▾", "辅助工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
+            GUI.backgroundColor = new Color(0.15f, 0.55f, 1.0f); 
+            if (GUILayout.Button(new GUIContent("Edit ▾", "编辑工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
             {
                 var rect = GUILayoutUtility.GetLastRect();
                 ShowMenuDropdown(rect);
             }
-            if (GUILayout.Button(new GUIContent("Tools ▾", "其它工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
+            if (GUILayout.Button(new GUIContent("Tools ▾", "组件工具菜单"), GUILayout.Width(52), GUILayout.Height(20)))
             {
                 var rect = GUILayoutUtility.GetLastRect();
                 ShowToolsDropdown(rect);
@@ -1698,6 +1699,7 @@ namespace VicTools
                 new VicDropdownItemData("镜像模型→X轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.X)),
                 new VicDropdownItemData("镜像模型→Y轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.Y)),
                 new VicDropdownItemData("镜像模型→Z轴", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), () => MirrorSelectedModel(MirrorAxis.Z)),
+                new VicDropdownItemData("→保存镜像Mesh", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/resetPosition.png"), SaveMirrorMeshes),
             };
         }
 
@@ -1705,12 +1707,14 @@ namespace VicTools
         {
             return new List<VicDropdownItemData>
             {
-                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）Tools ▾: 主材质自定义灯光工具", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
-                new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
+                new VicDropdownItemData("PBR_Mobile_NEW（自定义PBR主材质_新版）Tools ▾: 主材质自定义灯光工具", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_NEW")),
+                new VicDropdownItemData("PBR_Mobile（自定义PBR主材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile")),
+                new VicDropdownItemData("PBR_Mobile_Trans（自定义PBR主材质透明版）(基于PreZ)", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_blue.png"), () => CreateMaterialFromShader("Custom/PBR_Mobile_Trans")),
                 VicDropdownItemData.Separator(),
                 new VicDropdownItemData("AddTrans（透明叠加，可模拟灯光照射）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_light.png"), () => CreateMaterialFromShader("Custom/AddTrans")),
                 new VicDropdownItemData("Glass_carWindow（玻璃材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_glass.png"), () => CreateMaterialFromShader("Custom/Glass_carWindow")),
                 new VicDropdownItemData("Glass_MobileNew（折射效果水、果冻材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_glass.png"), () => CreateMaterialFromShader("Custom/Glass_MobileNew")),
+                new VicDropdownItemData("Custom_Ocean（海面材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_ocean.png"), () => CreateMaterialFromShader("Custom/Custom_Ocean")),
                 new VicDropdownItemData("Tree_Trans（植被树叶透明飘动材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_leaf.png"), () => CreateMaterialFromShader("Custom/Tree_Trans")),
                 new VicDropdownItemData("Grass（草地材质，可交互）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_grass.png"), () => CreateMaterialFromShader("Custom/Grass")),
                 new VicDropdownItemData("Texture（纯贴图颜色Alpha透明）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_tex.png"), () => CreateMaterialFromShader("Custom/Texture")),
@@ -1726,7 +1730,7 @@ namespace VicTools
                 new VicDropdownItemData("OutlineZOffset（轮廓描边材质）Tools ▾: 轮廓描边辅助工具", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_black.png"), () => CreateMaterialFromShader("Custom/Outline/OutlineZOffset")),
                 VicDropdownItemData.Separator(),
                 new VicDropdownItemData("CustomParticle（带法线粒子材质，水渍效果）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_particle.png"), () => CreateMaterialFromShader("Custom/Fx/CustomParticle")),
-                new VicDropdownItemData("CustomTransCutout（Masked非半透明材质）", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_red.png"), () => CreateMaterialFromShader("Custom/TransCutout")),
+                new VicDropdownItemData("CustomTransCutout（Masked非半透明材质）(基于PreZ)", LoadItemIcon("Packages/com.youdoo.victools/Editor/VicTools/p_red.png"), () => CreateMaterialFromShader("Custom/TransCutout")),
             };
         }
 
@@ -1866,11 +1870,29 @@ namespace VicTools
             // 同一源 Mesh 复用之前已生成的镜像（不重复创建）
             if (!sourceToMirror.TryGetValue(srcMesh, out Mesh newMesh))
             {
-                newMesh = MirrorMesh(srcMesh, axis);
-                if (newMesh == null) continue;
+                // 1) 优先查找磁盘上已存在的同名+同方向镜像资产（如之前"保存镜像"已写入 xxx_MirrorX.asset），
+                //    命中就直接复用，省去 MirrorMesh 复制步骤，也避免同目录出现 xxx 1.asset。
+                string srcAssetPath = AssetDatabase.GetAssetPath(srcMesh);
+                string existingMirrorPath = TryGetMirrorAssetPath(srcMesh, srcAssetPath, axis);
+                if (!string.IsNullOrEmpty(existingMirrorPath))
+                {
+                    var existingMirror = AssetDatabase.LoadAssetAtPath<Mesh>(existingMirrorPath);
+                    if (existingMirror != null)
+                    {
+                        newMesh = existingMirror;
+                    }
+                }
+
+                // 2) 磁盘上没有才新建
+                if (newMesh == null)
+                {
+                    newMesh = MirrorMesh(srcMesh, axis);
+                    if (newMesh == null) continue;
+                    // 只在新 Mesh 首次入字典时注册一次 Undo 创建（复用磁盘资产无需注册）
+                    Undo.RegisterCreatedObjectUndo(newMesh, "镜像 Mesh");
+                }
+
                 sourceToMirror[srcMesh] = newMesh;
-                // 只在新 Mesh 首次入字典时注册一次 Undo 创建
-                Undo.RegisterCreatedObjectUndo(newMesh, "镜像 Mesh");
             }
 
             // 替换 Renderer 上的 Mesh（先记录原状态以便 Undo 还原）
@@ -1910,6 +1932,247 @@ namespace VicTools
         Undo.CollapseUndoOperations(undoGroup);
 
         Debug.Log($"[镜像] 已完成 {axis} 轴镜像，处理了 {rendererCount} 个 Renderer");
+    }
+
+    /// 把选中对象上"已被镜像的 Mesh"批量保存为 .asset 资产，避免重新打开场景后引用丢失。
+    /// <para>典型工作流：</para>
+    /// <list type="number">
+    ///   <item>用"镜像模型→X/Y/Z 轴"在内存中产生镜像 Mesh（默认 HideAndDontSave，仅在当前会话有效）。</item>
+    ///   <item>选中要保存的镜像对象（可批量），执行本菜单。</item>
+    ///   <item>镜像 Mesh 会被持久化为 xxx_MirrorX/Y/Z.asset 放到"同名源 Mesh 所在的目录"下。</item>
+    /// </list>
+    /// <para>筛选规则：</para>
+    /// <list type="bullet">
+    ///   <item>只处理 mesh.name 末尾带 _MirrorX / _MirrorY / _MirrorZ 后缀的 Mesh；其余跳过。</item>
+    ///   <item>已经保存为资产（<see cref="AssetDatabase.Contains"/>）的 Mesh 跳过，避免重复。</item>
+    ///   <item>"同名源 Mesh"由活动场景里所有 Renderer 共享的、不带后缀的 Mesh 来反查定位。</item>
+    /// </list>
+    /// <para>作用范围：仅选中对象（与 MirrorSelectedModel 一致，不递归子节点）。</para>
+    private static void SaveMirrorMeshes()
+    {
+        // ===== 1. 前置校验：选中和组件 =====
+        var selectedObjects = Selection.gameObjects;
+        if (selectedObjects == null || selectedObjects.Length == 0)
+        {
+            EditorUtility.DisplayDialog("保存镜像",
+                "请先在场景中选中一个或多个模型对象。\n\n" +
+                "本工具仅处理选中对象自身的 Renderer（不递归子节点），" +
+                "且只保存 Mesh 名称末尾带 _MirrorX / _MirrorY / _MirrorZ 后缀的对象。",
+                "确定");
+            return;
+        }
+
+        // 开启 Undo 组，便于把"保存镜像"涉及到的镜像 Mesh hideFlags、命名等修改合并到一次 Undo
+        int undoGroup = Undo.GetCurrentGroup();
+        Undo.SetCurrentGroupName("保存镜像");
+
+        // 收集选中对象的 Renderer（仅自身，不递归子节点，与 MirrorSelectedModel 保持一致）
+        var selectedRenderers = new List<Renderer>();
+        foreach (var sel in selectedObjects)
+        {
+            var rend = sel.GetComponent<Renderer>();
+            if (rend != null && !selectedRenderers.Contains(rend)) selectedRenderers.Add(rend);
+        }
+        if (selectedRenderers.Count == 0)
+        {
+            EditorUtility.DisplayDialog("保存镜像",
+                "选中的对象都没有 Renderer 组件（MeshRenderer / SkinnedMeshRenderer）。\n\n" +
+                "请选中至少一个含 Renderer 的镜像模型对象再试。",
+                "确定");
+            Undo.CollapseUndoOperations(undoGroup);
+            return;
+        }
+
+        // ===== 2. 收集所有已加载 mesh 的"名称 → 资产路径"映射 =====
+        // 覆盖场景 Renderer 引用、Prefab 引用，以及 MirrorSelectedModel 替换 sharedMesh 后
+        // 不再被 Renderer 引用的源 mesh。
+        var nameToAssetPaths = new Dictionary<string, List<string>>();
+        var allLoadedMeshes = Resources.FindObjectsOfTypeAll<Mesh>();
+        foreach (var m in allLoadedMeshes)
+        {
+            if (m == null || string.IsNullOrEmpty(m.name)) continue;
+            string p = AssetDatabase.GetAssetPath(m);
+            if (string.IsNullOrEmpty(p)) continue;  // 跳过运行时 mesh / 临时 mesh
+            if (!nameToAssetPaths.TryGetValue(m.name, out var list))
+            {
+                list = new List<string>();
+                nameToAssetPaths[m.name] = list;
+            }
+            list.Add(p);
+        }
+
+        // ===== 3. 批量处理：按 Renderer 遍历，分类计数并累积示例 =====
+        const int sampleShown = 3;
+        int savedCount = 0;
+        int skippedNonMirror = 0;
+        int skippedAlreadyAsset = 0;
+        int noSourceFound = 0;
+        int sampleNonMirror = 0, sampleAlreadyAsset = 0, sampleNoSource = 0;
+        bool anyMirrorSeen = false;  // 用于判断"完全选了源对象" vs "选了至少一个镜像对象但都被跳过"
+
+        var savedLog = new System.Text.StringBuilder();
+        var notFoundLog = new System.Text.StringBuilder();
+        var nonMirrorSamples = new System.Text.StringBuilder();
+        var alreadyAssetSamples = new System.Text.StringBuilder();
+        var notFoundSamples = new System.Text.StringBuilder();
+
+        // 按目标路径去重：多个 Renderer 引用同一镜像 Mesh 时不要重复写盘
+        var alreadyWrittenPaths = new HashSet<string>();
+
+        foreach (var rend in selectedRenderers)
+        {
+            if (rend == null) continue;
+            Mesh mirrorMesh = rend is SkinnedMeshRenderer smr2
+                ? smr2.sharedMesh
+                : (rend.TryGetComponent<MeshFilter>(out var mf2) ? mf2.sharedMesh : null);
+            if (mirrorMesh == null) continue;
+
+            string goName = rend.gameObject != null ? rend.gameObject.name : "?";
+            string baseName = StripMirrorSuffix(mirrorMesh.name);
+            bool isMirror = baseName != mirrorMesh.name;
+            if (isMirror) anyMirrorSeen = true;
+
+            // (a) 不带 _MirrorX/Y/Z 后缀（说明用户选的是源对象而不是镜像对象）
+            if (!isMirror)
+            {
+                skippedNonMirror++;
+                if (sampleNonMirror < sampleShown)
+                {
+                    nonMirrorSamples.AppendLine($"    - GameObject '{goName}' 的 Mesh '{mirrorMesh.name}' 不带 _MirrorX/Y/Z 后缀");
+                    sampleNonMirror++;
+                }
+                continue;
+            }
+
+            // (b) 已是项目资产（之前已保存过）
+            if (AssetDatabase.Contains(mirrorMesh))
+            {
+                skippedAlreadyAsset++;
+                if (sampleAlreadyAsset < sampleShown)
+                {
+                    alreadyAssetSamples.AppendLine($"    - GameObject '{goName}' 的 Mesh '{mirrorMesh.name}' 已是项目资产");
+                    sampleAlreadyAsset++;
+                }
+                continue;
+            }
+
+            // (c) 兼容累计后缀（如 xxx_MirrorY_MirrorY → 剥到 xxx）：递归剥到最原始 base name
+            string realBaseName = baseName;
+            int stripDepth = 0;
+            while (IsMirrorSuffixName(realBaseName) && stripDepth < 8)
+            {
+                realBaseName = StripMirrorSuffix(realBaseName);
+                stripDepth++;
+            }
+
+            // (d) 反查源 Mesh 资产路径失败
+            if (!nameToAssetPaths.TryGetValue(realBaseName, out var sourcePaths) || sourcePaths.Count == 0)
+            {
+                noSourceFound++;
+                notFoundLog.AppendLine($"  • {mirrorMesh.name}（已尝试 baseName='{realBaseName}'）");
+                if (sampleNoSource < sampleShown)
+                {
+                    notFoundSamples.AppendLine($"    - GameObject '{goName}' 的 Mesh '{mirrorMesh.name}' 在工程中找不到 baseName='{realBaseName}' 的源资产");
+                    sampleNoSource++;
+                }
+                continue;
+            }
+
+            // (e) 实际保存
+            string srcAssetPath = sourcePaths[0];
+            string dir = System.IO.Path.GetDirectoryName(srcAssetPath)?.Replace('\\', '/');
+            string targetPath = $"{dir}/{mirrorMesh.name}.asset";
+            if (alreadyWrittenPaths.Contains(targetPath)) continue;  // 本批次已有 Renderer 处理过该目标路径
+            targetPath = AssetDatabase.GenerateUniqueAssetPath(targetPath);
+            alreadyWrittenPaths.Add(targetPath);
+
+            mirrorMesh.hideFlags = HideFlags.None;  // 取消 HideAndDontSave
+            AssetDatabase.CreateAsset(mirrorMesh, targetPath);
+            savedLog.AppendLine($"  ✓ {targetPath}");
+            savedCount++;
+        }
+
+        Undo.CollapseUndoOperations(undoGroup);
+
+        // ===== 4. 控制台完整报告 =====
+        if (savedCount > 0)
+        {
+            AssetDatabase.SaveAssets();
+            Debug.Log($"[VicTools] 已保存 {savedCount} 个镜像 Mesh：\n{savedLog}");
+        }
+        if (skippedNonMirror > 0)
+            Debug.Log($"[VicTools] 跳过 {skippedNonMirror} 个不带 _MirrorX/Y/Z 后缀的 Mesh");
+        if (skippedAlreadyAsset > 0)
+            Debug.Log($"[VicTools] 跳过 {skippedAlreadyAsset} 个已是项目资产的镜像 Mesh");
+        if (noSourceFound > 0)
+            Debug.LogWarning($"[VicTools] {noSourceFound} 个镜像 Mesh 在全工程找不到同名源 Mesh，已跳过保存：\n{notFoundLog}");
+
+        // ===== 5. 弹窗反馈：按结果分支给出针对性提示 =====
+        if (savedCount == 0)
+        {
+            // —— 完全没保存成功 ——
+
+            // (i) 特殊情况：所有 Renderer 上的 mesh 都不带 _MirrorX/Y/Z 后缀
+            //     → 大概率用户选错了对象（选成"原始模型"而非"镜像模型"）
+            if (skippedNonMirror > 0 && skippedAlreadyAsset == 0 && noSourceFound == 0 && !anyMirrorSeen)
+            {
+                EditorUtility.DisplayDialog("保存镜像",
+                    $"选中的 {skippedNonMirror} 个对象的 Mesh 都不带 _MirrorX/Y/Z 后缀，无法保存。\n\n" +
+                    "这是常见错误：保存镜像需要选中【已被镜像过的模型对象】（其 Mesh 名称末尾带 _MirrorX/Y/Z），" +
+                    "而不是原始模型对象。\n\n" +
+                    "正确流程：\n" +
+                    "  1. 选要镜像的模型 → 点击【镜像模型→X/Y/Z轴】生成内存镜像\n" +
+                    "  2. 再选中被镜像过的对象 → 点击【保存镜像】写入磁盘\n\n",
+                    "确定");
+                return;
+            }
+
+            // (ii) 通用失败：分类汇总
+            var msg = new System.Text.StringBuilder();
+            msg.AppendLine("未保存任何镜像 Mesh。详细原因：");
+            if (skippedNonMirror > 0)
+            {
+                msg.AppendLine();
+                msg.AppendLine($"【1】{skippedNonMirror} 个 Renderer 上的 Mesh 不带 _MirrorX/Y/Z 后缀（先用\"镜像模型→X/Y/Z轴\"生成镜像）");
+                if (nonMirrorSamples.Length > 0) msg.Append(nonMirrorSamples);
+            }
+            if (skippedAlreadyAsset > 0)
+            {
+                msg.AppendLine();
+                msg.AppendLine($"【2】{skippedAlreadyAsset} 个镜像 Mesh 已是项目资产，无需重复保存");
+                if (alreadyAssetSamples.Length > 0) msg.Append(alreadyAssetSamples);
+            }
+            if (noSourceFound > 0)
+            {
+                msg.AppendLine();
+                msg.AppendLine($"【3】{noSourceFound} 个镜像 Mesh 在工程中找不到同名源资产（需把原始模型放进场景作为参照）");
+                if (notFoundSamples.Length > 0) msg.Append(notFoundSamples);
+                // 末尾附全部未匹配项完整列表（不只示例）
+                if (notFoundLog.Length > 0)
+                {
+                    msg.AppendLine();
+                    msg.AppendLine("全部未匹配的镜像 Mesh：");
+                    msg.Append(notFoundLog);
+                }
+            }
+
+            EditorUtility.DisplayDialog("保存镜像", msg.ToString(), "确定");
+            return;
+        }
+
+        // —— 部分成功：savedCount > 0 但有跳过的项目 → 弹窗汇总 =====
+        if (skippedNonMirror + skippedAlreadyAsset + noSourceFound > 0)
+        {
+            var msg = new System.Text.StringBuilder();
+            msg.AppendLine($"已成功保存 {savedCount} 个镜像 Mesh，但还有 {skippedNonMirror + skippedAlreadyAsset + noSourceFound} 个未处理：");
+            if (skippedNonMirror > 0) msg.AppendLine($"  • {skippedNonMirror} 个 Mesh 不带 _MirrorX/Y/Z 后缀");
+            if (skippedAlreadyAsset > 0) msg.AppendLine($"  • {skippedAlreadyAsset} 个 Mesh 已是项目资产");
+            if (noSourceFound > 0) msg.AppendLine($"  • {noSourceFound} 个 Mesh 全工程找不到同名源 Mesh");
+            msg.AppendLine();
+            msg.AppendLine("完整报告见 Console。");
+            EditorUtility.DisplayDialog("保存镜像 - 部分成功", msg.ToString(), "确定");
+        }
+        // —— 全部成功：savedCount > 0 且无任何跳过 → 不弹窗，只在 Console 报告，避免打扰工作流 ——
     }
 
     /// 镜像 Mesh：复制一份顶点数据，执行翻转（顶点 × sign、法线 × -1 / 切线.w × -1 / 三角形绕序翻转），
@@ -1985,9 +2248,11 @@ namespace VicTools
         }
 
         // 5. 复制 Mesh 并写入新数据
+        //    name 用 StripMirrorSuffix 处理过的源名作为基础，避免在已镜像过的 Mesh 上再镜像时
+        //    出现 xxx_MirrorX_MirrorX 这种累积后缀导致文件名过长，也避免 SaveMirrorMeshes 反查 base name 时增加额外的剥后缀次数。
         Mesh newMesh = new Mesh
         {
-            name = srcMesh.name + $"_Mirror{(char)('X' + (int)axis)}",
+            name = StripMirrorSuffix(srcMesh.name) + $"_Mirror{(char)('X' + (int)axis)}",
             vertices = vertices,
             normals = normals,
             triangles = triangles,
@@ -2071,6 +2336,29 @@ namespace VicTools
         if (meshName.EndsWith("_MirrorY", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
         if (meshName.EndsWith("_MirrorZ", System.StringComparison.OrdinalIgnoreCase)) return meshName.Substring(0, meshName.Length - 8);
         return meshName;
+    }
+
+    /// 是否带镜像后缀（_MirrorX / _MirrorY / _MirrorZ），用于"保存镜像"时筛选目标 Mesh。
+    private static bool IsMirrorSuffixName(string meshName)
+    {
+        if (string.IsNullOrEmpty(meshName)) return false;
+        return StripMirrorSuffix(meshName) != meshName;
+    }
+
+    /// 根据源 Mesh 推算"同名+同方向"镜像资产在磁盘上应存在的路径。
+    /// <para>规则：与源资产同目录 + StripMirrorSuffix 后的源名 + 当前轴后缀 + .asset。
+    /// 例如源资产是 <c>Assets/Models/Foo.fbx</c>、srcMesh.name=<c>Bar</c>、axis=Y，
+    /// 则返回 <c>Assets/Models/Bar_MirrorY.asset</c>。源资产无路径（运行时 mesh）时返回 null。</para>
+    /// <para>用于 MirrorSelectedModel 在创建新镜像前查找已有 .asset 复用，避免重复创建。
+    /// 注意：本方法只算路径，文件是否存在由调用方用 AssetDatabase.LoadAssetAtPath 验证。</para>
+    private static string TryGetMirrorAssetPath(Mesh srcMesh, string srcAssetPath, MirrorAxis axis)
+    {
+        if (srcMesh == null || string.IsNullOrEmpty(srcAssetPath)) return null;
+        string dir = System.IO.Path.GetDirectoryName(srcAssetPath)?.Replace('\\', '/');
+        if (string.IsNullOrEmpty(dir)) return null;
+        string baseName = StripMirrorSuffix(srcMesh.name);
+        string axisName = $"_Mirror{(char)('X' + (int)axis)}";
+        return $"{dir}/{baseName}{axisName}.asset";
     }
 
     private void CreateRotationController()
@@ -2431,25 +2719,25 @@ namespace VicTools
         /// 显示 Menu 下拉菜单（悬浮 AdvancedDropdown，悬停高亮、支持图标）
         private void ShowMenuDropdown(Rect buttonRect)
         {
-            // 锚点下移到按钮底部 + 4px，避免菜单向上展开时盖住按钮
+            // 锚点下移到按钮底部 + 20px，避免菜单向上展开时盖住按钮
             var anchor = new Rect(buttonRect.x, buttonRect.yMax + 20f, buttonRect.width, 0f);
-            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Menu", BuildMenuItems());
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "编辑工具", BuildMenuItems());
             dropdown.Show(anchor);
         }
 
         /// 显示 Tools 下拉菜单
         private void ShowToolsDropdown(Rect buttonRect)
         {
-            // 锚点下移到按钮底部 + 4px，与 Menu / Material 下拉保持一致
+            // 锚点下移到按钮底部 + 20px，与 Menu / Material 下拉保持一致
             var anchor = new Rect(buttonRect.x + 55f, buttonRect.yMax + 20f, buttonRect.width, 0f);
-            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Tools", BuildToolsItems());
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "组件工具", BuildToolsItems());
             dropdown.Show(anchor);
         }
         private void ShowMaterialDropdown(Rect buttonRect)
         {
-            // 锚点下移到按钮底部 + 4px，与 Menu / Tools 下拉保持一致
+            // 锚点下移到按钮底部 + 20px，与 Menu / Tools 下拉保持一致
             var anchor = new Rect(buttonRect.x + 109f, buttonRect.yMax + 20f, buttonRect.width, 0f);
-            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "Material:URP", BuildMaterialItems());
+            var dropdown = new VicToolsDropdown(new AdvancedDropdownState(), "材质", BuildMaterialItems());
             dropdown.Show(anchor);
         }
 

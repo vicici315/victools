@@ -8,6 +8,7 @@ Shader "Hidden/VicTools/SpotLightVolume"
     {
         [HDR] _VolumeColor ("颜色", Color) = (1, 1, 1, 1)
         _Intensity ("强度", Range(0, 2)) = 1
+        _VolumeExposure ("曝光系数(抗过曝手动调)", Range(0.1, 2)) = 1
         _FallOffStart ("衰减起始", Float) = 0
         _FallOffEnd ("衰减结束(最远距离)", Float) = 10
         _EdgeFade ("边缘羽化", Range(0.01, 2)) = 0.3
@@ -33,7 +34,7 @@ Shader "Hidden/VicTools/SpotLightVolume"
         Tags
         {
             "RenderType" = "Transparent"
-            "Queue" = "Transparent+100"
+            "Queue" = "Transparent"
             "IgnoreProjector" = "True"
             "RenderPipeline" = "UniversalPipeline"
         }
@@ -42,9 +43,9 @@ Shader "Hidden/VicTools/SpotLightVolume"
         {
             Name "SpotLightVolume"
             Blend [_SrcBlend] [_DstBlend]
-            ZWrite On
+            ZWrite Off
             Cull Off
-            ZTest Always
+            ZTest Off
 
             HLSLPROGRAM
             #pragma vertex vert
@@ -52,6 +53,7 @@ Shader "Hidden/VicTools/SpotLightVolume"
             // 体积光柱本身不参与场景雾，避免深度雾在圆锥网格边缘形成硬边界
             // 移除 #pragma multi_compile_fog，使 URP 不为该 Pass 生成雾效变体
             #pragma shader_feature_local _BLEND_ADDITIVE _BLEND_SOFTADD _BLEND_ALPHA
+            #pragma shader_feature_local _VOLUME_SOFTSAT
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
             #include "SpotLightVolumeCore.hlsl"

@@ -1,3 +1,7 @@
+// TransCutoutGUI 1.2  v3.0 透明计算已移至 DepthOnly pass，PreZ 提示框：
+//                              - 渲染设置末尾加 PreZ 提示 HelpBox，引导用户检查 URP Asset
+//                                → Lighting → Depth Priming Mode = Auto/Forced
+//                              - 没启用时 Forward 仍能渲染（但不裁剪透明像素），用户可一眼看到提示
 // TransCutoutGUI 1.1  DitherSize 自动吸附到 2 的次方（2/4/8/16）：
 //                              - IntSlider 拖动后立刻 SnapToNearestPowerOfTwo 吸附到有效值
 //                              - 有效值表：{ 2, 4, 8, 16 }
@@ -391,6 +395,15 @@ public class TransCutoutGUI : ShaderGUI
         m_MaterialEditor.RenderQueueField();
         m_MaterialEditor.EnableInstancingField();
         m_MaterialEditor.DoubleSidedGIField();
+
+        // v3.0 PreZ 提示：透明计算已移至 DepthOnly pass，依赖 URP Depth Priming 早 discard
+        // v3.0 借鉴 PBR_Mobile_Trans v7.1.1：Queue = AlphaTest 后，URP Auto 模式自动启用 PreZ，无需改设置
+        EditorGUILayout.Space(4);
+        EditorGUILayout.HelpBox(
+            "Custom/TransCutout v3.0 透明计算统一在 DepthOnly pass 完成，Forward pass 通过 PreZ 早 discard。\n" +
+            "Queue = AlphaTest，URP Auto Depth Priming 模式自动生效，无需手动配置。\n" +
+            "若 URP 关闭了 Depth Priming，Forward 会渲染所有像素（包括本应被裁剪的透明区域），请确认。",
+            MessageType.Info);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

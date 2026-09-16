@@ -1,8 +1,22 @@
-// Compute Buffer 2.0.3 编辑器模式实时更新优化 - 增强Compute Buffer系统与编辑器集成，支持非运行模式下点光效果预览
-// Compute Buffer 2.0.2 改进 活动光源数量 显示准确度 _currentLightCount
-// Compute Buffer 2.0.1 测试
-//ComputeBuffer2.0  自定义点光照明Compute Buffer计算缓冲区方案
+// ComputeBuffer 4.2 Inspector 中文化 - 分组标题改为中文；参数标签交由 ComputeBufferLightManagerEditor 映射显示（字段名不变，已有序列化数据不受影响）
+// ComputeBuffer 4.1 跨场景渲染保护 - 修复共享材质在缺少灯光管理器的场景变黑/跳过渲染；对外接口与既有功能保持不变
+//   1. 兜底：新增全局安全位 _CustomLightSystemActive（同步 PBR_Mobile_NEW 8.5 / PBR_Mobile 7.3），未接管时 Shader 跳过自定义光照，杜绝采样已释放 GraphicsBuffer 产生 NaN 变黑
+//   2. 清理：ReleaseBuffers 同步关闭安全位、清零光源计数并解绑全局缓冲区；OnDestroy 清空静态单例 _instance
+//   3. 钩子：订阅 sceneLoaded，缓冲区已释放则重建、否则重申接管状态，并重新下发材质参数
+//   4. 回滚：恢复 ResetMaterialToDefaults 中被注释的点光源复位；运行期销毁时还原受控材质的光照开关
+// ComputeBuffer 4.0 性能与可维护性重构 - 消除重复逻辑、修复聚光灯自适应间隔失效、清理死代码；功能与对外接口（含反射字段）保持不变
+//   1. 去重：UpdateAllMaterials 复用 SetMaterialParameters；三项光照开关的"属性值+关键字"同步统一为 ApplyToggleToMaterial / ApplyToggleToAllMaterials；缓冲释放统一为 ReleaseBuffers
+//   2. 复用：点光源与聚光灯的自适应间隔共用参数化的 ComputeCameraMotion
+//   3. 修复：聚光灯自适应间隔曾读到同帧刚刷新的相机位置，速度恒为 0 导致该逻辑实际失效；现两者各持独立相机状态快照
+//   4. 清理：删除死代码 _lightDistanceCache / _activeLightIndices / cameraMoved / OptimizedLightSort / CalculateLightLOD / LightDistanceComparer / _cameraMovementThreshold
+//   5. 性能：缓存 Camera.main、剔除结果 List 复用、距离排序改用 sqrMagnitude 免开方
+// ComputeBuffer 2.0.4 匹配PBR_Mobile_NEW材质
+// ComputeBuffer 2.0.3 编辑器模式实时更新优化 - 增强Compute Buffer系统与编辑器集成，支持非运行模式下点光效果预览
+// ComputeBuffer 2.0.2 改进 活动光源数量 显示准确度 _currentLightCount
+// ComputeBuffer 2.0.1 测试
+// ComputeBuffer2.0  自定义点光照明Compute Buffer计算缓冲区方案
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 using System.Collections;
 
@@ -33,7 +47,7 @@ public class ComputeBufferLightManager : MonoBehaviour
         public float padding;         // 填充对齐
     }
 
-    [Header("Global Point Light Material Parameters")]
+    [Header("全局点光源材质参数")]
     [Tooltip("启用点光照效果")] 
     [SerializeField] private bool _usePointLight = false;
     
@@ -53,7 +67,7 @@ public class ComputeBufferLightManager : MonoBehaviour
     // ● 回弹动画参数配置区域
     // ==========================================
     
-    // [Header("Point Light Bounce Animation")]
+    [Header("点光源回弹动画")]
     [Tooltip("启用回弹动画效果 - 控制点光源强度在起始值和目标值之间来回弹跳")]
     [SerializeField] private bool _enableBounceAnimation = false;
     
@@ -69,7 +83,7 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Range(0.1f, 10f)]
     [SerializeField] private float _bounceAnimationSpeed = 2.0f;
 
-    [Header("Global Spot Light Material Parameters")]
+    [Header("全局聚光灯材质参数")]
     [Tooltip("启用聚光照效果")] 
     [SerializeField] private bool _useSpotLight = false;
     
@@ -89,11 +103,11 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Range(1, 2)]
     [SerializeField] private int _spotLightAmount = 2;
     
-    [Header("Spot Light Texture Parameters")]
+    [Header("聚光灯纹理参数")]
     [Tooltip("启用光斑纹理效果")]
     [SerializeField] private bool _useSpotTexture = false;
     
-    [Tooltip("聚光灯纹理 - 统一控制所有PBR_Mobile材质的光斑纹理")]
+    [Tooltip("聚光灯纹理 - 统一控制所有PBR_Mobile_NEW材质的光斑纹理")]
     [SerializeField] private Texture2D _spotTexture = null;
     
     [Tooltip("光斑纹理对比度")]
@@ -108,18 +122,52 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Range(0, 2)]
     [SerializeField] private float _spotTextureIntensity = 1.0f;
 
-    [Header("(PBR_Mobile) Material Management")]
+    [Header("材质管理 (PBR_Mobile_NEW)")]
     [Tooltip("在载入新场景时不删除此对象 (启动时)")] public bool dontDestroyOnLoad = false;
-    [Tooltip("自动查找场景中使用 PBR_Mobile 材质 (启动时)")]
+    [Tooltip("自动查找场景中使用 PBR_Mobile_NEW 材质 (启动时)")]
     public bool autoFindMaterials = false;
     
     [Tooltip("手动指定的材质列表")]
     public List<Material> targetMaterials = new List<Material>();
     
-    // ● 材质管理变量，用于放置PBR_Mobile材质，批量控制材质参数
+    // ● 材质管理变量，用于放置PBR_Mobile_NEW材质，批量控制材质参数
     private List<Material> _controlledMaterials = new List<Material>();
     private const string POINT_LIGHT_KEYWORD = "_USEPOINTLIGHT";
     private const string SPOT_LIGHT_KEYWORD = "_USESPOTLIGHT";
+    private const string SPOT_TEXTURE_KEYWORD = "_USESPOTTEXTURE";
+
+    // ● 全局灯光系统安全位，与 PBR_Mobile_NEW.shader / PBR_Mobile.shader 中的 _CustomLightSystemActive 一一对应。
+    //   缓冲区释放后必须置 0，否则残留的材质关键字会让 Shader 采样已销毁的 StructuredBuffer 而变黑。
+    private const string LIGHT_SYSTEM_ACTIVE_PROP = "_CustomLightSystemActive";
+
+    /// <summary>把开关状态同步到单个材质：写入浮点属性并启用/禁用对应着色器关键字。</summary>
+    private static void ApplyToggleToMaterial(Material material, int propertyId, string keyword, bool enabled)
+    {
+        if (material == null) return;
+
+        if (material.HasProperty(propertyId))
+        {
+            material.SetFloat(propertyId, enabled ? 1 : 0);
+        }
+
+        if (enabled)
+        {
+            material.EnableKeyword(keyword);
+        }
+        else
+        {
+            material.DisableKeyword(keyword);
+        }
+    }
+
+    /// <summary>把开关状态广播到所有受控材质。</summary>
+    private void ApplyToggleToAllMaterials(int propertyId, string keyword, bool enabled)
+    {
+        for (int i = 0; i < targetMaterials.Count; i++)
+        {
+            ApplyToggleToMaterial(targetMaterials[i], propertyId, keyword, enabled);
+        }
+    }
     
     // ● Shader属性ID缓存（性能优化）
     private static class ShaderPropertyIDs
@@ -133,6 +181,8 @@ public class ComputeBufferLightManager : MonoBehaviour
         public static readonly int PointLightIntensity = Shader.PropertyToID("_PointLightIntensity");
         public static readonly int PointLightRangeMultiplier = Shader.PropertyToID("_PointLightRangeMultiplier");
         public static readonly int PointLightFalloff = Shader.PropertyToID("_PointLightFalloff");
+        // ● 点光源数量：移动端Shader用它作为逐像素遍历上限（MAX_POINT_LIGHTS），需与 maxLights 保持一致
+        public static readonly int PointLightAmount = Shader.PropertyToID("_PointLightAmount");
         
         // ● 聚光照参数ID
         public static readonly int SpotLightIntensity = Shader.PropertyToID("_SpotLightIntensity");
@@ -147,16 +197,16 @@ public class ComputeBufferLightManager : MonoBehaviour
         public static readonly int SpotTextureIntensity = Shader.PropertyToID("_SpotTextureIntensity");
     }
 
-    // [Header("Point Light Configuration")]
-    [Tooltip("拖拽场景中的点光源到此列表")]
+    [Header("点光源配置")]
+    [Tooltip("拖拽场景中的点光源到此列表（最多8盏）")]
     public List<Light> pointLights = new List<Light>();
     
-    [Header("Spot Light Configuration")]
-    [Tooltip("拖拽场景中的聚光灯到此列表")]
+    [Header("聚光灯配置")]
+    [Tooltip("拖拽场景中的聚光灯到此列表（最多2盏）")]
     public List<Light> spotLights = new List<Light>();
     
     // ● 距离剔除参数
-    [Header("Distance Culling Settings")]
+    [Header("距离剔除设置")]
     [Tooltip("启用光源距离剔除 - 基于光源与摄像机的距离线性剔除过远的光源")]
     [SerializeField] private bool _enableDistanceCulling = false;
     [Tooltip("距离剔除系数 - 光源范围乘以此系数作为剔除距离阈值")]
@@ -168,9 +218,9 @@ public class ComputeBufferLightManager : MonoBehaviour
     [Range(0.0f, 1.0f)]
     [SerializeField] private float _frustumCullTolerance = 0.1f;
     
-    [Header("Performance Settings")]
+    [Header("性能设置")]
     [Tooltip("最大支持的点光源数量")]
-    [Range(1, 32)] public int maxLights = 8;
+    [Range(1, 8)] public int maxLights = 8;
     [Tooltip("点光源更新频率 (Hz)")]
     [Range(1, 60)] public int updateFrequency = 16;
     [Tooltip("聚光灯更新频率 (Hz) - 独立控制聚光灯刷新率")]
@@ -201,6 +251,7 @@ public class ComputeBufferLightManager : MonoBehaviour
     private float _lastPointLightIntensity;
     private float _lastLightRangeMultiplier;
     private float _lastLightFalloff;
+    private int _lastMaxLights;
     
     // ● 聚光灯相关参数缓存
     private bool _lastUseSpotLight;
@@ -232,13 +283,23 @@ public class ComputeBufferLightManager : MonoBehaviour
     // ● 动画更新标志 - 用于区分参数变化是否来自动画
     private bool _isAnimationUpdate = false;
     
-    // ● 性能优化：距离缓存和剔除系统
+    // ● 性能优化：剔除与自适应更新所需的状态
     private Vector3 _lastCameraPosition;
-    private float _cameraMovementThreshold = 0.1f; // 降低摄像机移动阈值，提高响应性
     private Vector3 _lastCameraVelocity;
     private float _cameraSpeedThreshold = 5.0f; // 相机速度阈值，超过此值启用自适应更新
-    private Dictionary<Light, float> _lightDistanceCache = new Dictionary<Light, float>();
-    private List<int> _activeLightIndices = new List<int>(); // 活跃光源索引缓存
+
+    // ● 聚光灯自适应间隔专用的相机运动状态：与点光源相互独立，
+    //   否则后计算的聚光灯会读到同帧刚刷新的位置，算出的速度恒为 0
+    private Vector3 _lastSpotCameraPosition;
+    private Vector3 _lastSpotCameraVelocity;
+
+    // ● 主相机缓存：Camera.main 内部按标签查找，每帧只查询一次
+    private Camera _mainCameraCache;
+
+    // ● 复用的剔除结果缓冲，避免每帧 new List 造成 GC
+    private readonly List<int> _visibleLightIndices = new List<int>();
+    // ● 与 _visibleLightIndices 平行的平方距离缓存：排序只比较相对大小，无需开方
+    private float[] _visibleLightSqrDistances = new float[32];
     
     // ● 单例模式，便于全局访问
     private static ComputeBufferLightManager _instance;
@@ -280,7 +341,7 @@ public class ComputeBufferLightManager : MonoBehaviour
 
     //● 初始化Compute Buffer系统
     //创建GraphicsBuffer并设置为全局Shader属性
-    //所有使用Custom/PBR_Mobile Shader的材质都能访问这些光源数据
+    //所有使用Custom/PBR_Mobile_NEW Shader的材质都能访问这些光源数据
 
     // ReSharper disable Unity.PerformanceAnalysis
     void InitializeComputeBuffer()
@@ -313,7 +374,10 @@ public class ComputeBufferLightManager : MonoBehaviour
         
         Shader.SetGlobalBuffer("_CustomSpotLights", _spotLightsBuffer);
         Shader.SetGlobalInt("_CustomSpotLightCount", 0);
-        
+
+        // ● 声明灯光系统已接管：Shader 侧据此决定是否采样自定义光照
+        Shader.SetGlobalFloat(LIGHT_SYSTEM_ACTIVE_PROP, 1f);
+
         Debug.Log($"Compute Buffer初始化完成: {maxLights}个点光源容量，{_spotLightAmount}个聚光灯容量");
         Debug.Log($"点光源结构体大小: {pointLightStride}字节，聚光灯结构体大小: {spotLightStride}字节");
     }
@@ -340,6 +404,9 @@ public class ComputeBufferLightManager : MonoBehaviour
 
     void Update()
     {
+        // ● 每帧只查询一次主相机，后续所有方法共用缓存
+        RefreshMainCameraCache();
+
         // ● 计算自适应更新间隔
         float adaptiveUpdateInterval = CalculateAdaptiveUpdateInterval();
         float adaptiveSpotLightInterval = CalculateAdaptiveSpotLightUpdateInterval();
@@ -384,22 +451,7 @@ public class ComputeBufferLightManager : MonoBehaviour
         if (_usePointLight != _lastUsePointLight)
         {
             changed = true;
-            // 立即同步更新所有材质的点光照开关
-            foreach (Material mat in targetMaterials)
-            {
-                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UsePointlight))
-                {
-                    mat.SetFloat(ShaderPropertyIDs.UsePointlight, _usePointLight ? 1 : 0);
-                    if (_usePointLight)
-                    {
-                        mat.EnableKeyword(POINT_LIGHT_KEYWORD);
-                    }
-                    else
-                    {
-                        mat.DisableKeyword(POINT_LIGHT_KEYWORD);
-                    }
-                }
-            }
+            ApplyToggleToAllMaterials(ShaderPropertyIDs.UsePointlight, POINT_LIGHT_KEYWORD, _usePointLight);
         }
         
         if (!Mathf.Approximately(_pointLightIntensity, _lastPointLightIntensity))
@@ -417,26 +469,17 @@ public class ComputeBufferLightManager : MonoBehaviour
             changed = true;
         }
         
+        // ● 点光源数量变化时需要重新同步材质的 _PointLightAmount
+        if (maxLights != _lastMaxLights)
+        {
+            changed = true;
+        }
+        
         // ● 检查聚光照开关变化并立即同步材质
         if (_useSpotLight != _lastUseSpotLight)
         {
             changed = true;
-            // 立即同步更新所有材质的聚光照开关
-            foreach (Material mat in targetMaterials)
-            {
-                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotlight))
-                {
-                    mat.SetFloat(ShaderPropertyIDs.UseSpotlight, _useSpotLight ? 1 : 0);
-                    if (_useSpotLight)
-                    {
-                        mat.EnableKeyword(SPOT_LIGHT_KEYWORD);
-                    }
-                    else
-                    {
-                        mat.DisableKeyword(SPOT_LIGHT_KEYWORD);
-                    }
-                }
-            }
+            ApplyToggleToAllMaterials(ShaderPropertyIDs.UseSpotlight, SPOT_LIGHT_KEYWORD, _useSpotLight);
         }
         
         if (!Mathf.Approximately(_spotLightIntensity, _lastSpotLightIntensity))
@@ -463,33 +506,18 @@ public class ComputeBufferLightManager : MonoBehaviour
         if (_useSpotTexture != _lastUseSpotTexture)
         {
             changed = true;
-            // 立即同步更新所有材质的光斑纹理开关
-            foreach (Material mat in targetMaterials)
-            {
-                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotTexture))
-                {
-                    mat.SetFloat(ShaderPropertyIDs.UseSpotTexture, _useSpotTexture ? 1 : 0);
-                    if (_useSpotTexture)
-                    {
-                        mat.EnableKeyword("_USESPOTTEXTURE");
-                    }
-                    else
-                    {
-                        mat.DisableKeyword("_USESPOTTEXTURE");
-                    }
-                }
-            }
+            ApplyToggleToAllMaterials(ShaderPropertyIDs.UseSpotTexture, SPOT_TEXTURE_KEYWORD, _useSpotTexture);
         }
-        
+
         if (_spotTexture != _lastSpotTexture)
         {
             changed = true;
             // 立即同步更新所有材质的聚光灯纹理
-            foreach (Material mat in targetMaterials)
+            if (_spotTexture != null)
             {
-                if (mat != null)
+                foreach (Material mat in targetMaterials)
                 {
-                    if (_spotTexture != null)
+                    if (mat != null)
                     {
                         mat.SetTexture(ShaderPropertyIDs.SpotTexture, _spotTexture);
                     }
@@ -537,6 +565,7 @@ public class ComputeBufferLightManager : MonoBehaviour
         _lastPointLightIntensity = _pointLightIntensity;
         _lastLightRangeMultiplier = _lightRangeMultiplier;
         _lastLightFalloff = _lightFalloff;
+        _lastMaxLights = maxLights;
         
         // 缓存聚光灯相关参数
         _lastUseSpotLight = _useSpotLight;
@@ -559,9 +588,94 @@ public class ComputeBufferLightManager : MonoBehaviour
         _lastBounceAnimationSpeed = _bounceAnimationSpeed;
     }
 
+    /// <summary>每帧刷新一次主相机缓存，避免重复调用 Camera.main（内部按标签查找，开销较高）。</summary>
+    private void RefreshMainCameraCache()
+    {
+        _mainCameraCache = Camera.main;
+    }
+
+    /// <summary>获取主相机。缓存被销毁或尚未填充时回退到实时查询。</summary>
+    private Camera GetMainCamera()
+    {
+        // UnityEngine.Object 的 == 重载会把已销毁对象视为 null，因此这里同时处理销毁与未缓存两种情况
+        if (_mainCameraCache == null)
+        {
+            _mainCameraCache = Camera.main;
+        }
+        return _mainCameraCache;
+    }
+
+    /// <summary>
+    /// 收集通过距离剔除与视锥剔除的光源索引，并按到相机的距离由近到远排序。
+    /// 点光源与聚光灯共用此流程。返回的是复用的内部列表，调用方需在下次调用前使用完毕。
+    /// </summary>
+    private List<int> CollectVisibleLightIndices(List<Light> lights, LightType expectedType, float rangeMultiplier)
+    {
+        _visibleLightIndices.Clear();
+
+        Camera mainCamera = GetMainCamera();
+        bool hasCamera = mainCamera != null;
+        Vector3 cameraPosition = hasCamera ? mainCamera.transform.position : Vector3.zero;
+
+        // 确保平方距离缓存容量足够
+        if (_visibleLightSqrDistances.Length < lights.Count)
+        {
+            _visibleLightSqrDistances = new float[Mathf.Max(lights.Count, 32)];
+        }
+
+        for (int i = 0; i < lights.Count; i++)
+        {
+            Light light = lights[i];
+            if (light == null || !light.enabled || light.type != expectedType)
+                continue;
+
+            Vector3 lightPosition = light.transform.position;
+            bool shouldIncludeLight = true;
+
+            // ● 缓存到相机的平方距离（sqrt 是单调函数，平方距离与真实距离排序结果一致）
+            float sqrDistanceToCamera = hasCamera ? (lightPosition - cameraPosition).sqrMagnitude : 0f;
+            _visibleLightSqrDistances[i] = sqrDistanceToCamera;
+
+            // ● 距离剔除：比较平方距离，避免逐光源开方
+            if (hasCamera && _enableDistanceCulling)
+            {
+                float cullDistance = light.range * rangeMultiplier * _distanceCullFactor;
+
+                // 严格的距离检查：使用 >= 确保边界条件正确处理（修复最后一盏灯始终亮着的问题）
+                if (sqrDistanceToCamera >= cullDistance * cullDistance)
+                {
+                    shouldIncludeLight = false;
+                }
+            }
+
+            // ● 视锥体剔除
+            if (shouldIncludeLight && hasCamera && _enableFrustumCulling)
+            {
+                if (!IsLightInFrustum(mainCamera, lightPosition, light.range * rangeMultiplier))
+                {
+                    shouldIncludeLight = false;
+                }
+            }
+
+            if (shouldIncludeLight)
+            {
+                _visibleLightIndices.Add(i);
+            }
+        }
+
+        // ● 按距离由近到远排序：直接比较缓存值，避免比较器内重复计算距离
+        if (_visibleLightIndices.Count > 1 && hasCamera)
+        {
+            float[] distances = _visibleLightSqrDistances;
+            _visibleLightIndices.Sort((a, b) => distances[a].CompareTo(distances[b]));
+        }
+
+        return _visibleLightIndices;
+    }
+
     //● 更新点光源数据到Compute Buffer
     //收集场景中所有有效点光源数据，批量上传到GPU
-    //性能优化：改进剔除系统、距离缓存和LOD优化
+    //性能优化：剔除（距离/视锥）+ 按距离排序后批量上传，缓冲区与结果列表均复用，避免每帧分配
 
     // ReSharper disable Unity.PerformanceAnalysis
     public int UpdateLightsBuffer()
@@ -579,109 +693,32 @@ public class ComputeBufferLightManager : MonoBehaviour
                 return _currentLightCount;
             }
         }
-        
+
         _currentLightCount = 0;
-        Camera mainCamera = Camera.main;
-        
-        // ● 性能优化：检查摄像机移动，减少不必要的更新
-        bool cameraMoved = false;
-        if (mainCamera)
-        {
-            Vector3 currentCameraPosition = mainCamera.transform.position;
-            cameraMoved = Vector3.Distance(currentCameraPosition, _lastCameraPosition) > _cameraMovementThreshold;
-            _lastCameraPosition = currentCameraPosition;
-        }
-        
-        // ● 清空活跃光源索引缓存
-        _activeLightIndices.Clear();
-        
-        // ● 第一步：收集所有通过剔除检查的光源索引
-        List<int> validLightIndices = new List<int>();
-        for (int i = 0; i < pointLights.Count; i++)
-        {
-            var light = pointLights[i];
-            if (light == null || !light.enabled || light.type != LightType.Point) 
-                continue;
-            
-            Vector3 lightPosition = light.transform.position;
-            bool shouldIncludeLight = true;
-            
-            // ● 应用距离剔除逻辑
-            if (mainCamera != null && _enableDistanceCulling)
-            {
-                float distanceToCamera = Vector3.Distance(lightPosition, mainCamera.transform.position);
-                float effectiveRange = light.range * _lightRangeMultiplier;
-                float cullDistance = effectiveRange * _distanceCullFactor;
-                
-                // 严格的距离检查：使用>=确保边界条件正确处理
-                // 修复最后一盏灯始终亮着的问题
-                if (distanceToCamera >= cullDistance)
-                {
-                    shouldIncludeLight = false;
-                    // 调试信息：记录被距离剔除的光源
-                    // #if UNITY_EDITOR
-                    // if (UnityEditor.Selection.activeGameObject == this.gameObject)
-                    // {
-                    //     Debug.Log($"距离剔除光源: {light.name}, 距离: {distanceToCamera:F2}, 剔除距离: {cullDistance:F2}");
-                    // }
-                    // #endif
-                }
-                
-                // 缓存距离信息用于排序
-                _lightDistanceCache[light] = distanceToCamera;
-            }
-            
-            // ● 应用视锥体剔除逻辑
-            if (mainCamera && _enableFrustumCulling && shouldIncludeLight)
-            {
-                // 检查光源是否在相机视锥体外
-                if (!IsLightInFrustum(mainCamera, lightPosition, light.range * _lightRangeMultiplier))
-                {
-                    shouldIncludeLight = false;
-                }
-            }
-            
-            // ● 如果光源通过剔除检查，添加到有效列表
-            if (shouldIncludeLight)
-            {
-                validLightIndices.Add(i);
-            }
-        }
-        
-        // ● 第二步：按距离排序有效光源（只在有多个光源时进行）
-        if (validLightIndices.Count > 1 && mainCamera != null)
-        {
-            Vector3 cameraPosition = mainCamera.transform.position;
-            
-            // 使用优化的排序算法对有效光源索引进行排序
-            validLightIndices.Sort((a, b) => 
-            {
-                float distA = Vector3.Distance(pointLights[a].transform.position, cameraPosition);
-                float distB = Vector3.Distance(pointLights[b].transform.position, cameraPosition);
-                return distA.CompareTo(distB);
-            });
-        }
-        
-        // ● 第三步：填充数据到_lightsData数组，不超过maxLights限制
-        for (int i = 0; i < validLightIndices.Count && _currentLightCount < maxLights; i++)
+
+        // ● 收集通过剔除并已按距离排序的光源索引
+        List<int> validLightIndices = CollectVisibleLightIndices(pointLights, LightType.Point, _lightRangeMultiplier);
+
+        // ● 填充数据到_lightsData数组，不超过maxLights限制
+        //   同时受已分配数组长度约束：缓冲区在初始化时按 maxLights 创建，运行中调大 maxLights 也不会越界
+        int maxPointLights = Mathf.Min(maxLights, _lightsData.Length);
+        for (int i = 0; i < validLightIndices.Count && _currentLightCount < maxPointLights; i++)
         {
             int lightIndex = validLightIndices[i];
-            
+
             // ● 安全检查：确保索引在pointLights数组范围内
             if (lightIndex < 0 || lightIndex >= pointLights.Count)
             {
                 Debug.LogWarning($"无效的光源索引: {lightIndex}, 跳过此光源");
                 continue;
             }
-            
+
             var light = pointLights[lightIndex];
-            
+
             // ● 再次检查光源是否有效
             if (light == null || !light.enabled || light.type != LightType.Point)
                 continue;
-            
-            _activeLightIndices.Add(lightIndex);
-            
+
             _lightsData[_currentLightCount] = new CustomPointLight
             {
                 position = light.transform.position,
@@ -689,28 +726,19 @@ public class ComputeBufferLightManager : MonoBehaviour
                 color = new Vector4(light.color.r, light.color.g, light.color.b, light.intensity),
                 parameters = new Vector4(_lightFalloff, 0, 0, 0) // 使用配置的falloff参数
             };
-            
+
             _currentLightCount++;
         }
-        
-        // ● 如果达到最大光源数量且有更多有效光源被跳过，记录警告
-        // if (validLightIndices.Count > maxLights)
-        // {
-        //     Debug.Log($"已达到最大光源数量限制({maxLights})，跳过了 {validLightIndices.Count - maxLights} 个有效光源");
-        // }
-        
-        // ● 更新Compute Buffer数据到GPU
-        if (_currentLightCount > 0)
+
+        // ● 如果没有有效光源，确保Shader知道光源数量为0
+        if (_currentLightCount == 0)
         {
-            _lightsBuffer.SetData(_lightsData, 0, 0, _currentLightCount);
-        }
-        else
-        {
-            // 如果没有有效光源，确保Shader知道光源数量为0
             Shader.SetGlobalInt("_CustomPointLightCount", 0);
             return 0;
         }
-        
+
+        _lightsBuffer.SetData(_lightsData, 0, 0, _currentLightCount);
+
         // ● 更新全局光源数量，Shader根据这个值决定循环次数
         Shader.SetGlobalInt("_CustomPointLightCount", _currentLightCount);
         return _currentLightCount;
@@ -718,7 +746,7 @@ public class ComputeBufferLightManager : MonoBehaviour
 
     //● 更新聚光灯数据到Compute Buffer
     //收集场景中所有有效聚光灯数据，批量上传到GPU
-    //性能优化：改进剔除系统、距离缓存和LOD优化
+    //性能优化：与点光源共用剔除与排序流程，缓冲区复用，避免每帧分配
 
     public int UpdateSpotLightsBuffer()
     {
@@ -735,72 +763,13 @@ public class ComputeBufferLightManager : MonoBehaviour
                 return _currentSpotLightCount;
             }
         }
-        
+
         _currentSpotLightCount = 0;
-        Camera mainCamera = Camera.main;
-        
-        // ● 清空活跃光源索引缓存
-        List<int> validSpotLightIndices = new List<int>();
-        
-        // ● 第一步：收集所有通过剔除检查的聚光灯索引
-        for (int i = 0; i < spotLights.Count; i++)
-        {
-            var light = spotLights[i];
-            if (light == null || !light.enabled || light.type != LightType.Spot) 
-                continue;
-            
-            Vector3 lightPosition = light.transform.position;
-            bool shouldIncludeLight = true;
-            
-            // ● 应用距离剔除逻辑
-            if (mainCamera != null && _enableDistanceCulling)
-            {
-                float distanceToCamera = Vector3.Distance(lightPosition, mainCamera.transform.position);
-                float effectiveRange = light.range * _spotLightRangeMultiplier;
-                float cullDistance = effectiveRange * _distanceCullFactor;
-                
-                // 严格的距离检查：使用>=确保边界条件正确处理
-                if (distanceToCamera >= cullDistance)
-                {
-                    shouldIncludeLight = false;
-                }
-                
-                // 缓存距离信息用于排序
-                _lightDistanceCache[light] = distanceToCamera;
-            }
-            
-            // ● 应用视锥体剔除逻辑
-            if (mainCamera && _enableFrustumCulling && shouldIncludeLight)
-            {
-                // 检查光源是否在相机视锥体外
-                if (!IsLightInFrustum(mainCamera, lightPosition, light.range * _spotLightRangeMultiplier))
-                {
-                    shouldIncludeLight = false;
-                }
-            }
-            
-            // ● 如果光源通过剔除检查，添加到有效列表
-            if (shouldIncludeLight)
-            {
-                validSpotLightIndices.Add(i);
-            }
-        }
-        
-        // ● 第二步：按距离排序有效聚光灯（只在有多个光源时进行）
-        if (validSpotLightIndices.Count > 1 && mainCamera)
-        {
-            Vector3 cameraPosition = mainCamera.transform.position;
-            
-            // 使用优化的排序算法对有效聚光灯索引进行排序
-            validSpotLightIndices.Sort((a, b) => 
-            {
-                float distA = Vector3.Distance(spotLights[a].transform.position, cameraPosition);
-                float distB = Vector3.Distance(spotLights[b].transform.position, cameraPosition);
-                return distA.CompareTo(distB);
-            });
-        }
-        
-        // ● 第三步：填充数据到_spotLightsData数组，不超过_spotLightAmount限制
+
+        // ● 收集通过剔除并已按距离排序的聚光灯索引
+        List<int> validSpotLightIndices = CollectVisibleLightIndices(spotLights, LightType.Spot, _spotLightRangeMultiplier);
+
+        // ● 填充数据到_spotLightsData数组，不超过_spotLightAmount限制
         int maxSpotLights = Mathf.Min(_spotLightAmount, _spotLightsData.Length);
         for (int i = 0; i < validSpotLightIndices.Count && _currentSpotLightCount < maxSpotLights; i++)
         {
@@ -836,25 +805,16 @@ public class ComputeBufferLightManager : MonoBehaviour
             
             _currentSpotLightCount++;
         }
-        
-        // ● 如果达到最大聚光灯数量且有更多有效光源被跳过，记录警告
-        // if (validSpotLightIndices.Count > maxSpotLights)
-        // {
-        //     Debug.Log($"已达到最大聚光灯数量限制({maxSpotLights})，跳过了 {validSpotLightIndices.Count - maxSpotLights} 个有效聚光灯");
-        // }
-        
-        // ● 更新Compute Buffer数据到GPU
-        if (_currentSpotLightCount > 0)
+
+        // ● 如果没有有效聚光灯，确保Shader知道聚光灯数量为0
+        if (_currentSpotLightCount == 0)
         {
-            _spotLightsBuffer.SetData(_spotLightsData, 0, 0, _currentSpotLightCount);
-        }
-        else
-        {
-            // 如果没有有效聚光灯，确保Shader知道聚光灯数量为0
             Shader.SetGlobalInt("_CustomSpotLightCount", 0);
             return 0;
         }
-        
+
+        _spotLightsBuffer.SetData(_spotLightsData, 0, 0, _currentSpotLightCount);
+
         // ● 更新全局聚光灯数量，Shader根据这个值决定循环次数
         Shader.SetGlobalInt("_CustomSpotLightCount", _currentSpotLightCount);
         return _currentSpotLightCount;
@@ -923,38 +883,52 @@ public class ComputeBufferLightManager : MonoBehaviour
         return Mathf.Max(radiusX, radiusY, 0.1f); // 最小容差0.1f
     }
     
+    /// <summary>
+    /// 计算相机当前速度与加速度大小，并刷新传入的状态快照。
+    /// 点光源与聚光灯各持有一套独立状态，互不干扰。
+    /// </summary>
+    /// <param name="lastPosition">上一帧相机位置，函数内更新为当前位置。</param>
+    /// <param name="lastVelocity">上一帧相机速度，函数内更新为当前速度。</param>
+    private void ComputeCameraMotion(ref Vector3 lastPosition, ref Vector3 lastVelocity,
+                                     out float speed, out float accelerationMagnitude)
+    {
+        Camera mainCamera = GetMainCamera();
+        if (mainCamera == null)
+        {
+            speed = 0f;
+            accelerationMagnitude = 0f;
+            return;
+        }
+
+        Vector3 currentCameraPosition = mainCamera.transform.position;
+        Vector3 currentCameraVelocity = (currentCameraPosition - lastPosition) / Time.deltaTime;
+        Vector3 cameraAcceleration   = (currentCameraVelocity - lastVelocity) / Time.deltaTime;
+
+        speed = currentCameraVelocity.magnitude;
+        accelerationMagnitude = cameraAcceleration.magnitude;
+
+        // ● 缓存当前速度和位置用于下一次计算
+        lastVelocity = currentCameraVelocity;
+        lastPosition = currentCameraPosition;
+    }
+
     // ● 计算自适应更新间隔 - 根据相机移动速度和场景复杂度动态调整更新频率
     // 性能优化：当相机移动缓慢或场景变化不大时，降低更新频率以节省性能
     // 当相机快速移动或场景变化剧烈时，提高更新频率以保证视觉效果
     private float CalculateAdaptiveUpdateInterval()
     {
-        Camera mainCamera = Camera.main;
-        
-        // ● 基础更新间隔
-        float baseUpdateInterval = _updateInterval;
-        
         // ● 如果没有主相机，返回基础间隔
-        if (mainCamera == null)
+        if (GetMainCamera() == null)
         {
-            return baseUpdateInterval;
+            return _updateInterval;
         }
-        
-        // ● 计算相机移动速度
-        Vector3 currentCameraPosition = mainCamera.transform.position;
-        Vector3 currentCameraVelocity = (currentCameraPosition - _lastCameraPosition) / Time.deltaTime;
-        float cameraSpeed = currentCameraVelocity.magnitude;
-        
-        // ● 计算相机加速度（速度变化率）
-        Vector3 cameraAcceleration = (currentCameraVelocity - _lastCameraVelocity) / Time.deltaTime;
-        float accelerationMagnitude = cameraAcceleration.magnitude;
-        
-        // ● 缓存当前速度和位置用于下一次计算
-        _lastCameraVelocity = currentCameraVelocity;
-        _lastCameraPosition = currentCameraPosition;
-        
+
+        ComputeCameraMotion(ref _lastCameraPosition, ref _lastCameraVelocity,
+                            out float cameraSpeed, out float accelerationMagnitude);
+
         // ● 计算自适应因子
         float adaptiveFactor = 1.0f;
-        
+
         // ● 基于相机速度的调整
         if (cameraSpeed > _cameraSpeedThreshold)
         {
@@ -967,14 +941,14 @@ public class ComputeBufferLightManager : MonoBehaviour
             // 相机几乎静止，降低更新频率（延长间隔）
             adaptiveFactor *= 2.0f; // 延长更新间隔
         }
-        
+
         // ● 基于相机加速度的调整
         if (accelerationMagnitude > 5.0f) // 加速度阈值
         {
             // 相机正在加速或减速，提高更新频率
             adaptiveFactor *= 0.7f;
         }
-        
+
         // ● 基于活跃光源数量的调整
         if (_currentLightCount > maxLights * 0.7f)
         {
@@ -986,51 +960,29 @@ public class ComputeBufferLightManager : MonoBehaviour
             // 活跃光源数量较少，可以稍微提高更新频率
             adaptiveFactor *= 0.9f;
         }
-        
+
         // ● 确保自适应因子在合理范围内
         adaptiveFactor = Mathf.Clamp(adaptiveFactor, 0.1f, 3.0f);
-        
-        // ● 计算最终的自适应更新间隔
-        float adaptiveUpdateInterval = baseUpdateInterval * adaptiveFactor;
-        
-        // ● 调试信息
-        // #if UNITY_EDITOR
-        // if (UnityEditor.Selection.activeGameObject == this.gameObject && Time.frameCount % 60 == 0)
-        // {
-        //     Debug.Log($"自适应更新间隔: {adaptiveUpdateInterval:F4}s (基础: {baseUpdateInterval:F4}s, 因子: {adaptiveFactor:F2})");
-        // }
-        // #endif
-        
-        return adaptiveUpdateInterval;
+
+        return _updateInterval * adaptiveFactor;
     }
-    
+
     // ● 计算聚光灯自适应更新间隔 - 独立于点光源的刷新率控制
     // 聚光灯通常需要更高的刷新率以保证视觉效果的流畅性
     private float CalculateAdaptiveSpotLightUpdateInterval()
     {
-        Camera mainCamera = Camera.main;
-        
-        // ● 基础更新间隔（使用独立的聚光灯刷新率）
-        float baseUpdateInterval = _spotLightUpdateInterval;
-        
         // ● 如果没有主相机，返回基础间隔
-        if (mainCamera == null)
+        if (GetMainCamera() == null)
         {
-            return baseUpdateInterval;
+            return _spotLightUpdateInterval;
         }
-        
-        // ● 计算相机移动速度
-        Vector3 currentCameraPosition = mainCamera.transform.position;
-        Vector3 currentCameraVelocity = (currentCameraPosition - _lastCameraPosition) / Time.deltaTime;
-        float cameraSpeed = currentCameraVelocity.magnitude;
-        
-        // ● 计算相机加速度（速度变化率）
-        Vector3 cameraAcceleration = (currentCameraVelocity - _lastCameraVelocity) / Time.deltaTime;
-        float accelerationMagnitude = cameraAcceleration.magnitude;
-        
-        // ● 计算自适应因子
+
+        // ● 使用聚光灯专属状态，确保算到的是真实帧间速度
+        ComputeCameraMotion(ref _lastSpotCameraPosition, ref _lastSpotCameraVelocity,
+                            out float cameraSpeed, out float accelerationMagnitude);
+
         float adaptiveFactor = 1.0f;
-        
+
         // ● 基于相机速度的调整（聚光灯对速度更敏感）
         if (cameraSpeed > _cameraSpeedThreshold)
         {
@@ -1043,74 +995,32 @@ public class ComputeBufferLightManager : MonoBehaviour
             // 相机几乎静止，可以稍微降低更新频率
             adaptiveFactor *= 1.5f; // 比点光源降低得少
         }
-        
+
         // ● 基于相机加速度的调整
         if (accelerationMagnitude > 5.0f)
         {
             // 相机正在加速或减速，提高更新频率
             adaptiveFactor *= 0.6f; // 比点光源更激进
         }
-        
+
         // ● 基于活跃聚光灯数量的调整
         if (_currentSpotLightCount > 1)
         {
             // 多个聚光灯时，稍微降低更新频率以节省性能
             adaptiveFactor *= 1.1f;
         }
-        
+
         // ● 确保自适应因子在合理范围内
         adaptiveFactor = Mathf.Clamp(adaptiveFactor, 0.2f, 2.0f);
-        
-        // ● 计算最终的自适应更新间隔
-        float adaptiveUpdateInterval = baseUpdateInterval * adaptiveFactor;
-        
-        return adaptiveUpdateInterval;
-    }
-    
-    // ● 光源LOD级别枚举
-    private enum LightLODLevel
-    {
-        None = 0,      // 不渲染
-        Low = 1,       // 简化计算
-        Medium = 2,    // 中等计算
-        High = 3       // 完整计算
-    }
-    
-    // ● 计算光源LOD级别
-    private LightLODLevel CalculateLightLOD(float distance, float range)
-    {
-        float distanceRatio = distance / (range * _lightRangeMultiplier);
-        
-        if (distanceRatio > 1.5f) return LightLODLevel.None;      // 太远，不渲染
-        else if (distanceRatio > 1.0f) return LightLODLevel.Low;  // 远距离，简化计算
-        else if (distanceRatio > 0.5f) return LightLODLevel.Medium; // 中等距离
-        else return LightLODLevel.High;                           // 近距离，完整计算
-    }
-    
-    // ● 优化的光源排序算法
-    private void OptimizedLightSort(Vector3 cameraPosition)
-    {
-        // 使用插入排序对活跃光源进行排序（对小数组更高效）
-        for (int i = 1; i < _currentLightCount; i++)
-        {
-            CustomPointLight currentLight = _lightsData[i];
-            float currentDistance = Vector3.Distance(currentLight.position, cameraPosition);
-            
-            int j = i - 1;
-            while (j >= 0 && Vector3.Distance(_lightsData[j].position, cameraPosition) > currentDistance)
-            {
-                _lightsData[j + 1] = _lightsData[j];
-                j--;
-            }
-            _lightsData[j + 1] = currentLight;
-        }
-    }
 
+        return _spotLightUpdateInterval * adaptiveFactor;
+    }
+    
     // ==========================================
     // ● 材质批量控制功能
     // ==========================================
 
-    //● 自动查找场景中使用PBR_Mobile Shader的所有材质，遍历所有Renderer组件，收集其使用的材质
+    //● 自动查找场景中使用PBR_Mobile_NEW Shader的所有材质，遍历所有Renderer组件，收集其使用的材质
     [ContextMenu("查找PBR Mobile材质")]
     public void FindPBRMobileMaterials()
     {
@@ -1124,7 +1034,7 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             foreach (Material material in renderer.sharedMaterials)
             {
-                if (material != null && material.shader.name == "Custom/PBR_Mobile")
+                if (material != null && material.shader.name == "Custom/PBR_Mobile_NEW")
                 {
                     if (!_controlledMaterials.Contains(material))
                     {
@@ -1139,7 +1049,7 @@ public class ComputeBufferLightManager : MonoBehaviour
                 }
             }
         }
-        Debug.Log($"找到 {_controlledMaterials.Count} 个使用PBR_Mobile Shader的材质，已添加到Target Materials列表");
+        Debug.Log($"找到 {_controlledMaterials.Count} 个使用PBR_Mobile_NEW Shader的材质，已添加到Target Materials列表");
     }
 
     //● 批量更新所有受控材质的点光源参数
@@ -1157,75 +1067,15 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
 
         int updatedCount = 0;
-        
+
         foreach (Material material in targetMaterials)
         {
             if (material == null) continue;
-            
+
             try
             {
-                // ● 设置点光照开关（属性值和关键字）
-                if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
-                {
-                    material.SetFloat(ShaderPropertyIDs.UsePointlight, _usePointLight ? 1 : 0);
-                }
-                if (_usePointLight)
-                {
-                    material.EnableKeyword(POINT_LIGHT_KEYWORD);
-                }
-                else
-                {
-                    material.DisableKeyword(POINT_LIGHT_KEYWORD);
-                }
-                
-                // ● 设置聚光照开关（属性值和关键字）
-                if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
-                {
-                    material.SetFloat(ShaderPropertyIDs.UseSpotlight, _useSpotLight ? 1 : 0);
-                }
-                if (_useSpotLight)
-                {
-                    material.EnableKeyword(SPOT_LIGHT_KEYWORD);
-                }
-                else
-                {
-                    material.DisableKeyword(SPOT_LIGHT_KEYWORD);
-                }
-                
-                // ● 设置光斑纹理开关（属性值和关键字）
-                if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
-                {
-                    material.SetFloat(ShaderPropertyIDs.UseSpotTexture, _useSpotTexture ? 1 : 0);
-                }
-                if (_useSpotTexture)
-                {
-                    material.EnableKeyword("_USESPOTTEXTURE");
-                }
-                else
-                {
-                    material.DisableKeyword("_USESPOTTEXTURE");
-                }
-                
-                // ● 设置浮点参数
-                material.SetFloat(ShaderPropertyIDs.PointLightIntensity, _pointLightIntensity);
-                material.SetFloat(ShaderPropertyIDs.PointLightRangeMultiplier, _lightRangeMultiplier);
-                material.SetFloat(ShaderPropertyIDs.PointLightFalloff, _lightFalloff);
-                
-                // ● 设置SpotLight浮点参数
-                material.SetFloat(ShaderPropertyIDs.SpotLightIntensity, _spotLightIntensity);
-                material.SetFloat(ShaderPropertyIDs.SpotLightRangeMultiplier, _spotLightRangeMultiplier);
-                material.SetFloat(ShaderPropertyIDs.SpotLightFalloff, _spotLightFalloff);
-                material.SetFloat(ShaderPropertyIDs.SpotLightAmount, _spotLightAmount);
-                
-                // ● 设置光斑纹理浮点参数
-                if (_spotTexture != null)
-                {
-                    material.SetTexture(ShaderPropertyIDs.SpotTexture, _spotTexture);
-                }
-                material.SetFloat(ShaderPropertyIDs.SpotTextureContrast, _spotTextureContrast);
-                material.SetFloat(ShaderPropertyIDs.SpotTextureSize, _spotTextureSize);
-                material.SetFloat(ShaderPropertyIDs.SpotTextureIntensity, _spotTextureIntensity);
-                
+                // ● 复用单材质参数设置逻辑，避免两处同步维护
+                SetMaterialParameters(material);
                 updatedCount++;
             }
             catch (System.Exception e)
@@ -1233,9 +1083,6 @@ public class ComputeBufferLightManager : MonoBehaviour
                 Debug.LogError($"更新材质 {material.name} 时出错: {e.Message}");
             }
         }
-        
-        // ● 只在有材质被更新时才打印日志，避免频繁打印
-        // 这个日志现在只在手动调用或参数实际变化时打印一次
     }
 
     //● 为单个材质设置参数
@@ -1245,52 +1092,17 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         if (material == null) return;
         
-        // ● 设置点光照开关（属性值和关键字）
-        if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
-        {
-            material.SetFloat(ShaderPropertyIDs.UsePointlight, _usePointLight ? 1 : 0);
-        }
-        if (_usePointLight)
-        {
-            material.EnableKeyword(POINT_LIGHT_KEYWORD);
-        }
-        else
-        {
-            material.DisableKeyword(POINT_LIGHT_KEYWORD);
-        }
-        
-        // ● 设置聚光照开关（属性值和关键字）
-        if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
-        {
-            material.SetFloat(ShaderPropertyIDs.UseSpotlight, _useSpotLight ? 1 : 0);
-        }
-        if (_useSpotLight)
-        {
-            material.EnableKeyword(SPOT_LIGHT_KEYWORD);
-        }
-        else
-        {
-            material.DisableKeyword(SPOT_LIGHT_KEYWORD);
-        }
-        
-        // ● 设置光斑纹理开关（属性值和关键字）
-        if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
-        {
-            material.SetFloat(ShaderPropertyIDs.UseSpotTexture, _useSpotTexture ? 1 : 0);
-        }
-        if (_useSpotTexture)
-        {
-            material.EnableKeyword("_USESPOTTEXTURE");
-        }
-        else
-        {
-            material.DisableKeyword("_USESPOTTEXTURE");
-        }
-        
+        // ● 设置三个光照开关（属性值和关键字）
+        ApplyToggleToMaterial(material, ShaderPropertyIDs.UsePointlight, POINT_LIGHT_KEYWORD, _usePointLight);
+        ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotlight, SPOT_LIGHT_KEYWORD, _useSpotLight);
+        ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotTexture, SPOT_TEXTURE_KEYWORD, _useSpotTexture);
+
         // ● 设置数值参数
         material.SetFloat(ShaderPropertyIDs.PointLightIntensity, _pointLightIntensity);
         material.SetFloat(ShaderPropertyIDs.PointLightRangeMultiplier, _lightRangeMultiplier);
         material.SetFloat(ShaderPropertyIDs.PointLightFalloff, _lightFalloff);
+        // ● 与 maxLights 同步：移动端Shader逐像素遍历上限取自该材质属性，不下发则真机仍按材质旧值（默认4）截断
+        material.SetFloat(ShaderPropertyIDs.PointLightAmount, maxLights);
         
         // ● 设置SpotLight数值参数
         material.SetFloat(ShaderPropertyIDs.SpotLightIntensity, _spotLightIntensity);
@@ -1349,23 +1161,9 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             _usePointLight = enabled;
             _parametersDirty = true; // 标记参数已变更
-            
+
             // 立即同步更新所有材质的点光照开关
-            foreach (Material mat in targetMaterials)
-            {
-                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UsePointlight))
-                {
-                    mat.SetFloat(ShaderPropertyIDs.UsePointlight, enabled ? 1 : 0);
-                    if (enabled)
-                    {
-                        mat.EnableKeyword(POINT_LIGHT_KEYWORD);
-                    }
-                    else
-                    {
-                        mat.DisableKeyword(POINT_LIGHT_KEYWORD);
-                    }
-                }
-            }
+            ApplyToggleToAllMaterials(ShaderPropertyIDs.UsePointlight, POINT_LIGHT_KEYWORD, enabled);
         }
     }
 
@@ -1382,23 +1180,9 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             _useSpotLight = enabled;
             _parametersDirty = true; // 标记参数已变更
-            
+
             // 立即同步更新所有材质的聚光照开关
-            foreach (Material mat in targetMaterials)
-            {
-                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotlight))
-                {
-                    mat.SetFloat(ShaderPropertyIDs.UseSpotlight, enabled ? 1 : 0);
-                    if (enabled)
-                    {
-                        mat.EnableKeyword(SPOT_LIGHT_KEYWORD);
-                    }
-                    else
-                    {
-                        mat.DisableKeyword(SPOT_LIGHT_KEYWORD);
-                    }
-                }
-            }
+            ApplyToggleToAllMaterials(ShaderPropertyIDs.UseSpotlight, SPOT_LIGHT_KEYWORD, enabled);
         }
     }
 
@@ -1531,23 +1315,9 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             _useSpotTexture = enabled;
             _parametersDirty = true; // 标记参数已变更
-            
+
             // 立即更新所有受控材质的光斑纹理开关
-            foreach (Material mat in targetMaterials)
-            {
-                if (mat != null && mat.HasProperty(ShaderPropertyIDs.UseSpotTexture))
-                {
-                    mat.SetFloat(ShaderPropertyIDs.UseSpotTexture, enabled ? 1 : 0);
-                    if (enabled)
-                    {
-                        mat.EnableKeyword("_USESPOTTEXTURE");
-                    }
-                    else
-                    {
-                        mat.DisableKeyword("_USESPOTTEXTURE");
-                    }
-                }
-            }
+            ApplyToggleToAllMaterials(ShaderPropertyIDs.UseSpotTexture, SPOT_TEXTURE_KEYWORD, enabled);
         }
     }
 
@@ -1641,13 +1411,14 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         // ● 检查是否有参数与默认值不同
         bool changed = false;
-        
-        // if (_usePointLight != false)
-        // {
-        //     _usePointLight = false;
-        //     changed = true;
-        // }
-        
+
+        // ● 复位点光源开关：此前该段被注释掉，导致开关无法被还原，残留关键字会污染其它场景
+        if (_usePointLight)
+        {
+            _usePointLight = false;
+            changed = true;
+        }
+
         if (!Mathf.Approximately(_pointLightIntensity, 1.0f))
         {
             _pointLightIntensity = 1.0f;
@@ -1996,7 +1767,7 @@ public class ComputeBufferLightManager : MonoBehaviour
 
     #if UNITY_EDITOR
     //● 编辑器专用的材质查找方法
-    //在编辑器模式下查找场景中使用PBR_Mobile Shader的所有材质
+    //在编辑器模式下查找场景中使用PBR_Mobile_NEW Shader的所有材质
     //与运行时方法不同，此方法使用UnityEditor API来查找所有游戏对象
     [ContextMenu("编辑器查找PBR Mobile材质")]
     public void EditorFindPBRMobileMaterials()
@@ -2018,7 +1789,7 @@ public class ComputeBufferLightManager : MonoBehaviour
             {
                 foreach (Material material in renderer.sharedMaterials)
                 {
-                    if (material != null && material.shader.name == "Custom/PBR_Mobile")
+                    if (material != null && material.shader.name == "Custom/PBR_Mobile_NEW")
                     {
                         if (!_controlledMaterials.Contains(material))
                         {
@@ -2037,7 +1808,7 @@ public class ComputeBufferLightManager : MonoBehaviour
             }
         }
         
-        Debug.Log($"编辑器模式下找到 {materialCount} 个使用PBR_Mobile Shader的材质，已添加到Target Materials列表");
+        Debug.Log($"编辑器模式下找到 {materialCount} 个使用PBR_Mobile_NEW Shader的材质，已添加到Target Materials列表");
         
         // ● 在编辑器模式下强制刷新Inspector显示
         UnityEditor.EditorUtility.SetDirty(this);
@@ -2064,6 +1835,9 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         if (!Application.isPlaying)
         {
+            // ● 编辑器模式下同样每轮只查询一次主相机
+            RefreshMainCameraCache();
+
             float currentTime = (float)UnityEditor.EditorApplication.timeSinceStartup;
             float deltaTime = currentTime - _lastEditorUpdateTime;
             
@@ -2157,26 +1931,82 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         // 安全检查：确保对象仍然有效
         if (this == null) return;
-        
+
+        // ● 解除场景加载回调，与 OnEnable 中的订阅严格配对
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+
         if (_editorUpdateInitialized)
         {
             UnityEditor.EditorApplication.update -= OnEditorUpdate;
             _editorUpdateInitialized = false;
         }
-        
-        // ● 释放GraphicsBuffer资源，防止内存泄漏
+
+        ReleaseBuffers();
+    }
+
+    //● 场景加载完成后的恢复
+    //新场景的全局 Shader 状态可能残留上一场景的值：缓冲区若已释放则重建，
+    //并重新下发材质参数，修正跨场景残留的开关与关键字状态
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        // 安全检查：确保对象仍然有效且处于启用状态
+        if (this == null || !enabled) return;
+
+        // ● 缓冲区若已随上一场景释放，此处重建；否则只需重新声明接管状态
+        if (_lightsBuffer == null || _spotLightsBuffer == null)
+        {
+            InitializeComputeBuffer();
+        }
+        else
+        {
+            Shader.SetGlobalFloat(LIGHT_SYSTEM_ACTIVE_PROP, 1f);
+        }
+
+        // ● 重新收集并下发材质参数（autoFindMaterials 时需按新场景重新收集）
+        if (autoFindMaterials)
+        {
+            InitializeMaterialController();
+        }
+        else
+        {
+            UpdateAllMaterials();
+        }
+    }
+
+    /// <summary>
+    /// 释放点光源与聚光灯的 GraphicsBuffer，并同步复位全局 Shader 状态。
+    /// 全局属性（Shader.SetGlobalX）不随场景卸载自动清除，若不复位，
+    /// 切场景后 Shader 会继续按上一场景的光源数量采样已销毁的缓冲区，导致材质变黑。
+    /// </summary>
+    private void ReleaseBuffers()
+    {
         if (_lightsBuffer != null)
         {
             _lightsBuffer.Release();
             _lightsBuffer = null;
         }
-        
-        // 同时释放聚光灯缓冲区
+
         if (_spotLightsBuffer != null)
         {
             _spotLightsBuffer.Release();
             _spotLightsBuffer = null;
         }
+
+        ResetGlobalLightState();
+    }
+
+    /// <summary>把全局灯光状态复位为“未接管”：关闭安全位、清零计数并解除缓冲区绑定。</summary>
+    private static void ResetGlobalLightState()
+    {
+        // ● 先关闭安全位，确保 Shader 不再进入自定义光照分支
+        Shader.SetGlobalFloat(LIGHT_SYSTEM_ACTIVE_PROP, 0f);
+
+        Shader.SetGlobalInt("_CustomPointLightCount", 0);
+        Shader.SetGlobalInt("_CustomSpotLightCount", 0);
+
+        // ● 解除全局缓冲区绑定，避免 Shader 持有已释放的原生资源（显式转型以消除重载歧义）
+        Shader.SetGlobalBuffer("_CustomPointLights", (GraphicsBuffer)null);
+        Shader.SetGlobalBuffer("_CustomSpotLights", (GraphicsBuffer)null);
     }
     
     //● 启用时重新初始化编辑器更新
@@ -2184,7 +2014,11 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         // 安全检查：确保对象仍然有效
         if (this == null) return;
-        
+
+        // ● 订阅场景加载回调：先移除再添加，避免编辑器域重载造成的重复订阅
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+        SceneManager.sceneLoaded += OnSceneLoaded;
+
         if (!Application.isPlaying)
         {
             // ● 确保在编辑器模式下正确初始化
@@ -2213,26 +2047,49 @@ public class ComputeBufferLightManager : MonoBehaviour
     {
         // 安全检查：确保对象仍然有效
         if (this == null) return;
-        
-        // ● 释放GraphicsBuffer资源，防止内存泄漏
-        if (_lightsBuffer != null)
+
+        // ● 解除场景加载回调，避免悬挂引用
+        SceneManager.sceneLoaded -= OnSceneLoaded;
+
+        ReleaseBuffers();
+
+        // ● 运行期销毁时关闭受控材质上的自定义灯光开关，避免状态残留在共享材质资产上。
+        //   编辑器下不执行：脚本重编译同样会触发 OnDestroy，此时复位会干扰正在编辑的场景配置。
+        if (Application.isPlaying)
         {
-            _lightsBuffer.Release();
-            _lightsBuffer = null;
+            ReleaseControlledMaterials();
         }
-        
-        // 同时释放聚光灯缓冲区
-        if (_spotLightsBuffer != null)
+
+        // ● 清空静态单例引用，避免其他脚本后续访问到已销毁的实例
+        if (_instance == this)
         {
-            _spotLightsBuffer.Release();
-            _spotLightsBuffer = null;
+            _instance = null;
         }
-        
+
         // 清理编辑器更新事件
         if (_editorUpdateInitialized)
         {
             UnityEditor.EditorApplication.update -= OnEditorUpdate;
             _editorUpdateInitialized = false;
+        }
+    }
+
+    /// <summary>
+    /// 关闭受控材质上的自定义灯光开关与关键字。
+    /// 材质资产是跨场景共享的，销毁前若不还原，其它未配置灯光系统的场景会带着残留关键字渲染。
+    /// </summary>
+    private void ReleaseControlledMaterials()
+    {
+        if (targetMaterials == null) return;
+
+        for (int i = 0; i < targetMaterials.Count; i++)
+        {
+            Material material = targetMaterials[i];
+            if (material == null) continue;
+
+            ApplyToggleToMaterial(material, ShaderPropertyIDs.UsePointlight, POINT_LIGHT_KEYWORD, false);
+            ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotlight, SPOT_LIGHT_KEYWORD, false);
+            ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotTexture, SPOT_TEXTURE_KEYWORD, false);
         }
     }
 
@@ -2368,26 +2225,10 @@ public class ComputeBufferLightManager : MonoBehaviour
             // ● 对于被移除的材质，禁用所有灯光效果
             if (material != null)
             {
-                // 禁用点光源
-                if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
-                {
-                    material.SetFloat(ShaderPropertyIDs.UsePointlight, 0);
-                }
-                material.DisableKeyword(POINT_LIGHT_KEYWORD);
-                
-                // 禁用聚光灯
-                if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
-                {
-                    material.SetFloat(ShaderPropertyIDs.UseSpotlight, 0);
-                }
-                material.DisableKeyword(SPOT_LIGHT_KEYWORD);
-                
-                // 禁用光斑纹理
-                if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
-                {
-                    material.SetFloat(ShaderPropertyIDs.UseSpotTexture, 0);
-                }
-                material.DisableKeyword("_USESPOTTEXTURE");
+                // 禁用点光源 / 聚光灯 / 光斑纹理
+                ApplyToggleToMaterial(material, ShaderPropertyIDs.UsePointlight, POINT_LIGHT_KEYWORD, false);
+                ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotlight, SPOT_LIGHT_KEYWORD, false);
+                ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotTexture, SPOT_TEXTURE_KEYWORD, false);
             }
         }
         
@@ -2403,24 +2244,4 @@ public class ComputeBufferLightManager : MonoBehaviour
         }
     }
     #endif
-}
-
-// ● 光源距离比较器，用于排序
-internal class LightDistanceComparer : System.Collections.IComparer
-{
-    private Vector3 cameraPosition;
-    
-    public LightDistanceComparer(Vector3 cameraPosition)
-    {
-        this.cameraPosition = cameraPosition;
-    }
-    
-    public int Compare(object x, object y)
-    {
-        ComputeBufferLightManager.CustomPointLight a = (ComputeBufferLightManager.CustomPointLight)x;
-        ComputeBufferLightManager.CustomPointLight b = (ComputeBufferLightManager.CustomPointLight)y;
-        float distA = Vector3.Distance(a.position, cameraPosition);
-        float distB = Vector3.Distance(b.position, cameraPosition);
-        return distA.CompareTo(distB);
-    }
 }

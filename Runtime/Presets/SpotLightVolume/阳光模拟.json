@@ -1,0 +1,38 @@
+{
+    "lightSourceRadius": 0.3199999928474426,
+    "fallOffStart": 0.0,
+    "maxDistance": 4.139999866485596,
+    "edgeFade": 1.4329999685287476,
+    "endFade": 1.0,
+    "glareFrontal": 0.5640000104904175,
+    "glareBehind": 0.5249999761581421,
+    "intensity": 0.9200000166893005,
+    "startBoostIntensity": 0.38999998569488528,
+    "startBoostRange": 0.7200000286102295,
+    "centerFade": 0.8389999866485596,
+    "colorFromLight": true,
+    "volumeColor": [
+        0.5842892527580261,
+        1.0,
+        0.4103773832321167,
+        1.0
+    ],
+    "blendMode": 0,
+    "coneSides": 12,
+    "coneSegments": 1,
+    "enableOcclusion": false,
+    "occlusionLayerMask": -1,
+    "occlusionUpdateInterval": 0.05900000035762787,
+    "occlusionDetectTriggers": false,
+    "spotAngle": 88.53233337402344,
+    "innerSpotAngle": 58.22761535644531,
+    "lightColor": [
+        0.9583560228347778,
+        1.0,
+        0.5801886916160584,
+        1.0
+    ],
+    "enableMask": true,
+    "maskIntensity": 0.574999988079071,
+    "maskTexturePath": "Assets/Art/HDR/point_noise.tga"
+}

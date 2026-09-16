@@ -10,10 +10,21 @@
 //   - 用户输入目标段数（包含现有段）
 //   - 点击 "生成" 自动把 roadSegments[0] 复制到目标数量，并把所有段沿当前 scrollDirection 等距排布
 //   - 完整支持 Undo（复制 + 父级调整 + 段位置改动都可撤销）
+// v2.8+ Inspector 实时编辑：
+//   - segmentLength / scrollDirection 任一变化 → 实时重排段 worldPos（无需点 ApplyAxis 按钮）
+//   - 共享 <see cref="RoadScrollEditorHelper.RearrangeAlongScrollDirection"/> 仅移动段，不改字段
+//   - 用 _needsRearrange 标志避免同帧多次重排
+// v2.8.2 彻底移除 Undo API 与 EditorApplication.delayCall：
+//   - Undo.RecordObjects / Undo.CollapseUndoOperations 在滑块拖动过程中反复调用会打爆 Undo 系统，
+//     导致 IMGUI Inspector focus 丢失，滑块拖动事件无法接收（表现为"无法修改 SegmentLength"）
+//   - delayCall 推迟到下一帧执行，让 Inspector 渲染状态错位
+//   - 现在改为同步重排 + 直接设置段 position（Unity Transform 自动处理 Undo），最简最稳
 //
 // 共享辅助：
 //   - <see cref="RoadScrollEditorHelper.ApplyAxisToRoadScroll"/>：
 //     RoadScrollEditorHelper.CreateRoadScroll 与 ApplyAxis 共用的"排布 + 设置字段 + 标记 dirty"入口。
+//   - <see cref="RoadScrollEditorHelper.RearrangeAlongScrollDirection"/>：
+//     v2.8+ 实时编辑入口，仅移动段世界坐标，不修改任何 RoadScroll 字段。
 
 using System.Collections.Generic;
 using UnityEditor;
@@ -39,6 +50,10 @@ namespace VicTools
         private SerializedProperty scrollDirection;
         // private SerializedProperty swapThreshold;
         private SerializedProperty autoStart;
+
+        // v2.8+ Inspector 实时编辑用：segmentLength / scrollDirection 任一变化时设置标志，
+        // 在 OnInspectorGUI 末尾统一调用 RearrangeAlongScrollDirection 重排段世界坐标
+        private bool _needsRearrange;
 
         // UI 显示
         private SerializedProperty distanceText;
@@ -91,11 +106,17 @@ namespace VicTools
             EditorGUILayout.PropertyField(radialBlur);
 
             // ── 滚动设置 ──
+            // v2.8.2 segmentLength / scrollDirection 任一变化 → 同步触发重排（不再用 delayCall）
+            //   - 重排直接改段 position（Unity Transform 自动处理 Undo），不调用任何 Undo API，
+            //     避免 Undo 系统被打爆导致 Inspector focus 丢失、SegmentLength 滑块无法拖动
+            EditorGUI.BeginChangeCheck();
             EditorGUILayout.PropertyField(segmentLength);
+            if (EditorGUI.EndChangeCheck()) _needsRearrange = true;
             DrawAxisButtons();  // 紧贴 segmentLength，便于联动编辑
-            EditorGUILayout.PropertyField(scrollSpeed);
+            EditorGUI.BeginChangeCheck();
             EditorGUILayout.PropertyField(scrollDirection);
-            // EditorGUILayout.PropertyField(swapThreshold);
+            if (EditorGUI.EndChangeCheck()) _needsRearrange = true;
+            EditorGUILayout.PropertyField(scrollSpeed);
             EditorGUILayout.PropertyField(autoStart);
 
             // ── UI 显示 ──
@@ -106,6 +127,21 @@ namespace VicTools
             EditorGUILayout.PropertyField(showDebug);
 
             serializedObject.ApplyModifiedProperties();
+
+            // v2.8.2 segmentLength / scrollDirection 任一变化 → 同步重排段 worldPos
+            //   - ApplyModifiedProperties 后 segmentLength 已写入组件（读到的就是新值）
+            //   - 直接同步改段 position，不调 delayCall、不调 Undo API：
+            //     * Transform.position 修改 Unity 自动加入 Undo 栈（SerializedProperty 机制）
+            //     * 同步执行确保滑块拖动期间段位置实时跟随，松手前段已排好
+            if (_needsRearrange)
+            {
+                _needsRearrange = false;
+                foreach (var t in targets)
+                {
+                    var rs = t as RoadScroll;
+                    if (rs != null) RoadScrollEditorHelper.RearrangeAlongScrollDirection(rs, "Live Rearrange RoadScroll");
+                }
+            }
         }
 
         // ====================================================================
@@ -148,8 +184,9 @@ namespace VicTools
                 return;
             }
 
-            // 1. 用 OBB 算法计算沿 axis 方向的准确长度（共享 VicToolsBoundsUtility）
-            float newLength = VicToolsBoundsUtility.GetAccurateLengthAlongAxis(primary, axis);
+            // 1. v2.5+ 用段对象本身（roadSegments[0]）的世界空间 OBB 长度，共享 ComputeSegmentLength
+            //    自动包含段 GameObject + RoadScroll 父对象链的旋转+缩放（lossyScale）
+            float newLength = RoadScrollEditorHelper.ComputeSegmentLength(rs, axis);
             if (newLength <= 0f)
             {
                 EditorUtility.DisplayDialog("提示",
@@ -167,7 +204,7 @@ namespace VicTools
             string axisName = RoadScrollEditorHelper.AxisName(axis);
             int segCount = rs.roadSegments.Count;
             Debug.Log($"[VicTools] RoadScroll 已设置 {axisName} 轴：\n" +
-                      $"  ScrollDirection={-axis}（段流向远方，即 -{axisName} 方向）\n" +
+                      $"  ScrollDirection={rs.scrollDirection}（父对象局部轴，段流向远方即 -{axisName} 方向）\n" +
                       $"  SegmentLength={newLength:F2}（OBB 准确长度）\n" +
                       $"  {segCount} 段已按 -{axisName} 方向等距排布（以父对象位置 [{rs.transform.position}] 为几何中心）\n" +
                       $"  共享入口：RoadScrollEditorHelper.ApplyAxisToRoadScroll（与 CreateRoadScroll / DuplicateAndArrange 一致）");
@@ -298,11 +335,19 @@ namespace VicTools
             if (arrAxis.sqrMagnitude < 1e-6f) arrAxis = Vector3.right;
             arrAxis.Normalize();
 
-            // 收集 Undo 目标：所有非空段 transform
-            var segUndoTargets = new List<UnityEngine.Object>(rs.roadSegments.Count);
+            // v2.5+ 段对象本身刷新：排布前用段对象（roadSegments[0]）重新计算 segmentLength
+            // 这样用户在 ApplyAxis 后修改了段的 localScale / 替换了 mesh / 新增了不同尺寸模板，
+            // 再按"目标数量+生成"时会自动衔接，不会因 segmentLength 残留旧值而错位。
+            float refreshedLength = RoadScrollEditorHelper.ComputeSegmentLength(rs, arrAxis);
+            if (refreshedLength > 0f)
+                rs.segmentLength = refreshedLength;
+            // 否则保留旧值（段对象无 mesh 时不强行清零，避免破坏已有数据）
+
+            // 收集 Undo 目标：组件 + 所有非空段 transform（rs.segmentLength 可能变化，纳入 Undo）
+            var segUndoTargets = new List<UnityEngine.Object>(rs.roadSegments.Count + 1) { rs };
             for (int i = 0; i < rs.roadSegments.Count; i++)
                 if (rs.roadSegments[i] != null) segUndoTargets.Add(rs.roadSegments[i]);
-            if (segUndoTargets.Count == 0) return;
+            if (segUndoTargets.Count == 1) return;
 
             Undo.RecordObjects(segUndoTargets.ToArray(), "Arrange Road Segments After Duplicate");
 
@@ -316,7 +361,7 @@ namespace VicTools
             serializedObject.Update();
 
             Debug.Log($"[VicTools] RoadScroll [{rs.name}] 已自动沿 -scrollDirection 方向等距排布 " +
-                      $"{rs.roadSegments.Count} 段（segmentLength={rs.segmentLength:F2}，" +
+                      $"{rs.roadSegments.Count} 段（segmentLength={rs.segmentLength:F2}，v2.5+ 按段对象本身刷新，" +
                       $"几何中心 [{rs.transform.position}]）");
         }
     }

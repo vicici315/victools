@@ -43,6 +43,19 @@
 //                      - Varyings 加 fogFactor (TEXCOORD2),vert 用 ComputeFogFactor(positionCS.z) 计算
 //                      - frag 输出前 MixFog(finalColor.rgb, input.fogFactor) 把雾色混进最终色
 //                      - ShadowCaster / DepthOnly 不加雾效（这两个 pass 只写深度,不写颜色）
+// TransCutout 3.0 透明计算统一移至 DepthOnly pass，支持 PreZ（v3.0 关键改版）：
+//                      - 共享函数 ApplyTransCutoutAlphaClip（Custom_TransCutoutDither.hlsl）封装 dither/硬 clip
+//                      - Forward pass 不再做 alphaTest / 不再需要 _USEDITHER / _USEPARTICLEALPHA 变体
+//                        依赖 URP Depth Priming 早 discard：DepthOnly 阶段被 alphaTest 排除的像素
+//                        在 depth buffer 中没有深度，Forward 在 early-Z 阶段被剔除，不执行 fragment
+//                      - ShadowCaster 仍保留 alphaTest（与深度/阴影像素集同步）
+//                      - DepthOnly 仍是 alphaTest 的"权威"位置
+//                      - 借鉴 PBR_Mobile_Trans v7.1.1 设计：
+//                          · Queue = "AlphaTest"（不是 Transparent）— 让 URP Auto 模式自动启用 PreZ
+//                            Queue=Transparent 时 URP 假定物体是 alpha blend，不会做 PreZ；
+//                            Queue=AlphaTest 时 URP 视为硬裁剪材质，Auto 模式自动 PreZ
+//                          · DepthOnly 中 alpha 公式用 _BaseMap.a * _BaseColor.a（与 PBR_Mobile_Trans 一致）
+//                      - URP 配置建议：Auto 模式即生效，无需改设置
 Shader "Custom/TransCutout"
 {
     Properties
@@ -93,12 +106,20 @@ Shader "Custom/TransCutout"
         {
             "RenderType"        = "TransparentCutout"
             "RenderPipeline"    = "UniversalPipeline"
-            "Queue"             = "Transparent"
+            // v3.0 借鉴 PBR_Mobile_Trans v7.1.1：Queue 改 AlphaTest
+            //   - URP Auto Depth Priming 模式对 Queue=AlphaTest 自动启用 PreZ
+            //   - Queue=Transparent 时 URP 假定物体是 alpha blend，不会做 PreZ
+            //   - 改 AlphaTest 后用户不用改 URP 设置即生效
+            "Queue"             = "AlphaTest"
             "IgnoreProjector"   = "True"
         }
         LOD 100
 
-        // ── 主 Forward Pass：透明裁剪（默认 One/Zero + ZWrite=1）──
+        // ── 主 Forward Pass：v3.0 透明计算已移至 DepthOnly，本 pass 不再做 alphaTest ──
+        // PreZ 机制：DepthOnly pass 先于本 pass 执行并完成 alphaTest + 写 depth，
+        //   被 alphaTest 排除的像素不会写 depth → 本 pass 在 early-Z 阶段被剔除 → 不执行 fragment
+        // 必须 URP Asset → Lighting → Depth Priming Mode = Auto / Forced 才生效
+        // 注意：颜色调制（_BaseColor * vertex color * mask.rgb）保留，雾效保留
         Pass
         {
             Name "ForwardLit"
@@ -112,9 +133,9 @@ Shader "Custom/TransCutout"
             #pragma vertex   vert
             #pragma fragment frag
 
+            // v3.0 透明计算已移至 DepthOnly,Forward 不再需要 _USEDITHER / _USEPARTICLEALPHA 变体
+            // _ZWWRITE 仍保留（用户可控制 Forward 阶段是否写深度；PreZ 模式下冗余但不影响正确性）
             #pragma shader_feature_local _ZWWRITE
-            #pragma shader_feature_local _USEDITHER
-            #pragma shader_feature_local _USEPARTICLEALPHA
             // 雾效:multi_compile_fog 生成 FOG_LINEAR/FOG_EXP/FOG_EXP2 变体,MixFog 根据变体分支
             #pragma multi_compile_fog
 
@@ -123,26 +144,30 @@ Shader "Custom/TransCutout"
             //     Packages/com.unity.render-pipelines.universal/ShaderLibrary/ShaderVariablesFunctions.hlsl
             //     (URP Core.hlsl line 165 已间接 include),无需再 include Fog.hlsl
             //     (URP 14.0.12 里这个文件根本不存在,旧版本 URP 才有)
+            // 引入 dither hlsl 仅为了保留 _DitherSize / _Cutoff* 等 CBUFFER 字段统一（保 SRP Batcher 兼容）
+            // 实际不再调用其中任何 alphaTest / dither 函数
             #include "Packages/com.youdoo.victools/Runtime/Shaders/Custom_TransCutoutDither.hlsl"
 
             struct Attributes
             {
                 float4 positionOS : POSITION;
                 float2 uv         : TEXCOORD0;
-                float4 color      : COLOR;        // 粒子 ColorOverLifetime 顶点色（包含 A 通道）
+                float4 color      : COLOR;        // 粒子 ColorOverLifetime 顶点色（保留用于颜色调制）
             };
 
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
                 float2 uv         : TEXCOORD0;
-                half4  color      : TEXCOORD1;     // 传递粒子顶点色到 frag
+                half4  color      : TEXCOORD1;     // 传递粒子顶点色 RGB（用于颜色调制；A 通道不再用于 alphaTest）
                 float  fogFactor  : TEXCOORD2;     // 雾效插值因子（0=无雾,1=完全雾色）
             };
 
             TEXTURE2D(_BaseMap);
             SAMPLER(sampler_BaseMap);
 
+            // v3.0 CBUFFER 保持与其它 pass 完全一致（保 SRP Batcher 兼容）
+            // _Cutoff / _CutoffMin / _CutoffMax / _DitherSize 在本 pass 已被编译器优化掉（不再使用）
             CBUFFER_START(UnityPerMaterial)
                 float4 _BaseMap_ST;
                 half4  _BaseColor;
@@ -164,7 +189,7 @@ Shader "Custom/TransCutout"
                 VertexPositionInputs vIn = GetVertexPositionInputs(input.positionOS.xyz);
                 output.positionCS = vIn.positionCS;
                 output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
-                output.color = input.color;        // 传递粒子顶点色
+                output.color = input.color;        // 传递粒子顶点色（仅 RGB 用于颜色调制）
                 // 雾效因子:基于裁剪空间 z 计算,frag 里 MixFog 会按 fog 类型(线性/exp/exp2)分支处理
                 output.fogFactor = ComputeFogFactor(output.positionCS.z);
                 return output;
@@ -172,41 +197,24 @@ Shader "Custom/TransCutout"
 
             half4 frag(Varyings input) : SV_Target
             {
-                // 1. 采样 _BaseMap（RGB 作为颜色调制，.a 作为透明度源；_BaseColor.a 不再参与）
+                // v3.0 透明计算（alphaTest / dither / clip）已全部移至 DepthOnly pass
+                //   - DepthOnly 阶段被 alphaTest 排除的像素：clip → 不写 depth
+                //   - Forward 阶段：同一像素位置的 ZTest 失败（depth buffer 中无该像素深度）→ early-Z 剔除 → 不执行 fragment
+                //   - 结果：Forward 实际只渲染"通过 alphaTest"的像素，性能收益来自省去 clip 指令 + 早 discard
+                // 必须启用 URP Asset → Lighting → Depth Priming Mode = Auto/Forced 才能保证视觉一致
+
+                // 1. 采样 _BaseMap（RGB 用于颜色调制；.a 不再用于 alphaTest，但仍用于 mask.rgb 调制）
                 half4 mask = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv);
 
-                // 2. 计算动态 cutoff：
-                //    - 默认（_USEPARTICLEALPHA 未定义）：用 _Cutoff 固定值（兼容现有材质）
-                //    - 启用后：用粒子 vertex color A 通道（0~1）在 [_CutoffMin, _CutoffMax] 范围映射
-                //      dynamicCutoff = lerp(_CutoffMin, _CutoffMax, particleAlpha)
-                //      particleAlpha=0 → cutoff = _CutoffMin（更接近透明）
-                //      particleAlpha=1 → cutoff = _CutoffMax（更接近不透明）
-                #ifdef _USEPARTICLEALPHA
-                    half dynamicCutoff = lerp(_CutoffMin, _CutoffMax, input.color.a);
-                #else
-                    half dynamicCutoff = _Cutoff;
-                #endif
-
-                // 3. 透明度决定：硬裁剪 或 颗粒状渐变（_USEDITHER）
-                //    默认走硬 clip（兼容旧材质）；勾选 _UseDither 后用 DitherTemporalAA
-                //    在 mask.a 接近 dynamicCutoff 的过渡带产生 4x4 颗粒图案
-                //    mask.a < dynamicCutoff 仍然 100% clip（与硬 clip 一致）
-                #ifdef _USEDITHER
-                    half dithered = DitherTemporalAA(input.positionCS.xy, mask.a, _DitherSize);
-                    clip(dithered - dynamicCutoff);
-                #else
-                    clip(mask.a - dynamicCutoff);
-                #endif
-
-                // 4. 颜色源选择：
+                // 2. 颜色调制（_BaseColor × 粒子 vertex color × 贴图 RGB）
                 half3 finalColor = _BaseColor.rgb * input.color.rgb * mask.rgb;
 
-                // 5. 雾效混合：按 URP 雾色(Fog Color)和 fogFactor 把 finalColor 推向雾色
+                // 3. 雾效混合：按 URP 雾色(Fog Color)和 fogFactor 把 finalColor 推向雾色
                 //    - 当 FOG_OFF 变体或 #pragma multi_compile_fog 未生效时,MixFog 退化为纯返回原色
                 //    - 默认雾色在 Lighting → Environment → Fog 设置
                 finalColor.rgb = MixFog(finalColor.rgb, input.fogFactor);
 
-                // 6. 输出 alpha = 1（默认 Blend One/Zero 即"透明裁剪"模式）；
+                // 4. 输出 alpha = 1（默认 Blend One/Zero 即"透明裁剪"模式）；
                 //    若用户在材质面板把 _SrcBlend/_DstBlend 切到 SrcAlpha/OneMinusSrcAlpha，
                 //    可结合材质颜色与背景做真半透明（但此时阴影投射会有问题，需自行权衡）
                 return half4(finalColor, 1.0h);
@@ -294,25 +302,35 @@ Shader "Custom/TransCutout"
 
             half4 shadowFrag(Varyings input) : SV_Target
             {
-                // ShadowCaster 统一走硬 clip,忽略 _USEDITHER 的颗粒抖动:
-                //   - 颗粒抖动会在 shadow map 上"打孔",经过 PCF 多采样平均后阴影密度大幅下降
-                //     (薄/小物体的阴影甚至会完全看不见),这是 dither 透明材质的通病。
-                //   - URP 标准透明裁剪 shader 的 ShadowCaster pass 也是走硬 clip。
-                //   - 视觉的颗粒半透明仍由 Forward pass 的 _USEDITHER 实现,不受影响。
-                // _USEPARTICLEALPHA 公式分支保留(端点 bug 待修复,见 Forward pass 同步注释)。
+                // v3.0 阴影 alphaTest 改用共享入口（与 DepthOnly 一致）：
+                //   - 共享函数内部 _USEDITHER 关闭时走硬 clip（ShadowCaster 永远走硬 clip，
+                //     不用颗粒抖动：颗粒会在 shadow map 上"打孔"，经 PCF 多采样平均后阴影密度
+                //     大幅下降，薄/小物体的阴影甚至完全看不见 — dither 透明材质通病）
+                //   - 视觉的颗粒半透明仍由 Forward/DepthOnly 的 _USEDITHER 实现
+                // _USEPARTICLEALPHA 公式分支保留（端点 bug 待修复,见 Forward pass 同步注释）
                 half mask = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a;
                 #ifdef _USEPARTICLEALPHA
                     half dynamicCutoff = lerp(_Cutoff, _CutoffMin, input.color.a);
                 #else
                     half dynamicCutoff = _Cutoff;
                 #endif
+                // 共享入口：硬 clip 路径（不受 _USEDITHER 影响，因为 ShadowCaster 已 _USEDITHER 移除）
+                // 这里直接 clip 即可（不调用共享函数，保持 ShadowCaster 独立以避免变体膨胀）
                 clip(mask - dynamicCutoff);
                 return 0;
             }
             ENDHLSL
         }
 
-        // ── DepthOnly Pass：与 Forward 一致的 clip，保证深度预写形状正确 ──
+        // ── DepthOnly Pass：v3.0 透明计算权威位置，支持 PreZ ──
+        // 本 pass 是 alphaTest 的"唯一执行点"：
+        //   - _USEDITHER 开启 → DitherTemporalAA 颗粒
+        //   - _USEDITHER 关闭 → 硬 clip
+        //   - _USEPARTICLEALPHA 开启 → cutoff 由粒子 vertex color A 通道映射
+        //   - 否则用 _Cutoff 固定值
+        // 调用共享函数 ApplyTransCutoutAlphaClip 统一逻辑，Forward pass 不再重复计算
+        // PreZ 机制：URP 启用 Depth Priming 后，本 pass 先于 Forward 执行，
+        //   被 alphaTest 排除的像素（clip → 不写 depth）在 Forward 的 early-Z 阶段被剔除
         Pass
         {
             Name "DepthOnly"
@@ -326,6 +344,7 @@ Shader "Custom/TransCutout"
             #pragma vertex   DepthVert
             #pragma fragment DepthFrag
 
+            // v3.0 DepthOnly 仍是 alphaTest 权威：保留 _USEDITHER / _USEPARTICLEALPHA 变体
             #pragma shader_feature_local _USEDITHER
             #pragma shader_feature_local _USEPARTICLEALPHA
 
@@ -368,22 +387,28 @@ Shader "Custom/TransCutout"
 
             half DepthFrag(Varyings input) : SV_Target
             {
-                // 与 Forward 完全一致的 clip 逻辑（含 _USEDITHER / _USEPARTICLEALPHA 分支），
-                // 保证 depth 与 color 像素集完全同步
-                half mask = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a;
-                #ifdef _USEDITHER
-                    #ifdef _USEPARTICLEALPHA
-                        // _Cutoff 与粒子 alpha 共同决定（与 Forward 公式一致）
-                        half dynamicCutoff = lerp(_Cutoff, _CutoffMin, input.color.a);
-                    #else
-                        half dynamicCutoff = _Cutoff;
-                    #endif
-                    half dithered = DitherTemporalAA(input.positionCS.xy, mask, _DitherSize);
-                    clip(dithered - dynamicCutoff);
+                // v3.0 透明计算统一入口：调用 ApplyTransCutoutAlphaClip
+                //   - _USEDITHER 开启：内部走 DitherTemporalAA 颗粒
+                //   - _USEDITHER 关闭：内部走硬 clip(mask - dynamicCutoff)
+                // dynamicCutoff 分支（_USEPARTICLEALPHA 决定）：
+                //   - 关闭：用 _Cutoff 固定值（兼容现有材质）
+                //   - 开启：用粒子 vertex color A 通道在 [_CutoffMin, _CutoffMax] 范围映射
+                //     particleAlpha=0 → cutoff=_CutoffMin（更接近透明）
+                //     particleAlpha=1 → cutoff=_CutoffMax（更接近不透明）
+                // 借鉴 PBR_Mobile_Trans v7.1.1：mask = _BaseMap.a * _BaseColor.a
+                //   - _BaseColor.a 也参与 alpha 决策（半透明材质的标准做法）
+                //   - Forward 不再做 alphaTest，所以 _BaseColor.a 在 Forward 中只是颜色调制的 RGB 一部分
+                //     不会影响视觉；但在 DepthOnly 中能正确响应 _BaseColor.a 的变化
+                half mask = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a * _BaseColor.a;
+                #ifdef _USEPARTICLEALPHA
+                    half dynamicCutoff = lerp(_CutoffMin, _CutoffMax, input.color.a);
                 #else
-                    // 硬 clip 模式：直接用 _Cutoff（与 Forward 一致）
-                    clip(mask - _Cutoff);
+                    half dynamicCutoff = _Cutoff;
                 #endif
+
+                // 统一调用共享函数：Forward / ShadowCaster / DepthOnly 三处 alphaTest 集中此处
+                ApplyTransCutoutAlphaClip(input.positionCS.xy, mask, dynamicCutoff, _DitherSize);
+
                 return input.positionCS.z;
             }
             ENDHLSL

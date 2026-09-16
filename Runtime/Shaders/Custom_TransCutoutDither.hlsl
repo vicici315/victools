@@ -72,4 +72,28 @@ half DitherTemporalAA(float2 SvPositionXY, half Random2, half DitherSize)
     return Random2 + ditherValue * 0.5;
 }
 
+// =====================================================================
+// ApplyTransCutoutAlphaClip - 统一的 TransCutout 透明计算入口（v2.6+）
+// ---------------------------------------------------------------------
+// 把"alphaTest 决策"集中到一处：DepthOnly pass 调用一次即"权威"。
+// Forward pass 移除了 alphaTest（依赖 PreZ / URP Depth Priming 早 discard）。
+//
+// 用法（在 frag 末尾调用即可，clip 是 fragment-only 指令，会被内联到调用点）：
+//   ApplyTransCutoutAlphaClip(input.positionCS.xy, mask.a, dynamicCutoff, _DitherSize);
+//
+// _USEDITHER 开启时走 DitherTemporalAA（4x4 Bayer 颗粒渐变）；
+// 关闭时走硬 clip(mask - dynamicCutoff)。
+// dynamicCutoff 的取值规则（_USEPARTICLEALPHA 分支）由调用方决定，
+// 本函数只做 dither/硬 clip 分支，不参与粒子 alpha 映射。
+// =====================================================================
+void ApplyTransCutoutAlphaClip(float2 SvPositionXY, half mask, half dynamicCutoff, half ditherSize)
+{
+    #ifdef _USEDITHER
+        half dithered = DitherTemporalAA(SvPositionXY, mask, ditherSize);
+        clip(dithered - dynamicCutoff);
+    #else
+        clip(mask - dynamicCutoff);
+    #endif
+}
+
 #endif // TRANSCUTOUT_DITHER_INCLUDED

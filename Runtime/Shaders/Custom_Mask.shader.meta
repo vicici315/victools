@@ -4,7 +4,7 @@ ShaderImporter:
   externalObjects: {}
   defaultTextures:
   - _BaseMap: {instanceID: 0}
-  - _DitherTexture: {fileID: 2800000, guid: 7409cda7e0235db4fb471a9a8cd2c85b, type: 3}
+  - _DitherTexture: {fileID: 2800000, guid: 30eaac311c2b48242a339a3fcc522d2f, type: 3}
   nonModifiableTextures: []
   userData: 
   assetBundleName: 

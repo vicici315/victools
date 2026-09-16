@@ -54,9 +54,9 @@ namespace VicTools
                     {
                         if (mat != null && !processedMaterials.Contains(mat) && mat.shader)
                         {
-                            // 支持 PBR_Mobile 和 PBR_Mobile_Trans
-                            bool isPBRMobile = mat.shader.name == "Custom/PBR_Mobile";
-                            bool isPBRMobileTrans = mat.shader.name == "Custom/PBR_Mobile_Trans";
+                            // 支持 PBR_Mobile_NEW 和 PBR_Mobile_NEW_Trans
+                            bool isPBRMobile = mat.shader.name == "Custom/PBR_Mobile_NEW";
+                            bool isPBRMobileTrans = mat.shader.name == "Custom/PBR_Mobile_NEW_Trans";
                             
                             if ((isPBRMobile || isPBRMobileTrans) && mat.HasProperty("_BakedSpecularDirection"))
                             {
@@ -84,12 +84,12 @@ namespace VicTools
             else
             {
                 EditorUtility.DisplayDialog("警告", 
-                    "未在场景中找到使用 Custom/PBR_Mobile 的材质", 
+                    "未在场景中找到使用 Custom/PBR_Mobile_NEW 的材质", 
                     "确定");
             }
         }
 
-        /// 切换选中对象的材质着色器在 PBR_Mobile 和 PBR_Lighting 之间
+        /// 切换选中对象的材质着色器在 PBR_Mobile_NEW 和 PBR_Lighting 之间
         /// 公共函数调用方法：SceneTools.SwitchPBRLightingShader();
         /// <param name="useStaticObjects">true: 处理场景中所有静态对象; false: 只处理选中的对象</param>
         public static void SwitchPBRLightingShader(bool useStaticObjects = false)
@@ -133,14 +133,14 @@ namespace VicTools
                 }
             }
 
-            Shader pbrMobileShader = Shader.Find("Custom/PBR_Mobile");
+            Shader pbrMobileShader = Shader.Find("Custom/PBR_Mobile_NEW");
             Shader pbrLightingShader = Shader.Find("Custom/PBR_Lighting");
 
             if (pbrMobileShader == null || pbrLightingShader == null)
             {
                 EditorUtility.DisplayDialog("错误", 
                     "未找到着色器:\n" +
-                    (pbrMobileShader == null ? "- Custom/PBR_Mobile\n" : "") +
+                    (pbrMobileShader == null ? "- Custom/PBR_Mobile_NEW\n" : "") +
                     (pbrLightingShader == null ? "- Custom/PBR_Lighting\n" : ""),
                     "确定");
                 return;
@@ -172,7 +172,7 @@ namespace VicTools
                             if (mat != null)
                             {
                                 string shaderName = mat.shader.name;
-                                if (shaderName == "Custom/PBR_Mobile" || shaderName == "Custom/PBR_Lighting")
+                                if (shaderName == "Custom/PBR_Mobile_NEW" || shaderName == "Custom/PBR_Lighting")
                                 {
                                     shaderTypes.Add(shaderName);
                                 }
@@ -219,14 +219,14 @@ namespace VicTools
                         if (forceSetToLighting)
                         {
                             // 强制设置为 PBR_Lighting（材质不一致时）
-                            if (shaderName == "Custom/PBR_Mobile" || shaderName == "Custom/PBR_Lighting")
+                            if (shaderName == "Custom/PBR_Mobile_NEW" || shaderName == "Custom/PBR_Lighting")
                             {
                                 Undo.RecordObject(mat, "Force Set to PBR_Lighting");
                                 mat.shader = pbrLightingShader;
                                 EditorUtility.SetDirty(mat);
                                 processedMaterials.Add(mat);
                                 switchedCount++;
-                                if (shaderName == "Custom/PBR_Mobile")
+                                if (shaderName == "Custom/PBR_Mobile_NEW")
                                 {
                                     pbrMobileToLighting++;
                                 }
@@ -235,7 +235,7 @@ namespace VicTools
                         else
                         {
                             // 正常切换逻辑（材质一致时）
-                            if (shaderName == "Custom/PBR_Mobile")
+                            if (shaderName == "Custom/PBR_Mobile_NEW")
                             {
                                 // 记录材质的 Undo
                                 Undo.RecordObject(mat, "Switch to PBR_Lighting");
@@ -248,7 +248,7 @@ namespace VicTools
                             else if (shaderName == "Custom/PBR_Lighting")
                             {
                                 // 记录材质的 Undo
-                                Undo.RecordObject(mat, "Switch to PBR_Mobile");
+                                Undo.RecordObject(mat, "Switch to PBR_Mobile_NEW");
                                 mat.shader = pbrMobileShader;
                                 EditorUtility.SetDirty(mat);
                                 processedMaterials.Add(mat);
@@ -280,9 +280,9 @@ namespace VicTools
                     {
                         message = $"成功切换 {switchedCount} 个材质的着色器 ({objectType}):\n";
                         if (pbrMobileToLighting > 0)
-                            message += $"- PBR_Mobile → PBR_Lighting: {pbrMobileToLighting} 个\n";
+                            message += $"- PBR_Mobile_NEW → PBR_Lighting: {pbrMobileToLighting} 个\n";
                         if (pbrLightingToMobile > 0)
-                            message += $"- PBR_Lighting → PBR_Mobile: {pbrLightingToMobile} 个";
+                            message += $"- PBR_Lighting → PBR_Mobile_NEW: {pbrLightingToMobile} 个";
                     }
                     
                     EditorUtility.DisplayDialog("成功", message.TrimEnd('\n'), "确定");
@@ -292,7 +292,7 @@ namespace VicTools
             {
                 string objectType = useStaticObjects ? "静态对象" : "选中的对象";
                 EditorUtility.DisplayDialog("提示", 
-                    $"{objectType}中没有使用 Custom/PBR_Mobile 或 Custom/PBR_Lighting 着色器的材质", 
+                    $"{objectType}中没有使用 Custom/PBR_Mobile_NEW 或 Custom/PBR_Lighting 着色器的材质", 
                     "确定");
             }
         }

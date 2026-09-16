@@ -7,7 +7,7 @@ Shader "Custom/Fx/CustomParticle"
     Properties
     {
         [Header(Main Texture)]
-        _MainTex ("Main Texture", 2D) = "white" {}
+        _BaseMap ("Main Texture", 2D) = "white" {}
         [HDR] _Color ("Color", Color) = (1, 1, 1, 1)
 
         [Header(UV Animation)]
@@ -74,12 +74,12 @@ Shader "Custom/Fx/CustomParticle"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
-            TEXTURE2D(_MainTex);      SAMPLER(sampler_MainTex);
+            TEXTURE2D(_BaseMap);      SAMPLER(sampler_BaseMap);
             TEXTURE2D(_ReflectionMap); SAMPLER(sampler_ReflectionMap);
             TEXTURE2D(_BumpMap);       SAMPLER(sampler_BumpMap);
 
             CBUFFER_START(UnityPerMaterial)
-                half4 _MainTex_ST;
+                half4 _BaseMap_ST;
                 half4 _Color;
                 half4 _ScrollSpeed;
                 half  _WetStrength;
@@ -147,7 +147,7 @@ Shader "Custom/Fx/CustomParticle"
 
                 output.positionCS   = posInputs.positionCS;
                 output.color        = input.color;
-                output.uv           = TRANSFORM_TEX(input.uv, _MainTex) + _Time.y * _ScrollSpeed.xy;
+                output.uv           = TRANSFORM_TEX(input.uv, _BaseMap) + _Time.y * _ScrollSpeed.xy;
                 output.fogFactor    = ComputeFogFactor(output.positionCS.z);
                 output.normalWS     = nrmInputs.normalWS;
                 output.tangentWS    = nrmInputs.tangentWS;
@@ -162,7 +162,7 @@ Shader "Custom/Fx/CustomParticle"
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
-                half4 tex = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
+                half4 tex = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv);
 
                 half particleAlpha = input.color.a;
 
@@ -175,7 +175,7 @@ Shader "Custom/Fx/CustomParticle"
                     // 法线贴图扰动（可选）
                     #if defined(_USENORMALMAP)
                     {
-                        half2 bumpUV = TRANSFORM_TEX(input.uv, _MainTex);
+                        half2 bumpUV = TRANSFORM_TEX(input.uv, _BaseMap);
                         half3 normalTS = UnpackNormal(SAMPLE_TEXTURE2D(_BumpMap, sampler_BumpMap, bumpUV));
                         normalTS.xy *= _BumpScale;
                         normalTS.z   = sqrt(1.0h - saturate(dot(normalTS.xy, normalTS.xy)));

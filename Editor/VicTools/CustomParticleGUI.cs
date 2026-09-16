@@ -45,7 +45,7 @@ public class CustomParticleGUI : ShaderGUI
 
     private void FindProperties()
     {
-        mainTex = FindProperty("_MainTex", m_Properties);
+        mainTex = FindProperty("_BaseMap", m_Properties);
         color = FindProperty("_Color", m_Properties);
         scrollSpeed = FindProperty("_ScrollSpeed", m_Properties);
         useWetDecal = FindProperty("_UseWetDecal", m_Properties);
@@ -99,8 +99,8 @@ public class CustomParticleGUI : ShaderGUI
         if (material != null)
         {
             EditorGUI.indentLevel++;
-            Vector2 tiling = material.GetTextureScale("_MainTex");
-            Vector2 offset = material.GetTextureOffset("_MainTex");
+            Vector2 tiling = material.GetTextureScale("_BaseMap");
+            Vector2 offset = material.GetTextureOffset("_BaseMap");
 
             EditorGUI.BeginChangeCheck();
             tiling = EditorGUILayout.Vector2Field("Tiling", tiling);
@@ -108,8 +108,8 @@ public class CustomParticleGUI : ShaderGUI
             if (EditorGUI.EndChangeCheck())
             {
                 Undo.RecordObject(material, "Change MainTex Tiling/Offset");
-                material.SetTextureScale("_MainTex", tiling);
-                material.SetTextureOffset("_MainTex", offset);
+                material.SetTextureScale("_BaseMap", tiling);
+                material.SetTextureOffset("_BaseMap", offset);
                 EditorUtility.SetDirty(material);
             }
             EditorGUI.indentLevel--;

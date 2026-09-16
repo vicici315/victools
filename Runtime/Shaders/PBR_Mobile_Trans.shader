@@ -20,7 +20,13 @@
 // 继承PBR_Mobile6.3 添加“禁用主光颜色”选项，取消勾选时使用默认白色
 // 继承PBR_Mobile6.5 P0性能优化：MRA贴图条件采样、新增_DSIABLEBAKEDSPECULAR/_DISABLEINDIRECTSPECULAR开关；_ZWrite改用shader_feature_local关键字化
 // 继承PBR_Mobile7.1 软阴影重构：等边三角形120°采样(中心+3点,减少到4次采样,固定权重2:1:1:1÷8)；顶点阴影/像素阴影互斥重构(_USEVERSHADOW激活时跳过shadow map采样)；修正权重归一化；添加ShadowMap边界检测(sc.z≤0排除范围外错误阴影)
-
+// 7.1.1 透明处理移至"DepthOnly"Pass中，适配Pre-Z
+// 8.0 同步PBR_Mobile_NEW：替换高光算法为GGX（ARM Siggraph 2015 移动优化版，D*V*F合并近似）
+//      MaterialProperties 扩展为 GGX 参数（alphaRoughness/alpha2/alpha2MinusOne），标准F0 = lerp(0.04, albedo, metallic)
+// 8.1 同步PBR_Mobile_NEW：间接高光使用反射方向SH增强法线依赖（无光照贴图时光滑度调制反射方向采样）
+// 8.2 同步PBR_Mobile_NEW：SimpleDiffuse 按 _DISABLEENVIRONMENT 切换算法（禁用环境光时暗部整体受 _HalfLambert 比例控制）
+// 8.3 同步PBR_Mobile_NEW：阴影高光衰减曲线应用到直接高光/间接高光/烘焙高光，避免暗部高光过亮
+// 8.4 同步PBR_Mobile_NEW 8.4：PBR 粗糙度钳制对齐 URP 标准（perceptualRoughness 允许到 0。
 Shader "Custom/PBR_Mobile_Trans"
 {
     Properties
@@ -37,7 +43,7 @@ Shader "Custom/PBR_Mobile_Trans"
         [Space(5)]
         _Metallic ("Metallic", Range(0, 1)) = 0.0
         _Roughness ("Roughness", Range(0, 2)) = 0.5
-        _SpecularScale ("Specular Scale", Range(0.1, 5)) = 2
+        _SpecularScale ("Specular Scale", Range(0.01, 1)) = 1
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.3
         _ShadowScale ("Self Shadow Scale", Range(0, 1)) = 0.5
         _Softness ("Shadow Softness（纹素数）", Range(0, 4)) = 1.5
@@ -82,7 +88,7 @@ Shader "Custom/PBR_Mobile_Trans"
         _PointLightIntensity ("Point Light Intensity", Range(0, 8)) = 1.0
         _PointLightRangeMultiplier ("Range Multiplier", Range(0.1, 3)) = 1.0
         _PointLightFalloff ("Falloff Power", Range(0.5, 8)) = 2.0
-        _PointLightAmount ("Light Amount", Range(1, 16)) = 4
+        _PointLightAmount ("Light Amount", Range(1, 8)) = 8
         
         [Header(7  (Custom Spot Lights))]
         [HideInInspector] _UseSpotlight("Use Spot Lighting", Float) = 0
@@ -117,8 +123,8 @@ Shader "Custom/PBR_Mobile_Trans"
             "RenderType" = "TransparentCutout"
             "RenderPipeline" = "UniversalPipeline"
             "IgnoreProjector" = "True"
-            // "Queue" = "AlphaTest"
-            "Queue" = "Transparent"
+            "Queue" = "AlphaTest"
+            // "Queue" = "Transparent"
         }
 
         Pass
@@ -244,6 +250,15 @@ Shader "Custom/PBR_Mobile_Trans"
                 #endif
             };
 
+            // PBR 粗糙度钳制下限（对齐 URP InitializeBRDFData 的双重 HALF 钳制，与 PBR_Mobile_NEW 8.4 同步）
+            //   MIN_ROUGHNESS  = HALF_MIN_SQRT ≈ 7.81e-3 — 防止 alphaRoughness 太小让 GGX D 项退化为 delta
+            //                                                  （解决"粗糙度为零时高光不可见"）
+            //   MIN_ROUGHNESS2 = HALF_MIN    ≈ 6.10e-5 — 防止 alpha2 在 fp16 下溢出到 0
+            // MIN_ROUGHNESS2 = (MIN_ROUGHNESS)² 在数学上等价于 HALF_MIN
+            // 注意：必须定义在 InitMaterialProperties 之前（HLSL 编译器逐语句解析，不前向追溯宏定义）
+            #define MIN_ROUGHNESS  7.8125e-3h
+            #define MIN_ROUGHNESS2 6.1035e-5h
+
             struct MaterialProperties
             {
                 half3 albedo;
@@ -253,11 +268,13 @@ Shader "Custom/PBR_Mobile_Trans"
                 float2 uv;
                 
                 // 预计算的PBR属性（性能优化）
-                half3 diffuseColor;     // 预计算的漫反射颜色
-                half3 specularColor;    // 预计算的高光颜色
-                half smoothness;        // 预计算的光滑度
-                half shininess;         // 预计算的高光指数
-                half oneMinusMetallic;  // 预计算的 1-metallic
+                half3 diffuseColor;       // 预计算的漫反射颜色
+                half3 specularColor;      // 预计算的高光颜色 (F0)
+                half perceptualRoughness; // 感知粗糙度 (0-1)
+                half alphaRoughness;      // alpha = perceptualRoughness^2 (GGX使用)
+                half alpha2;              // alpha^2
+                half alpha2MinusOne;      // alpha^2 - 1
+                half oneMinusMetallic;    // 预计算的 1-metallic
             };
 
             MaterialProperties InitMaterialProperties(half3 albedo, half metallic, half roughness, half3 normalWS, float2 uv)
@@ -270,49 +287,55 @@ Shader "Custom/PBR_Mobile_Trans"
                 
                 // 预计算PBR属性（性能优化 - 避免在每个光源中重复计算）
                 mat.oneMinusMetallic = 1.0 - mat.metallic;
-                mat.smoothness = 1.0 - mat.roughness;
                 
-                // 预计算能量守恒的漫反射和高光颜色
-                half oneMinusDielectricSpec = 0.96;
-                mat.diffuseColor = albedo * oneMinusDielectricSpec * mat.oneMinusMetallic;
+                // 标准PBR粗糙度参数（用于GGX BRDF，与PBR_Mobile_NEW 8.4 同步对齐 URP InitializeBRDFData）
+                //   perceptualRoughness 允许到 0（让 smoothness=1 不被破坏）
+                //   alphaRoughness = perceptualRoughness²，钳到 MIN_ROUGHNESS (HALF_MIN_SQRT)
+                //     —— 防止 GGX D 项(α²/d²)在 roughness=0 时退化成 delta 函数，
+                //        导致偏离完美反射方向的高光瞬衰到 0，即"高光不可见"
+                //   alpha2 = alphaRoughness²，钳到 MIN_ROUGHNESS2 (HALF_MIN)
+                //     —— 防止 fp16 下溢到 0，保持最坏情形数值稳定
+                mat.perceptualRoughness = saturate(mat.roughness);
+                mat.alphaRoughness = max(mat.perceptualRoughness * mat.perceptualRoughness, MIN_ROUGHNESS);
+                mat.alpha2 = max(mat.alphaRoughness * mat.alphaRoughness, MIN_ROUGHNESS2);
+                mat.alpha2MinusOne = mat.alpha2 - 1.0;
                 
-                // 优化高光基础能量：提高非金属材质的基础高光强度
-                half dielectricSpecular = 0.12; // 从0.04提升到0.12，增强非金属高光
-                half3 baseSpecularColor = lerp(dielectricSpecular, mat.albedo, mat.metallic);
+                // 标准PBR能量守恒漫反射
+                half oneMinusReflectivity = 0.96 * mat.oneMinusMetallic;
+                mat.diffuseColor = mat.albedo * oneMinusReflectivity;
                 
-                // 使用粗糙度调制高光强度，粗糙度低时高光更强
-                // 降低粗糙度的影响，避免过度增强
-                half roughnessFactor = 1.0 - mat.roughness * 0.3; // 从0.5降低到0.3
-                baseSpecularColor *= roughnessFactor;
-                
-                // 金属度加成：金属材质获得额外的高光强度提升
-                // 使用更温和的曲线，避免高金属度时过曝
-                half metallicBoost = 1.0 + mat.metallic * mat.metallic * 0.8; // 使用平方曲线，最高1.8倍
-                baseSpecularColor *= metallicBoost;
-                
-                // 确保最小高光值，避免完全消失
-                half minSpecular = lerp(0.08, 0.15, mat.metallic); // 降低金属最大最小值
-                mat.specularColor = max(baseSpecularColor, minSpecular);
-                
-                // 预计算高光指数（避免在每个光源中重复pow运算）
-                half smoothnessCubed = mat.smoothness * mat.smoothness * mat.smoothness;
-                mat.shininess = mad(smoothnessCubed, 128.0, 2.0);
+                // 标准PBR F0 (非金属0.04，金属用albedo)
+                mat.specularColor = lerp(half3(0.04, 0.04, 0.04), mat.albedo, mat.metallic);
                 
                 return mat;
             }
 
             half3 SimpleDiffuse(half3 normalWS, half3 lightDir, half3 lightColor)
             {
-                half NdotL = saturate(dot(normalWS, lightDir));
-                
-                // 标准Half Lambert效果
-                half halfLambertEffect = NdotL * (1.0 - _HalfLambert) + _HalfLambert;
-                
-                return lightColor * halfLambertEffect;
+                // 根据 _DisableEnvironment（禁用环境光）开关选择算法（与PBR_Mobile_NEW 8.2同步）：
+                //   _DISABLEENVIRONMENT 启用（禁用环境光）→ 整个暗部受 _HalfLambert 比例控制（max 公式）
+                //   否则（启用环境光）                → 传统 PBR_Mobile 算法（NdotL * (1-x) + x）
+                #ifdef _DISABLEENVIRONMENT
+                    // === 新版（禁用环境光时）：暗部整体受控 ===
+                    // 保留有符号 NdotL，让暗部不同法线方向保留细微差异
+                    half NdotL = dot(normalWS, lightDir);
+                    // max 取『亮部标准 Lambert』与『暗部整体填充』两者中较大值：
+                    //   亮部 (NdotL > 0)：saturate(NdotL) 主导 → 完全不受 _HalfLambert 影响，标准 Lambert
+                    //   暗部 (NdotL <= 0)：darkPart 主导，按 (1 - NdotL) * 0.5 * x 整体比例填充
+                    //     NdotL = 0 (明暗交界) → 0.5 * x（受 _HalfLambert 控制）
+                    //     NdotL = -1 (背光极)  → x（受 _HalfLambert 控制）
+                    half darkPart = (1.0 - NdotL) * 0.5 * _HalfLambert + (0.5 * _HalfLambert);
+                    return lightColor * max(saturate(NdotL), darkPart);
+                #else
+                    // === 传统算法（启用环境光时）：与 PBR_Mobile.shader 保持完全一致 ===
+                    half NdotL = dot(normalWS, lightDir);
+                    half halfLambertEffect = NdotL * (1.0 - _HalfLambert) + _HalfLambert;
+                    return lightColor * saturate(halfLambertEffect);
+                #endif
             }
             
             half fastPow(half x, half n) {
-                return exp2(n * log2(x)); 
+                return exp2(n * log2(x));
             }
 
             float2 fastSphericalUV(float3 reflectionVector) {
@@ -362,19 +385,36 @@ Shader "Custom/PBR_Mobile_Trans"
                 return reflectionColor * _ReflectionStrength * reflectionIntensity;
             }
 
-            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 lightColor, half shadowAttenuation)
+            // GGX高光项 (ARM Siggraph 2015移动优化: D*V*F合并近似)
+            // 参考URP DirectBRDFSpecular移动端实现
+            half GGXSpecularTerm(half NoH, half LoH, half alphaRoughness, half alpha2, half alpha2MinusOne)
             {
-                // 计算光线的反射向量
-                half3 reflectDir = reflect(-lightDir, normalWS);
-                // 计算反射向量与视线方向的点积
-                half RdotV = saturate(dot(reflectDir, viewDir));
-                
-                half specular = fastPow(max(RdotV, 0.001), shininess) * smoothness;
-                
-                return lightColor * specular * shadowAttenuation * 2.0; 
+                half d = NoH * NoH * alpha2MinusOne + 1.00001h;
+                half specularTerm = alpha2 / ((d * d) * max(0.1h, LoH * LoH) * (alphaRoughness * 4.0h + 2.0h));
+
+                #ifdef SHADER_API_MOBILE
+                specularTerm = specularTerm - HALF_MIN;
+                specularTerm = clamp(specularTerm, 0.0h, 100.0h);
+                #endif
+
+                return specularTerm;
             }
-            
-            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, half shininess, half smoothness, half3 bakedGI, half metallic, half shadowAttenuation)
+
+            half3 SimpleSpecular(half3 normalWS, half3 lightDir, half3 viewDir, MaterialProperties mat, half3 lightColor)
+            {
+                half3 halfDir = normalize(lightDir + viewDir);
+                half NoH = saturate(dot(normalWS, halfDir));
+                half LoH = saturate(dot(lightDir, halfDir));
+                half NoL = saturate(dot(normalWS, lightDir));
+
+                half specularTerm = GGXSpecularTerm(NoH, LoH, mat.alphaRoughness, mat.alpha2, mat.alpha2MinusOne);
+                // lightColor 已包含 distanceAttenuation 和 shadowAttenuation，高光被阴影正确遮挡一次（与URP Lit一致）
+                half3 specular = mat.specularColor * specularTerm * NoL * lightColor;
+
+                return specular;
+            }
+
+            half3 BakedSpecular(half3 normalWS, half3 lightDir, half3 viewDir, MaterialProperties mat, half3 bakedGI, half shadowAttenuation)
             {
                 // 使用烘焙高光方向（如果设置）
                 half3 finalLightDir = lightDir;
@@ -382,18 +422,19 @@ Shader "Custom/PBR_Mobile_Trans"
                 {
                     finalLightDir = normalize(_BakedSpecularDirection);
                 }
-                
-                // 计算光线的反射向量
-                half3 reflectDir = reflect(-finalLightDir, normalWS);
-                half NdotH = saturate(dot(reflectDir, viewDir));
-                
-                half specular = fastPow(max(NdotH, 0.001), shininess) * smoothness;
-                
-                half metallicFactor = metallic * metallic; 
+
+                half3 halfDir = normalize(finalLightDir + viewDir);
+                half NoH = saturate(dot(normalWS, halfDir));
+                half LoH = saturate(dot(finalLightDir, halfDir));
+                half NoL = saturate(dot(normalWS, finalLightDir));
+
+                half specularTerm = GGXSpecularTerm(NoH, LoH, mat.alphaRoughness, mat.alpha2, mat.alpha2MinusOne);
+
+                half metallicFactor = mat.metallic * mat.metallic;
                 half3 adjustedBakedGI = lerp(bakedGI, half3(1, 1, 1), metallicFactor);
-                
-                // 烘焙高光也应该受实时阴影影响
-                return adjustedBakedGI * specular * _SpecularScale * shadowAttenuation;
+
+                // 烘焙高光也应该受实时阴影影响（specularShadowMask 在调用方外部应用）
+                return adjustedBakedGI * specularTerm * NoL * _SpecularScale * shadowAttenuation;
             }
 
             Varyings vert(Attributes input)
@@ -464,7 +505,8 @@ Shader "Custom/PBR_Mobile_Trans"
                 half4 baseColor = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv) * _BaseColor;
                 half3 albedo = baseColor.rgb;
 
-                clip(baseColor.a - _Cutoff);
+                // 针对DepthPrimingMode=Forced的特殊处理关掉
+                // clip(baseColor.a - _Cutoff);
                 
                 half3 normalWS = normalize(input.normalWS);
                 
@@ -581,6 +623,15 @@ Shader "Custom/PBR_Mobile_Trans"
                     // 当 _ShadowScale >= 0.88 时，shadowAttenuation 保持为 1.0（已在上面初始化）
                 #endif
 		
+                // 阴影高光衰减曲线：让高光在阴影处的衰减比漫反射更剧烈，避免暗部高光过亮
+                // 等价于 x^2.8 的多项式拟合：f(x) = x² · (0.2 + 0.8·x) = 0.2·x² + 0.8·x³
+                //   端点匹配：f(0)=0, f(1)=1, f'(1)=2.8（与 x^2.8 一阶导数完全相同）
+                //   中段误差：x∈[0.4, 1.0] 误差均 < 4%，视觉无感
+                // 性能优势：2 mul + 1 mad，避开 fastPow(≈ log2+mul+exp2)，省 1-2 ALU
+                // 仅作用于各类高光（直接/间接/烘焙），不影响漫反射
+                half x = saturate(shadowAttenuation);
+                half specularShadowMask = x * x * (0.2 + 0.8 * x);
+
                 #ifndef _DISABLEENVIRONMENT
                 // _DISABLELIGHTCOLOR：漫反射去色只保留强度，高光保留原始颜色影响金属度
                 #ifdef _DISABLELIGHTCOLOR
@@ -592,7 +643,10 @@ Shader "Custom/PBR_Mobile_Trans"
                 half3 specularLightColor1 = lightColor;
                 #endif
                 half3 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
-                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, specularLightColor1, shadowAttenuation);
+                // specular 已包含 mat.specularColor (GGX BRDF 内部已乘)
+                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat, specularLightColor1);
+                // 应用阴影高光衰减曲线：暗部高光按指数衰减（曲线>1 时比漫反射衰减更剧烈）
+                specular *= specularShadowMask;
                 
                 // 计算环境光（烘焙光照或球谐光照）
                 half3 bakedGI = 0;
@@ -604,12 +658,26 @@ Shader "Custom/PBR_Mobile_Trans"
                     bakedGI = SampleSH(mat.normalWS);
                 #endif
                 
-                // 使用预计算的diffuseColor和specularColor（性能优化）
-                // _DISABLEINDIRECTSPECULAR：关闭环境光中 specularColor*metallic*0.5 的间接高光近似项（与PBR_Mobile保持一致）
-                #ifdef _DISABLEINDIRECTSPECULAR
+                // 间接漫反射：bakedGI只作用于漫反射通道（与URP Lit一致的能量分配）
                 half3 ambient = bakedGI * mat.diffuseColor;
-                #else
-                half3 ambient = bakedGI * (mat.diffuseColor + mat.specularColor * mat.metallic * 0.5);
+                #ifndef _DISABLEINDIRECTSPECULAR
+                // 间接高光：使用反射方向SH增强法线依赖（Lit反射探针的轻量替代，与PBR_Mobile_NEW 8.1同步）
+                // 无光照贴图时额外采样反射方向SH，光滑度越高反射方向权重越大（物理正确）
+                half NoV = saturate(dot(mat.normalWS, viewDirWS));
+                half fresnelTerm = fastPow(1.0 - NoV, 4.0);
+                half smoothnessVal = 1.0 - mat.perceptualRoughness;
+                
+                half3 indirectSpecularBase = bakedGI;
+                #ifndef LIGHTMAP_ON
+                    half3 reflectDir = reflect(-viewDirWS, mat.normalWS);
+                    half3 envSpecularSH = SampleSH(reflectDir);
+                    indirectSpecularBase = lerp(bakedGI, envSpecularSH, smoothnessVal);
+                #endif
+                
+                half3 indirectSpecular = indirectSpecularBase * mat.specularColor * (fresnelTerm * smoothnessVal + mat.metallic * 0.15);
+                // 应用阴影高光衰减曲线：间接高光（SH/反射方向采样）原本不受阴影影响，是暗部高光偏亮的主要原因
+                indirectSpecular *= specularShadowMask;
+                ambient += indirectSpecular;
                 #endif
                 
                 // Subtractive模式特殊处理：让静态物体接收动态物体的实时阴影
@@ -625,12 +693,15 @@ Shader "Custom/PBR_Mobile_Trans"
                 #endif
                 
                 // 合成最终颜色：环境光 + 实时光照
-                half3 finalColor = ambient + mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                // 注意：specular已包含mat.specularColor (GGX BRDF内部已乘)
+                half3 finalColor = ambient + mat.diffuseColor * diffuse + specular * _SpecularScale;
                 
-                // 烘焙高光（保留原来的效果）
+                // 烘焙高光（保留原来的效果，但不削减亮度，且受阴影影响）
                 half3 bakedSpecular = 0;
                 #if defined(LIGHTMAP_ON) && !defined(_DISABLEBAKEDSPECULAR)
-                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, bakedGI, mat.metallic, shadowAttenuation);
+                    bakedSpecular = BakedSpecular(mat.normalWS, lightDir, viewDirWS, mat, bakedGI, shadowAttenuation);
+                    // 应用阴影高光衰减曲线：烘焙高光在阴影深处按指数衰减，避免暗部烘焙高光过亮
+                    bakedSpecular *= specularShadowMask;
                     finalColor += mat.specularColor * bakedSpecular;
                 #endif
                 #else
@@ -638,15 +709,17 @@ Shader "Custom/PBR_Mobile_Trans"
                 #ifdef _DISABLELIGHTCOLOR
                 half lightIntensity2 = max(mainLight.color.r, max(mainLight.color.g, mainLight.color.b));
                 half3 lightColor = half3(lightIntensity2, lightIntensity2, lightIntensity2) * mainLight.distanceAttenuation * shadowAttenuation;
-                half3 specularLightColor2 = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
                 #else
                 half3 lightColor = mainLight.color * mainLight.distanceAttenuation * shadowAttenuation;
-                half3 specularLightColor2 = lightColor;
                 #endif
                 half3 diffuse = SimpleDiffuse(mat.normalWS, lightDir, lightColor);
-                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat.shininess, mat.smoothness, specularLightColor2, shadowAttenuation);
+                // specular 已包含 mat.specularColor (GGX BRDF 内部已乘)
+                half3 specular = SimpleSpecular(mat.normalWS, lightDir, viewDirWS, mat, lightColor);
+                // 应用阴影高光衰减曲线：暗部高光按指数衰减
+                specular *= specularShadowMask;
                 
-                half3 finalColor = mat.diffuseColor * diffuse + mat.specularColor * specular * _SpecularScale;
+                // 注意：specular已包含mat.specularColor (GGX BRDF内部已乘)
+                half3 finalColor = mat.diffuseColor * diffuse + specular * _SpecularScale;
                 #endif
                 
                 finalColor *= _Brightness;
@@ -805,49 +878,87 @@ Shader "Custom/PBR_Mobile_Trans"
                 "RenderType" = "Opaque"
                 "DisableBatching" = "False"
                 "RenderPipeline" = "UniversalPipeline"
-                "UniversalMaterialType" = "Unlit"   
+                "UniversalMaterialType" = "Unlit"
                 "ShaderGraphTargetId" = "UniversalUnlitSubTarget"
             }
-            
+
             ZWrite On
             ColorMask 0
             Cull[_Cull]
-            
+
             HLSLPROGRAM
             #pragma vertex DepthOnlyVertex
             #pragma fragment DepthOnlyFragment
-            
+
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
-            
+
+            // 与 Forward pass 中 clip(baseColor.a - _Cutoff) 保持完全一致，保证像素集同步。
+            TEXTURE2D(_BaseMap);
+            SAMPLER(sampler_BaseMap);
+
+            // CBUFFER 必须与 Forward pass 字段顺序严格一致，维持 SRP Batcher 兼容
+            CBUFFER_START(UnityPerMaterial)
+                float4 _BaseMap_ST;
+                half4 _BaseColor;
+                half _Metallic;
+                half _Roughness;
+                half _SpecularScale;
+                half _ShadowScale;
+                float _Softness;
+                half _HalfLambert;
+                half _Brightness;
+                half _BumpScale;
+                half _OcclusionContrast;
+                half _OcclusionStrength;
+                half _EmissionScale;
+                half4 _EmissionColor;
+                half _Cutoff;
+
+                float3 _BakedSpecularDirection;
+
+                float _ReflectionStrength;
+                float _ReflectionBlur;
+                float _ReflectionFresnelPower;
+                float _ReflectionFresnelBias;
+            CBUFFER_END
+
             struct Attributes
             {
                 float4 positionOS   : POSITION;
+                float2 uv           : TEXCOORD0;     // 采样 _BaseMap.alpha 用于 clip
                 UNITY_VERTEX_INPUT_INSTANCE_ID
             };
-            
+
             struct Varyings
             {
                 float4 positionCS   : SV_POSITION;
+                float2 uv           : TEXCOORD0;     // 传递到 fragment 做 alpha 测试
                 UNITY_VERTEX_INPUT_INSTANCE_ID
                 UNITY_VERTEX_OUTPUT_STEREO
             };
-            
+
             Varyings DepthOnlyVertex(Attributes input)
             {
                 Varyings output = (Varyings)0;
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_TRANSFER_INSTANCE_ID(input, output);
                 UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
-                
+
                 output.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                output.uv = TRANSFORM_TEX(input.uv, _BaseMap);
                 return output;
             }
-            
+
             half DepthOnlyFragment(Varyings input) : SV_TARGET
             {
                 UNITY_SETUP_INSTANCE_ID(input);
                 UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
-                
+
+                // 与 Forward pass 一致的 alpha clip：baseColor.a = _BaseMap.a * _BaseColor.a
+                // 保证 depth pre-pass 写出的深度形状与 forward 像素集完全对齐
+                half baseAlpha = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, input.uv).a * _BaseColor.a;
+                clip(baseAlpha - _Cutoff);
+
                 return input.positionCS.z;
             }
             ENDHLSL

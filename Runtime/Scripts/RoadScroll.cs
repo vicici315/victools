@@ -19,6 +19,29 @@
 // public 字段名/类型/默认值/顺序与 v2.0 完全一致以保证序列化数据兼容（已删除字段在旧资产里
 // 会被 Unity 自动忽略，不会破坏场景）。
 // RoadScroll v2.2 移除scrollMaterial相关功能；取消swapThreshold参数，改为使用segmentLength作为阈值，避免大物件滚动时出现闪烁问题。
+// RoadScroll v2.3 无限循环偏移改用局部坐标轴：
+//               - SortRoadSegments / CheckAndRearrangeSegments: scrollDirection 通过
+//                 transform.TransformDirection 变换到世界空间再用于世界位置的点积/瞬移
+//               ScrollSegments 也改回世界空间移动：scrollDirection 通过 transform.TransformDirection
+//               变换到世界空间再用 Space.World 移动；原因：原 Space.Self 使用段自身局部轴，
+//               当段不是 RoadScroll 子物体时（用户手动拖入场景的段），段自身 rotation 不会跟父对象
+//               旋转，导致 X/Y/Z 三个轴中只有 X（无旋转时方向一致）才能"看起来"滚动，其他轴方向错乱。
+//               现在 ScrollSegments / SortRoadSegments / CheckAndRearrangeSegments 三处统一使用
+//               worldDir = transform.TransformDirection(scrollDirection) 做世界空间运算，X/Y/Z 都正常
+// RoadScroll v2.4 Start 时新增 CalibrateOwnerTransform：不破坏 roadSegments 中任何
+//               滚动对象的位置，仅对挂载脚本的 RoadScroll 自身 transform.position
+//               按其局部坐标系下的 scrollDirection 方向，偏移 2 * segmentLength 做初始矫正。
+//               （注：原文笔误写成 localPosition，实际写的是 transform.position 即世界位移。）
+// RoadScroll v2.5 优化超大段对象（segmentLength >> 段 mesh 真实尺寸，如长桥/绵延山脉桥段）
+//               下"初始偏移矫正产生大偏差"的问题：
+//               - CalibrateOwnerTransform：从 v2.4 硬编码 `2 × segmentLength` 偏移改为
+//                 **自适应偏移**——实测所有段的 worldDir 投影中心，把 origin 平移到队列几何中心。
+//                 这样无论 L 多大、N 多少、段是否事先等距分布，origin 始终落在队列车头 +halfSpan 处，
+//                 不会再因 origin 推得过远而在第一帧触发 CheckAndRearrangeSegments 的 3L 量级跳变。
+//               - CheckAndRearrangeSegments：阈值从非对称 `[-N×L, +L]`（区间宽度 (N+1)×L，
+//                 多走 1L 出现漂移）改为对称 `[-halfSpan, +halfSpan]`（区间宽度 = N×L = totalLength
+//                 = 每段循环一圈步长，恰好对齐）。消除 v2.2 删除 swapThreshold 后遗留的"每循环 1L 漂移"，
+//                 也消除 v2.4 在大 L 下与 origin 偏移叠加的越界跳变 bug。
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -143,6 +166,7 @@ namespace Vic.Runtime
                 return;
             }
 
+            CalibrateOwnerTransform();
             SortRoadSegments();
             SetupUITextPosition();
             InitializeVignette();
@@ -217,7 +241,11 @@ namespace Vic.Runtime
             float moveDistance = scrollSpeed * Time.deltaTime;
             _totalDistance += moveDistance;
 
-            Vector3 delta = scrollDirection.normalized * moveDistance;
+            // scrollDirection 是父对象的局部轴向量 → 必须变换到世界空间才能让段在世界空间移动，
+            // 这样无论段是否作为子物体挂在 RoadScroll 下，无论段自身的 rotation 怎样，
+            // 都会沿"父对象的局部 axis 在世界空间的方向"推进，避免 Space.Self 用段自身轴的 bug。
+            Vector3 worldDir = transform.TransformDirection(scrollDirection.normalized);
+            Vector3 delta = worldDir * moveDistance;
             foreach (var segment in roadSegments)
             {
                 if (segment != null)
@@ -233,35 +261,96 @@ namespace Vic.Runtime
 
         #region Segment Cycling
 
+        private void CalibrateOwnerTransform()
+        {
+            // v2.5 重构：原 v2.4 用硬编码 `2 × segmentLength` 把 origin 推到"最末段下游 +2L"位置。
+            // 当 segmentLength 远超段 mesh 真实尺寸（超大段对象，如长桥、绵延山脉桥段、海面平台）
+            // 时，origin 偏移后会落入 CheckAndRearrangeSegments 非对称阈值区间 [-N×L, +L] 的
+            // 下游越界区，立即触发第一帧段的 `position -= worldDir × totalLength` 跳变
+            // （量级 ≈ 3 × segmentLength），表现为"场景整排对象被瞬间平移几千/几万米"。
+            //
+            // 修复思路：与编辑器 AlignSegmentsAlongAxis 的"worldCenter 落在队列几何中心"
+            // 语义对齐——实测所有段在 worldDir 方向上的投影中心，把 origin 沿 worldDir 平移到
+            // 这个几何中心。这样无论 L 多大、N 多少、段是否事先等距分布，origin 始终落在
+            // "队列车头 + halfSpan" 处，配合 v2.5 CheckAndRearrangeSegments 的对称阈值
+            // 即可让所有段投影稳定落在 [-halfSpan, +halfSpan] 内。
+
+            if (segmentLength <= 0f)
+            {
+                Debug.LogWarning($"[RoadScroll Calibrate] 跳过：segmentLength={segmentLength}");
+                return;
+            }
+
+            if (scrollDirection.sqrMagnitude < 1e-6f)
+            {
+                Debug.LogWarning("[RoadScroll Calibrate] scrollDirection 长度为 0，无法确定矫正方向，已跳过");
+                return;
+            }
+
+            Vector3 worldDir = transform.TransformDirection(scrollDirection.normalized);
+
+            // 实测当前所有段在 worldDir 方向的投影中心（投影原点 = 当前 transform.position）
+            float sumProjection = 0f;
+            int validCount = 0;
+            foreach (var segment in roadSegments)
+            {
+                if (segment == null) continue;
+                sumProjection += Vector3.Dot(segment.position - transform.position, worldDir);
+                validCount++;
+            }
+            if (validCount == 0) return;
+
+            // 把 origin 沿 worldDir 平移 -meanProjection，使 origin 落在队列车头与几何中心的中点。
+            // 配合 v2.5 对称阈值，段在 [−halfSpan, +halfSpan] 内稳定分布，不再第一帧跳变。
+            float offset = -sumProjection / validCount;
+            if (Mathf.Abs(offset) < 1e-6f) return;  // 偏差 < 1μm，跳过避免无意义的 transform.position 写入
+
+            Vector3 worldDelta = worldDir * offset;
+            transform.position += worldDelta;
+
+            DebugLog($"[RoadScroll Calibrate] 自适应偏移：origin 沿 worldDir 移动 {offset:F3}m 到队列几何中心" +
+                     $"（N={validCount}, segmentLength={segmentLength}；已避免 v2.4 固定 2L 偏移在大 L 下的 3L 跳变 bug）");
+        }
+
         private void SortRoadSegments()
         {
-            // 按 scrollDirection 投影值**从大到小**排序：
-            //   - 段在 scrollDirection 方向上投影越大 → 越"靠后"（段将向 scrollDirection 方向移动，所以它在更远的下游）
-            //   - 段在 scrollDirection 方向上投影越小 → 越"靠前"（离"循环入口"更近，会先被移动到队列尾）
+            // 按"父坐标系下"段在 scrollDirection 方向上的投影值**从大到小**排序：
+            //   - scrollDirection 在不同父对象旋转下不再是世界向量；将其变换到世界空间后再做投影。
+            //   - 段在该方向上投影越大 → 越"靠后"（段将向 scrollDirection 方向移动，所以它在更远的下游）
+            //   - 段在该方向上投影越小 → 越"靠前"（离"循环入口"更近，会先被移动到队列尾）
             // 这样后续 CheckAndRearrangeSegments 移动段时，索引顺序与滚动循环方向一致。
-            Vector3 dir = scrollDirection.normalized;
+            Vector3 worldDir = transform.TransformDirection(scrollDirection.normalized);
+            Vector3 worldOrigin = transform.position;
             roadSegments.Sort((a, b) =>
-                Vector3.Dot(b.position, dir).CompareTo(Vector3.Dot(a.position, dir)));
+                Vector3.Dot(b.position - worldOrigin, worldDir)
+                    .CompareTo(Vector3.Dot(a.position - worldOrigin, worldDir)));
         }
 
         private void CheckAndRearrangeSegments()
         {
             if (!_isInitialized) return;
 
-            Vector3 origin = transform.position;
-            Vector3 dir = scrollDirection.normalized;
+            // scrollDirection 是相对父对象的局部轴，需变换到世界空间后才能用世界位置点积/位移。
+            Vector3 worldDir = transform.TransformDirection(scrollDirection.normalized);
+            Vector3 worldOrigin = transform.position;
             float totalLength = segmentLength * roadSegments.Count;
-            float negativeSwapThreshold = -segmentLength - segmentLength * (roadSegments.Count - 1);
+
+            // v2.5 重构：阈值从非对称 `[-N×L, +L]`（区间宽度 (N+1)×L，每循环一圈净走 (N+1)×L，
+            // 多了 1L 累积漂移）改为对称 `[-halfSpan, +halfSpan]`。对称区间宽度 = totalLength = N×L
+            // = 每段循环一圈步长，每段恰好走过 N×L 就回到原位，消除 v2.2 删除 swapThreshold 后
+            // 遗留的"每循环 1L 漂移"；同时与 v2.5 CalibrateOwnerTransform 的自适应偏移对接，
+            // 第一帧不再因 origin 偏移导致段被反向瞬移 3L 量级。
+            float halfSpan = totalLength * 0.5f;
 
             foreach (var segment in roadSegments)
             {
                 if (segment == null) continue;
 
-                float projection = Vector3.Dot(segment.position - origin, dir);
-                if (projection > segmentLength)
-                    segment.position -= dir * totalLength;
-                else if (projection < negativeSwapThreshold)
-                    segment.position += dir * totalLength;
+                float projection = Vector3.Dot(segment.position - worldOrigin, worldDir);
+                if (projection > halfSpan)
+                    segment.position -= worldDir * totalLength;
+                else if (projection < -halfSpan)
+                    segment.position += worldDir * totalLength;
             }
         }
 

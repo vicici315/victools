@@ -1,23 +1,27 @@
 // ============================================================================
-// FPS5.0 与 Unity Stats 面板对齐的 FPS 统计 + CPU/GPU 帧耗时
-// FPS5.1 文本显示使用TextMeshProUGUI
-// FPS5.2 修复从后台/休眠恢复时帧率刷新率设置失效问题
-// FPS5.3 TMPro 条件编译，无 TMP 时回退到 UnityEngine.UI.Text
-// FPS5.4 移除 TMP 支持，统一使用 UnityEngine.UI.Text：
+//FPS 5.0 与 Unity Stats 面板对齐的 FPS 统计 + CPU/GPU 帧耗时
+//FPS 5.1 文本显示使用TextMeshProUGUI
+//FPS 5.2 修复从后台/休眠恢复时帧率刷新率设置失效问题
+//FPS 5.3 TMPro 条件编译，无 TMP 时回退到 UnityEngine.UI.Text
+//FPS 5.4 移除 TMP 支持，统一使用 UnityEngine.UI.Text：
 //   - TMP 资源在某些项目里会触发"字体 material 为空"等 UnassignedReferenceException，
 //     反而影响 FPS 显示的稳定性；Text 组件是 Unity 内置 UI，不依赖任何额外资源。
 //   - 行为保持完全一致：FPS 数值、CPU/GPU 帧耗时、颜色阈值、刷新频率等都不变。
 //   - 旧工程里使用 TMP 的 FPS 控件：升级后 [RequireComponent(typeof(Text))] 会自动补 Text，
 //     需要手动删掉原 TMP_Text 组件（避免重叠）。
+//FPS 5.5 美化显示：
+//   - 使用 UI.Text 富文本实现大号 FPS 数值 + 绿色 FPS 标签，与参考图示效果一致。
+//   - 自动添加 Outline 描边，保证在复杂场景背景下仍可清晰阅读。
+//   - 关闭 beautifyDisplay 后仍保持原有纯文本显示逻辑。
 // ----------------------------------------------------------------------------
-// FPS 算法：指数移动平均（EMA）对 1/unscaledDeltaTime 做平滑
-//   Unity Stats 面板内部使用 1/Time.smoothDeltaTime，
+//FPS 算法：指数移动平均（EMA）对 1/unscaledDeltaTime 做平滑
+//   Unity Stats 面板内部使用 1/Time.smoothDeltaTime， 
 //   smoothDeltaTime 本质是引擎对 deltaTime 做的 EMA。
 //   本脚本直接对 1/unscaledDeltaTime 做相同的 EMA，
 //   结果与 Stats 面板高度一致，且不受 timeScale 影响。
 //
 // CPU/GPU 耗时：通过 Unity.Profiling.ProfilerRecorder 采集引擎内部计数器。
-//   GPU 时间三级回退：ProfilerRecorder → FrameTimingManager → 估算值(~)
+//   GPU 时间三级回退：ProfilerRecorder → FrameTimingManager → 估算值(~)1
 // ============================================================================
 using UnityEngine;
 using UnityEngine.UI;
@@ -45,6 +49,15 @@ public class FPS : MonoBehaviour
     public float warningThreshold = 29f;
     public float badThreshold     = 15f;
 
+    [Tooltip("是否使用美化排版（大字号FPS数值 + 绿色FPS标签，参考图示效果）")]
+    public bool beautifyDisplay = true;
+
+    [Tooltip("FPS标签颜色（参考图示绿色标签）")]
+    public Color fpsLabelColor = new Color(0.2f, 1f, 0.2f, 1f);
+
+    [Tooltip("是否自动添加描边，保证在各种背景下可读")]
+    public bool addOutline = true;
+
     [Header("帧率限制设置")]
     public bool unlockFrameRate = false;
     public int  targetFrameRate = 60;
@@ -67,10 +80,18 @@ public class FPS : MonoBehaviour
     {
         fpsText    = GetComponent<Text>();
         fpsText.fontSize = 26;
+        fpsText.supportRichText = true;
         fpsEma     = 0f;
         displayFps = 0f;
         elapsed    = 0f;
         ApplyFrameRateSettings();
+
+        if (addOutline && GetComponent<Outline>() == null)
+        {
+            var outline = gameObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0, 0, 0, 0.75f);
+            outline.effectDistance = new Vector2(1f, -1f);
+        }
     }
 
     void OnEnable()
@@ -151,9 +172,8 @@ public class FPS : MonoBehaviour
 
         displayFps = fpsEma;
 
-        string frameRateInfo = unlockFrameRate ? " (Unlocked)" :
-                               (targetFrameRate > 0 ? $" (Target:{targetFrameRate})" : " (VSync)");
-
+        string cpuStr = null;
+        string gpuStr = null;
         if (showFrameTiming)
         {
             double cpuMainMs   = GetRecorderMs(cpuMainThreadRecorder);
@@ -174,24 +194,39 @@ public class FPS : MonoBehaviour
                 gpuEstimated = true;
             }
 
-            string cpuStr = cpuMs > 0 ? $"{cpuMs:0.0}" : "--";
-            string gpuStr = gpuMs > 0
+            cpuStr = cpuMs > 0 ? $"{cpuMs:0.0}" : "--";
+            gpuStr = gpuMs > 0
                 ? (gpuEstimated ? $"~{gpuMs:0.0}" : $"{gpuMs:0.0}")
                 : "--";
+        }
 
-            fpsText.text = $"{frameRateInfo}FPS:{displayFps:0.0}\nCPU:{cpuStr}ms\nGPU:{gpuStr}ms";
+        Color numberColor = displayFps >= warningThreshold ? goodColor :
+                            displayFps >= badThreshold ? warningColor : badColor;
+
+        if (beautifyDisplay)
+        {
+            string numberHex = ColorUtility.ToHtmlStringRGB(numberColor);
+            string labelHex  = ColorUtility.ToHtmlStringRGB(fpsLabelColor);
+
+            string fpsLine = $"<size=20><color=#{labelHex}>FPS </color></size><size=48><color=#{numberHex}>{displayFps:0}</color></size>";
+            if (showFrameTiming)
+                fpsText.text = fpsLine + $"\n<size=16>CPU:{cpuStr}ms  GPU:{gpuStr}ms</size>";
+            else
+                fpsText.text = fpsLine;
+            fpsText.color = Color.white;
         }
         else
         {
-            fpsText.text = $"FPS:{displayFps:0.0}{frameRateInfo}";
-        }
+            string frameRateInfo = unlockFrameRate ? " (Unlocked)" :
+                                   (targetFrameRate > 0 ? $" (Target:{targetFrameRate})" : " (VSync)");
 
-        if (displayFps >= warningThreshold)
-            fpsText.color = goodColor;
-        else if (displayFps >= badThreshold)
-            fpsText.color = warningColor;
-        else
-            fpsText.color = badColor;
+            if (showFrameTiming)
+                fpsText.text = $"{frameRateInfo}FPS:{displayFps:0.0}\nCPU:{cpuStr}ms\nGPU:{gpuStr}ms";
+            else
+                fpsText.text = $"FPS:{displayFps:0.0}{frameRateInfo}";
+
+            fpsText.color = numberColor;
+        }
     }
 
     void OnValidate()

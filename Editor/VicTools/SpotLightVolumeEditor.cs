@@ -1,6 +1,7 @@
 /// SpotLightVolume v5.0 自定义Inspector面板
 /// 存档/读档/预设按钮 + 参数面板 + 射线遮挡参数
 /// SpotLightVolume v6.0 重构代码，改进重复的GetComponent调用，消除 UpdateGeometry 和 UpdateMaterial 中的重复计算
+/// SpotLightVolume v6.4 增加"后处理优化"分组：曝光系数 + 软饱和开关；纳入存档系统
 
 using UnityEngine;
 using UnityEditor;
@@ -40,6 +41,9 @@ namespace VicTools
         private SerializedProperty enableMask;
         private SerializedProperty maskTexture;
         private SerializedProperty maskIntensity;
+        // 后处理优化
+        private SerializedProperty volumeExposure;
+        private SerializedProperty softSaturation;
 
         private const string SaveFolderBase = "Library/VicTools/SpotLightVolume";
         private const string PresetFolder = "Packages/com.youdoo.victools/Runtime/Presets/SpotLightVolume";
@@ -68,6 +72,8 @@ namespace VicTools
             maskTexture = serializedObject.FindProperty("maskTexture");
             maskIntensity = serializedObject.FindProperty("maskIntensity");
             enableMask = serializedObject.FindProperty("enableMask");
+            volumeExposure = serializedObject.FindProperty("volumeExposure");
+            softSaturation = serializedObject.FindProperty("softSaturation");
         }
 
         public override void OnInspectorGUI()
@@ -132,6 +138,12 @@ namespace VicTools
                     EditorGUILayout.PropertyField(maskTexture, new GUIContent("蒙版纹理", "黑白纹理模拟窗格投影，白色透光黑色遮光"));
                     EditorGUILayout.PropertyField(maskIntensity, new GUIContent("蒙版强度"));
                 }
+            });
+
+            DrawSection("后处理优化(抗过曝)", () =>
+            {
+                EditorGUILayout.PropertyField(volumeExposure, new GUIContent("曝光系数", "类似摄影曝光补偿。多灯+Bloom 过曝时建议 0.5~0.7，单灯或无 Bloom 时保持 1"));
+                EditorGUILayout.PropertyField(softSaturation, new GUIContent("启用软饱和", "Reinhard x→x/(1+x)：多灯 HDR 信号压缩。配合曝光系数双管齐下避免 Bloom 过曝"));
             });
 
             serializedObject.ApplyModifiedProperties();
@@ -272,7 +284,9 @@ namespace VicTools
                 lightColor = light != null ? ColorToArray(light.color) : new float[] { 1, 1, 1, 1 },
                 enableMask = vol.enableMask,
                 maskIntensity = vol.maskIntensity,
-                maskTexturePath = vol.maskTexture != null ? AssetDatabase.GetAssetPath(vol.maskTexture) : ""
+                maskTexturePath = vol.maskTexture != null ? AssetDatabase.GetAssetPath(vol.maskTexture) : "",
+                volumeExposure = vol.volumeExposure,
+                softSaturation = vol.softSaturation
             };
 
             System.IO.File.WriteAllText(path, JsonUtility.ToJson(data, true));
@@ -282,8 +296,15 @@ namespace VicTools
         {
             if (!System.IO.File.Exists(path)) return;
 
-            var data = JsonUtility.FromJson<SpotLightVolumeData>(System.IO.File.ReadAllText(path));
+            string rawJson = System.IO.File.ReadAllText(path);
+            var data = JsonUtility.FromJson<SpotLightVolumeData>(rawJson);
             if (data == null) return;
+
+            // === 向后兼容：旧版存档（v6.4 之前）的 JSON 不含后续新增字段，
+            // JsonUtility.FromJson 对缺失字段保留类型默认值（float=0, bool=false），
+            // 这会导致 volumeExposure=0 → 灯光完全不亮。
+            // 用 rawJson 字段存在性检测 + 兜底默认值修复：
+            EnsureBackwardCompatibility(rawJson, data);
 
             foreach (var t in targets)
             {
@@ -301,9 +322,24 @@ namespace VicTools
                     EditorUtility.SetDirty(light);
                 }
                 EditorUtility.SetDirty(vol);
+
+                // 存档/读档直接赋值字段会绕过 OnValidate，导致 _materialParamsDirty 不会被置位、
+                // dirty 缓存（_cachedBlendMode / _cachedSoftSaturation / _lastAppliedLightColor）不会失效，
+                // 结果新参数（如 volumeExposure / softSaturation / blendMode）调节后不会立刻推到 GPU。
+                // 强制立即刷新材质：失效所有缓存并立刻完整推送一次，让新参数立即生效。
+                vol.RefreshMaterial();
             }
 
             Debug.Log("[SpotLightVolume] 参数已加载: " + System.IO.Path.GetFileNameWithoutExtension(path));
+        }
+
+        /// 对缺失字段做兜底默认值（仅修复 float=0 这种破坏性默认）。
+        /// 新增字段时在此追加：if (!rawJson.Contains("\"xxx\"")) data.xxx = 兜底值;
+        /// bool 字段默认 false 通常无害，无需处理。
+        private static void EnsureBackwardCompatibility(string rawJson, SpotLightVolumeData data)
+        {
+            // v6.4 新增字段：
+            if (!rawJson.Contains("\"volumeExposure\"")) data.volumeExposure = 1f;
         }
 
         #endregion
@@ -356,6 +392,9 @@ namespace VicTools
             public bool enableMask;
             public float maskIntensity;
             public string maskTexturePath; // AssetDatabase 路径
+            // 后处理优化
+            public float volumeExposure;
+            public bool softSaturation;
 
             public void ApplyTo(SpotLightVolume vol)
             {
@@ -386,6 +425,8 @@ namespace VicTools
                     vol.maskTexture = AssetDatabase.LoadAssetAtPath<Texture2D>(maskTexturePath);
                 else
                     vol.maskTexture = null;
+                vol.volumeExposure = volumeExposure;
+                vol.softSaturation = softSaturation;
             }
 
             public void ApplyLightTo(Light light)

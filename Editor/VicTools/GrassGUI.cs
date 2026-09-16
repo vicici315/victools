@@ -21,6 +21,7 @@ public class GrassGUI : ShaderGUI
     private MaterialProperty alphaCutoff;
     private MaterialProperty bladeMinHeight;
     private MaterialProperty translucentGain;
+    private MaterialProperty useVertexShadow;
     private MaterialProperty bladeWidth;
     private MaterialProperty bladeBottomWidth;
     private MaterialProperty bladeWidthRandom;
@@ -78,6 +79,7 @@ public class GrassGUI : ShaderGUI
         alphaCutoff = FindProperty("_AlphaCutoff", m_Properties);
         bladeMinHeight = FindProperty("_BladeMinHeight", m_Properties);
         translucentGain = FindProperty("_ShadowScale", m_Properties);
+        useVertexShadow = FindProperty("_UseVertexShadow", m_Properties);
         bladeWidth = FindProperty("_BladeWidth", m_Properties);
         bladeBottomWidth = FindProperty("_BladeBottomWidth", m_Properties);
         bladeWidthRandom = FindProperty("_BladeWidthRandom", m_Properties);
@@ -270,6 +272,12 @@ public class GrassGUI : ShaderGUI
     private void DrawShading()
     {
         GUILayout.Label(HeaderStyle.Rich("2 ▌着色 (Shading)", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
+        // 顶点阴影开关：放在 Shading 段顶部
+        m_MaterialEditor.ShaderProperty(useVertexShadow, "顶点阴影 (Use Vertex Shadow)");
+        EditorGUILayout.HelpBox(
+            "开启：GS 顶点阶段采样 shadow map，fragment 插值使用 → 阴影块状、性能更好\n" +
+            "关闭：fragment 逐像素采样 → 阴影细节更精细",
+            MessageType.Info);
         m_MaterialEditor.ColorProperty(topColor, "顶部颜色");
         m_MaterialEditor.ColorProperty(bottomColor, "底部颜色（与贴图混合）");
         m_MaterialEditor.RangeProperty(gradientOffset, "渐变偏移（负=底色多, 正=顶色多）");

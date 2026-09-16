@@ -22,7 +22,9 @@
 //               【刷新→】按钮合并了按场景信息恢复 null 对象的能力
 // 场景工具 v2.29 资源箱添加【场景】按钮，一键将当前打开的所有场景（多场景支持）放入资源箱
 // 场景工具 v2.30 【选择名称:】按钮支持选中未激活对象。
-
+// 场景工具 v2.31 防御：obj 可能是纹理 / Prefab / .meta / 子资产等非场景资产，直接传给 OpenScene 会抛 "Invalid version provided" 这种 YAML 解析异常，只接受 .unity 场景资产（含可选的 .unity.meta 后缀防御）。
+// 场景工具 v2.32 添加【吸取位置】按钮，用于继承最后一个选中对象的位移旋转。
+// 场景工具 v2.33 资源箱打开场景按钮兼容团结引擎（Tuanjie）使用的 .scene 文件，与 Unity 原生 .unity 同时识别。
 using System;
 using UnityEngine;
 using UnityEditor;
@@ -176,7 +178,7 @@ public class ResourceBoxRecoveryItem
         // 选中反馈相关变量
         private readonly HashSet<Object> _selectedObjectsInResourceBox = new();
 
-        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.30]", parent)
+        public ScenesTools(string name, EditorWindow parent) : base("[场景工具 v2.33]", parent)
         {
             // 初始化搜索历史记录管理器
             _searchHistoryManager = new SearchHistoryManager("VicTools_ScenesTools");
@@ -846,9 +848,21 @@ public class ResourceBoxRecoveryItem
                 SelectObjectsMaterial();
             }
             GUI.backgroundColor = Color.green;
-            if (GUILayout.Button(new GUIContent("←", "选择多个模型，统一使用最后选择对象的材质球"), style.normalButton, GUILayout.Width(25)))
+            if (GUILayout.Button(new GUIContent("←", "吸取材质\n继承最后选择对象的材质球"), style.normalButton, GUILayout.Width(25)))
             {
                 GetLastMat();
+            }
+            GUI.backgroundColor = Color.black;
+            // 在 GUILayout.Button 的 MouseDown 事件回调里，Event.current.modifiers 准确反映当前按下的修饰键。
+            // 单击 → 只继承旋转；按住 Ctrl 单击 → 只继承位移（不再同步旋转）。
+            bool ctrlDown = (Event.current.modifiers & EventModifiers.Control) != 0;
+            string posRotTooltip = ctrlDown
+                ? "吸取位置（Ctrl 已按下）\n本次只继承最后选择对象的位移"
+                : "吸取位置\n单击：只继承最后选择对象的旋转\n按住 Ctrl 单击：只继承位移";
+            if (GUILayout.Button(new GUIContent(_resetRotationIcon, posRotTooltip), style.normalButton, GUILayout.Width(25)))
+            {
+                if (ctrlDown) GetLastPos();
+                else GetLastRot();
             }
 
             EditorGUILayout.EndHorizontal();
@@ -1228,10 +1242,26 @@ public class ResourceBoxRecoveryItem
                                     string scenePath = AssetDatabase.GetAssetPath(obj);
                                     if (!string.IsNullOrEmpty(scenePath))
                                     {
-                                        // 检查当前场景是否有未保存的更改
-                                        if (UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+                                        // 防御：obj 可能是纹理 / Prefab / .meta / 子资产等非场景资产，
+                                        // 直接传给 OpenScene 会抛 "Invalid version provided" 这种 YAML 解析异常。
+                                        // 这里只接受 .unity / .scene 场景资产（含可选的 .unity.meta / .scene.meta 后缀防御）。
+                                        // 同时兼容 Unity（.unity）与 团结引擎（Tuanjie，.scene）。
+                                        string trimmedPath = scenePath;
+                                        if (trimmedPath.EndsWith(".meta", System.StringComparison.OrdinalIgnoreCase))
+                                            trimmedPath = trimmedPath.Substring(0, trimmedPath.Length - 5);
+
+                                        bool isSceneAsset = !string.IsNullOrEmpty(trimmedPath)
+                                            && (trimmedPath.EndsWith(".unity", System.StringComparison.OrdinalIgnoreCase)
+                                             || trimmedPath.EndsWith(".scene", System.StringComparison.OrdinalIgnoreCase))
+                                            && System.IO.File.Exists(trimmedPath);
+
+                                        if (!isSceneAsset)
                                         {
-                                            UnityEditor.SceneManagement.EditorSceneManager.OpenScene(scenePath);
+                                            Debug.LogWarning($"[ScenesTools] 跳过打开：'{scenePath}' 不是有效的场景资产（仅支持 .unity / .scene）");
+                                        }
+                                        else if (UnityEditor.SceneManagement.EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo())
+                                        {
+                                            UnityEditor.SceneManagement.EditorSceneManager.OpenScene(trimmedPath);
                                             //刷新→
                                             RefreshAvailableFiles();
                                             LoadResourceBox();
@@ -1472,7 +1502,7 @@ public class ResourceBoxRecoveryItem
                 
                 if (_switchPBRMIcon != null)
                 {
-                    if (GUILayout.Button(new GUIContent(_switchPBRMIcon, "PBR_Mobile材质切换可接收灯光材质"), GUILayout.Height(33), GUILayout.Width(38)))
+                    if (GUILayout.Button(new GUIContent(_switchPBRMIcon, "PBR_Mobile_NEW材质切换可接收灯光材质"), GUILayout.Height(33), GUILayout.Width(38)))
                     {
                         SceneTools.SwitchPBRLightingShader(_setStatic);
                     }
@@ -2272,7 +2302,7 @@ public class ResourceBoxRecoveryItem
         {
             // 获取当前选中的所有GameObject
             var selectedGameObjects = Selection.gameObjects;
-            
+
             if (selectedGameObjects == null || selectedGameObjects.Length < 2)
             {
                 Debug.LogWarning("请至少选择两个对象（最后选择的对象作为材质来源）");
@@ -2282,7 +2312,7 @@ public class ResourceBoxRecoveryItem
 
             // 获取最后选择的对象（Selection.gameObjects中最后一个）
             var lastSelectedObject = selectedGameObjects[selectedGameObjects.Length - 1];
-            
+
             // 获取最后选择对象的Renderer组件
             var lastRenderer = lastSelectedObject.GetComponent<Renderer>();
             if (lastRenderer == null)
@@ -2303,24 +2333,24 @@ public class ResourceBoxRecoveryItem
 
             // 记录操作用于Undo
             int appliedCount = 0;
-            
+
             // 将材质应用到其他所有选中的对象
             for (int i = 0; i < selectedGameObjects.Length - 1; i++)
             {
                 var targetObject = selectedGameObjects[i];
                 var targetRenderer = targetObject.GetComponent<Renderer>();
-                
+
                 if (targetRenderer != null)
                 {
                     // 记录Undo操作
                     Undo.RecordObject(targetRenderer, "应用材质");
-                    
+
                     // 应用材质
                     targetRenderer.sharedMaterials = sourceMaterials;
-                    
+
                     // 标记对象为已修改
                     EditorUtility.SetDirty(targetRenderer);
-                    
+
                     appliedCount++;
                     Debug.Log($"已将材质应用到对象: {targetObject.name}");
                 }
@@ -2340,6 +2370,135 @@ public class ResourceBoxRecoveryItem
             {
                 Debug.LogWarning("没有对象被应用材质");
                 EditorUtility.DisplayDialog("提示", "没有对象被应用材质\n请确保选中的对象有Renderer组件", "确定");
+            }
+        }
+
+        /// 选择多个模型，统一使用最后选择对象的旋转（单击按钮时调用）。
+        /// <para>只同步 world rotation，不动 position / scale。</para>
+        private void GetLastRot() => ApplyLastTransformFromLastSelected(applyPosition: false, applyRotation: true);
+
+        /// 选择多个模型，统一使用最后选择对象的位移（按住 Ctrl 单击按钮时调用）。
+        /// <para>只同步 world position，不动 rotation / scale——和单击按钮的"只继承旋转"互补。</para>
+        private void GetLastPos() => ApplyLastTransformFromLastSelected(applyPosition: true, applyRotation: false);
+
+        /// 选择多个模型，统一使用最后选择对象的位移和旋转（同时继承两种，扩展入口）。
+        /// <para>实现细节与 GetLastMat 对齐：</para>
+        /// <list type="bullet">
+        ///   <item>"最后选择的对象"取 Selection.gameObjects 数组末尾（与工具栏上"吸取材质"的语义保持一致）。</item>
+        ///   <item>捕获该对象的 world position / world rotation 作为源。</item>
+        ///   <item>把其他所有选中的对象（不包括源对象本身）的 transform.position / rotation 同步到源值。</item>
+        ///   <item>每步通过 Undo.RecordObject 记录，撤销时可一键还原。</item>
+        ///   <item>不修改 scale（缩放不影响"位置/旋转"的吸取语义，保持各对象原有缩放）。</item>
+        /// </list>
+        private void GetLastPosRot() => ApplyLastTransformFromLastSelected(applyPosition: true, applyRotation: true);
+
+        /// 把"用 Selection.gameObjects 末尾对象作为来源，把其它选中的对象 transform 对齐"的共同实现抽出来。
+        /// <param name="applyPosition">是否同步 world position。</param>
+        /// <param name="applyRotation">是否同步 world rotation。</param>
+        /// <remarks>两者必须至少有一个为 true，否则函数会直接返回（避免空操作）。</remarks>
+        private void ApplyLastTransformFromLastSelected(bool applyPosition, bool applyRotation)
+        {
+            // 防御：两个 flag 都为 false 等于"什么都不做"，应当早返回
+            if (!applyPosition && !applyRotation)
+            {
+                Debug.LogWarning("ApplyLastTransformFromLastSelected: applyPosition 和 applyRotation 都为 false，无任何操作可执行");
+                return;
+            }
+
+            // 根据模式生成统一的 Undo 分组名、RecordObject Op 名、完成摘要文案
+            string groupName;
+            string opName;
+            string summary;
+            if (applyPosition && applyRotation)
+            {
+                groupName = "吸取位置/旋转";
+                opName = "应用位置/旋转";
+                summary = "位置/旋转";
+            }
+            else if (applyPosition)
+            {
+                groupName = "吸取位置";
+                opName = "应用位置";
+                summary = "位移";
+            }
+            else // applyRotation
+            {
+                groupName = "吸取旋转";
+                opName = "应用旋转";
+                summary = "旋转";
+            }
+
+            // 获取当前选中的所有GameObject
+            var selectedGameObjects = Selection.gameObjects;
+
+            if (selectedGameObjects == null || selectedGameObjects.Length < 2)
+            {
+                Debug.LogWarning("请至少选择两个对象（最后选择的对象作为来源）");
+                EditorUtility.DisplayDialog("提示", "请至少选择两个对象\n最后选择的对象将作为来源", "确定");
+                return;
+            }
+
+            // 获取最后选择的对象（与 GetLastMat 一致：用数组末尾元素）
+            var lastSelectedObject = selectedGameObjects[selectedGameObjects.Length - 1];
+            if (lastSelectedObject == null)
+            {
+                Debug.LogWarning("最后选择的对象为空");
+                EditorUtility.DisplayDialog("提示", "最后选择的对象为空", "确定");
+                return;
+            }
+
+            // 捕获源对象的 world position / rotation（只读一次，避免循环中被同批目标干扰）
+            var srcTransform = lastSelectedObject.transform;
+            Vector3 srcPos = srcTransform.position;
+            Quaternion srcRot = srcTransform.rotation;
+
+            int appliedCount = 0;
+            int skippedCount = 0;
+
+            // Undo 分组：把整批"应用 transform"折叠为单步 Undo，便于一键还原全部目标
+            int undoGroup = Undo.GetCurrentGroup();
+            Undo.SetCurrentGroupName(groupName);
+
+            // 把其他所有选中的对象的 transform 对齐到源对象的 transform（不含源对象本身）
+            for (int i = 0; i < selectedGameObjects.Length - 1; i++)
+            {
+                var targetObject = selectedGameObjects[i];
+                if (targetObject == null) { skippedCount++; continue; }
+                var targetTransform = targetObject.transform;
+
+                // 在赋值前记录 Undo，让 Undo 能正确回滚
+                Undo.RecordObject(targetTransform, opName);
+
+                // 按 flag 决定同步哪些字段：单击继承旋转，Ctrl+Click 继承位移，两者都开就都同步
+                if (applyPosition) targetTransform.position = srcPos;
+                if (applyRotation) targetTransform.rotation = srcRot;
+
+                // 标记对象已修改，确保场景脏标记、跨域重载后仍生效
+                EditorUtility.SetDirty(targetObject);
+
+                appliedCount++;
+                Debug.Log($"已将 '{targetObject.name}' 的{summary}对齐到 '{lastSelectedObject.name}'");
+            }
+
+            // 折叠为单步 Undo
+            Undo.CollapseUndoOperations(undoGroup);
+
+            if (appliedCount > 0)
+            {
+                // 日志里只输出真正应用了的字段，节省控制台空间
+                string detail;
+                if (applyPosition && applyRotation) detail = $"pos={srcPos}, rotEuler={srcRot.eulerAngles}";
+                else if (applyPosition) detail = $"pos={srcPos}";
+                else detail = $"rotEuler={srcRot.eulerAngles}";
+
+                Debug.Log($"[VicTools] 已成功将 {appliedCount} 个对象的{summary}统一为 '{lastSelectedObject.name}'" +
+                          $"（{detail}）" +
+                          (skippedCount > 0 ? $"；跳过 {skippedCount} 个空对象" : ""));
+            }
+            else
+            {
+                Debug.LogWarning($"没有对象被应用{summary}");
+                EditorUtility.DisplayDialog("提示", $"没有对象被应用{summary}\n请检查选中对象是否有效", "确定");
             }
         }
 
