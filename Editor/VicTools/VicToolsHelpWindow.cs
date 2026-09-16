@@ -139,7 +139,8 @@ namespace VicTools
                 "[Tools] ComputeBuffer 4.1 跨场景渲染保护 - 修复共享材质在缺少灯光管理器的场景变黑/跳过渲染；对外接口与既有功能保持不变。",
                 "[Tools] Compute Buffer Tool v4.2 材质按钮自动识别选中内容 - 选中灯光时按钮切换为“添加/剔除点灯·射灯”，其余情况仍为材质增删；最高支持8盏点灯、2盏聚光灯。",
                 "[Material:URP] CustomParticle 1.3 修改主纹理键名统一_BaseMap。",
-                "[Material:URP] Custom_Ocean 2.0 性能优化重构（渲染结果与原版保持一致，无可察觉差异）。"
+                "[Material:URP] Custom_Ocean 2.0 性能优化重构（渲染结果与原版保持一致，无可察觉差异）。",
+                "[Tools] FPS工具只使用 FPS 专用画布 “Canvas (FPS)”：已存在则复用，不存在则创建。"
             );
 
             Add("v2.12.5",

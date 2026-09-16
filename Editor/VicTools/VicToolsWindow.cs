@@ -2437,49 +2437,31 @@ namespace VicTools
                 EditorUtility.DisplayDialog("提示", "选中对象中没有可用的Spot Light", "确定");
         }
 
+        // FPS 专用画布名称：FPS 一律挂在该画布上，不复用场景中的业务 Canvas
+        private const string FPSCanvasName = "Canvas (FPS)";
+
         /// 在当前场景创建一个 FPS 帧率显示控件（Packages/com.youdoo.victools/Runtime/Scripts/FPS.cs）。
-        ///   - 自动检测已加载场景中是否有 Canvas；没有则自动创建一个 ScreenSpaceOverlay Canvas + EventSystem
+        ///   - 只使用 FPS 专用画布 "Canvas (FPS)"：已存在则复用，不存在则创建；场景中的业务 Canvas 一律不复用
+        ///     （FPS 文本每 refreshRate 秒刷新一次，会触发所在 Canvas 的整体重建，挂到业务 Canvas 上会拖慢业务 UI
+        ///       并把 UI 重建开销算进 CPU 帧耗时，导致统计数据失真）
         ///   - Text 组件由 FPS 脚本的 [RequireComponent(typeof(Text))] 自动添加（不再手动创建，避免与脚本冲突）
         ///   - 文本内容、字号、颜色 等均由 FPS 脚本自己管理（Start / Update），本工具不重复配置
         private void CreateFPSDisplay()
         {
-            // 1. 找一个可挂载的 Canvas
-            Canvas canvas = null;
-#if UNITY_2023_1_OR_NEWER
-            var allCanvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-#else
-            var allCanvases = UnityEngine.Object.FindObjectsOfType<Canvas>(true);
-#endif
-            foreach (var c in allCanvases)
-            {
-                if (c != null && c.isActiveAndEnabled) { canvas = c; break; }
-            }
-            if (canvas == null && allCanvases != null && allCanvases.Length > 0)
-                canvas = allCanvases[0];
+            // 1. 查找已存在的 FPS 专用画布
+            Canvas canvas = FindCanvasByName(FPSCanvasName);
 
-            // 2. 没有 Canvas → 自动创建 Canvas + EventSystem
+            // 2. 专用画布不存在 → 创建（Overlay 置顶；不加 GraphicRaycaster：FPS 无需交互，避免参与 UI 射线检测）
             if (canvas == null)
             {
-                var canvasGO = new GameObject("Canvas (FPS)");
+                var canvasGO = new GameObject(FPSCanvasName);
                 Undo.RegisterCreatedObjectUndo(canvasGO, "Create FPS Canvas");
                 canvas = canvasGO.AddComponent<Canvas>();
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                 canvas.sortingOrder = 32000;
                 canvasGO.AddComponent<CanvasScaler>();
-                canvasGO.AddComponent<GraphicRaycaster>();
 
-#if UNITY_2023_1_OR_NEWER
-                if (UnityEngine.Object.FindObjectsByType<UnityEngine.EventSystems.EventSystem>(FindObjectsInactive.Include, FindObjectsSortMode.None).Length == 0)
-#else
-                if (UnityEngine.Object.FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
-#endif
-                {
-                    var es = new GameObject("EventSystem");
-                    Undo.RegisterCreatedObjectUndo(es, "Create EventSystem");
-                    es.AddComponent<UnityEngine.EventSystems.EventSystem>();
-                    es.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
-                }
-                Debug.Log("[VicTools] 已自动创建 Canvas + EventSystem（场景中无现有 Canvas）");
+                Debug.Log("[VicTools] 已创建 FPS 专用画布 Canvas (FPS)（不复用场景中的业务 Canvas）");
             }
 
             // 3. 避免重复
@@ -2514,6 +2496,21 @@ namespace VicTools
             EditorSceneManager.MarkSceneDirty(canvasGO2.scene);
 
             Debug.Log($"[VicTools] 已在 Canvas [{canvasGO2.name}] 上挂载 FPS 组件（Text 由 RequireComponent 自动添加）");
+        }
+
+        /// 按名称在所有已加载场景中查找 Canvas（含未激活对象），找不到返回 null。
+        private static Canvas FindCanvasByName(string canvasName)
+        {
+#if UNITY_2023_1_OR_NEWER
+            var allCanvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+#else
+            var allCanvases = UnityEngine.Object.FindObjectsOfType<Canvas>(true);
+#endif
+            foreach (var c in allCanvases)
+            {
+                if (c != null && c.gameObject.name == canvasName) return c;
+            }
+            return null;
         }
 
         // 注：RoadScroll 创建工具已迁移到 RoadScrollEditorHelper.cs（约 130 行），避免 VicToolsWindow.cs 体积膨胀。
