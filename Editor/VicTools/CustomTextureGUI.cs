@@ -1,5 +1,6 @@
 ﻿// CustomTextureGUI v1.2 添加存档/读档功能，路径结构与 Glass_carWindowGUI 一致（Library/VicTools/Texture/{ShaderName}/）
 // CustomTextureGUI v1.3 修复存读档排序参数bug
+// CustomTextureGUI v1.4 Cutout 模式 _ZWrite 改为 0f，让 Forward pass 不再写深度，由 DepthOnly pre-pass 统一写深度，配合 URP DepthPrimingMode=Forced 启用 PreZ。
 
 using UnityEngine;
 using UnityEditor;
@@ -55,6 +56,13 @@ public class CustomTextureGUI : ShaderGUI
             EditorGUILayout.Space();
             EditorGUILayout.LabelField(HeaderStyle.Rich("透明度设置", HeaderStyle.Base), EditorStyle.Get.BoldLabelRichStyle);
             materialEditor.RangeProperty(cutoff, "Alpha 裁剪阈值");
+            EditorGUILayout.HelpBox(
+                "Cutout 模式已启用 PreZ：\n" +
+                "• DepthOnly 写带 alpha clip 的深度（深度阶段完成裁剪）\n" +
+                "• Forward pass ZWrite Off，clip 兜底\"前无 opaque\"场景\n" +
+                "• URP DepthPrimingMode=Forced 下被前向遮挡的像素走早 Z 剔除\n" +
+                "• 要求 URP Asset 启用 Depth Priming",
+                MessageType.Info);
         }
 
         if (currentMode == RenderMode.Transparent)
@@ -526,7 +534,9 @@ public class CustomTextureGUI : ShaderGUI
                 material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.AlphaTest;
                 material.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
                 material.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.Zero);
-                material.SetFloat("_ZWrite", 1f);
+                // _ZWrite = 0：Forward pass 不写深度，由 DepthOnly pre-pass 写带 alpha clip 的深度。
+                // 配合 URP DepthPrimingMode=Forced 实现 PreZ，被前向深度遮挡的像素在 Forward pass 早 Z 阶段被剔除。
+                material.SetFloat("_ZWrite", 0f);
                 break;
 
             case RenderMode.Transparent:

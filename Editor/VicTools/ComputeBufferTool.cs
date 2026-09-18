@@ -1,3 +1,20 @@
+// Compute Buffer Tool v4.4 修复合享材质剔除 / 添加 材质灯光选项不生效 -
+//   1. 工具"剔除材质"按钮恢复关闭材质上的 _UsePointlight / _UseSpotlight / _UseSpotTexture 开关，
+//      走 ComputeBufferLightManager.RemoveMaterial() 集中路径，避免与启动期自愈清理逻辑分叉
+//   2. 工具"添加材质"按钮改为在循环结束后走 ComputeBufferLightManager.SetMaterialParameters 集中路径：
+//      - 仅写 4 个开关的旧代码只下发 _UsePointlight / _UseSpotlight / _UseSpotTexture / _SpotTexture，
+//        不下发数值参数（强度 / 范围 / 衰减 / 数量等），新增材质与已存在材质参数分叉
+//      - OnValidate 的脏检查闸门命中"参数未变"时 UpdateAllMaterials 会被跳过，新增材质既不拿到开关也不拿到数值
+//      - 现在改为调用 SetMaterialParameters(material)：开关 + 数值 + 纹理一次性按管理器当前状态全量下发
+//      - 单点维护：未来扩展任何下发字段只需修改 SetMaterialParameters 一处，避免工具与运行时分叉
+//   3. 保留 v4.3 的"非显式路径不覆盖用户主动勾选"原则：OnValidate 的反向同步逻辑、共享材质在跨场景
+//      共享时的清理时机仍由 ComputeBuffer 4.4 的启动期 CleanupUnmanagedSceneMaterials 兜底
+//   4. 工具按钮是用户的显式意图：剔除按下 = "我不再希望这个材质被本管理器接管"，必须关关键字；
+//      添加按下 = "我需要这个材质按管理器当前配置立即参与自定义灯光"，必须立即套用管理器状态
+// Compute Buffer Tool v4.3 修复合享材质"剔除材质"被擅自修改 - 剔除材质时不再强制关闭材质资产上的
+//   _UsePointlight / _UseSpotlight / _UseSpotTexture 开关。理由：1) 材质资产是跨场景共享的；
+//   2) Shader 端的 _CustomLightSystemActive 安全位（v8.5 + 4.1）已能防止残留关键字导致变黑；
+//   3) 用户对材质做的主动勾选不应被工具反向覆盖。
 // Compute Buffer Tool v4.2 材质按钮自动识别选中内容 - 选中灯光时按钮切换为"添加/剔除点灯·射灯"，其余情况仍为材质增删
 // Compute Buffer Tool v4.0 同步 ComputeBuffer 4.0 重构 - 依赖的反射字段与接口均未变动，工具侧无需改动
 // Compute Buffer Tool v3.7 修复工具管理器修改保存机制
@@ -17,7 +34,7 @@
 // 4. 材质选择工具 - 根据材质快速选择场景中使用该材质的模型
 // 5. 缓冲区清理 - 完全重置Compute Buffer系统，释放GPU资源
 // 6. 实时参数更新 - 动态更新材质参数和光源数据
-// 
+//
 // 使用场景：
 // - 动态点光源管理
 // - 材质批量操作
@@ -52,7 +69,7 @@ public class ComputeBufferTool : EditorWindow
     public static void ShowWindow()
     {
         // 设置窗口宽度和高度
-        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v4.2");
+        var window = EditorWindow.GetWindow<ComputeBufferTool>("Compute Buffer Tool v4.4");
         window.minSize = new Vector2(400, 600);  // 最小宽度，最小高度
         window.maxSize = new Vector2(1000, 1200); // 最大宽度1200，最大高度1000
         
@@ -1179,25 +1196,12 @@ public class ComputeBufferTool : EditorWindow
         {
             if (_manager.targetMaterials.Contains(material))
             {
-                _manager.targetMaterials.Remove(material);
+                // ● 走管理器集中路径 RemoveMaterial()：内部会同时从 targetMaterials /
+                //   _controlledMaterials 移除材质，并关闭 _USEPOINTLIGHT / _USESPOTLIGHT /
+                //   _USESPOTTEXTURE 三个关键字 + 对应浮点属性，避免该材质在剔除后被全局
+                //   点光 / 聚光缓冲区错误点亮。
+                _manager.RemoveMaterial(material);
                 removedMaterials.Add(material);
-                
-                // 立即关闭该材质的灯光参数
-                if (material.HasProperty("_UsePointlight"))
-                {
-                    material.SetFloat("_UsePointlight", 0);
-                    material.DisableKeyword("_USEPOINTLIGHT");
-                }
-                if (material.HasProperty("_UseSpotlight"))
-                {
-                    material.SetFloat("_UseSpotlight", 0);
-                    material.DisableKeyword("_USESPOTLIGHT");
-                }
-                if (material.HasProperty("_UseSpotTexture"))
-                {
-                    material.SetFloat("_UseSpotTexture", 0);
-                    material.DisableKeyword("_USESPOTTEXTURE");
-                }
             }
             else
             {
@@ -1310,58 +1314,23 @@ public class ComputeBufferTool : EditorWindow
             {
                 _manager.targetMaterials.Add(material);
                 addedMaterials.Add(material);
-                
-                // 根据管理器的灯光类型设置激活相应的材质灯光参数
-                bool usePointLight = _manager.GetPointLightEnabled();
-                bool useSpotLight = _manager.GetSpotLightEnabled();
-                bool useSpotTexture = _manager.GetUseSpotTexture();
-                Texture2D spotTexture = _manager.GetSpotTexture();
-                
-                if (material.HasProperty("_UsePointlight"))
-                {
-                    material.SetFloat("_UsePointlight", usePointLight ? 1 : 0);
-                    if (usePointLight)
-                    {
-                        material.EnableKeyword("_USEPOINTLIGHT");
-                    }
-                    else
-                    {
-                        material.DisableKeyword("_USEPOINTLIGHT");
-                    }
-                }
-                
-                if (material.HasProperty("_UseSpotlight"))
-                {
-                    material.SetFloat("_UseSpotlight", useSpotLight ? 1 : 0);
-                    if (useSpotLight)
-                    {
-                        material.EnableKeyword("_USESPOTLIGHT");
-                    }
-                    else
-                    {
-                        material.DisableKeyword("_USESPOTLIGHT");
-                    }
-                }
-                
-                if (material.HasProperty("_UseSpotTexture"))
-                {
-                    material.SetFloat("_UseSpotTexture", useSpotTexture ? 1 : 0);
-                    if (useSpotTexture)
-                    {
-                        material.EnableKeyword("_USESPOTTEXTURE");
-                    }
-                    else
-                    {
-                        material.DisableKeyword("_USESPOTTEXTURE");
-                    }
-                }
-                
-                // 设置聚光灯纹理
-                if (spotTexture != null && material.HasProperty("_SpotTexture"))
-                {
-                    material.SetTexture("_SpotTexture", spotTexture);
-                }
             }
+        }
+
+        // ● 走管理器集中路径：每条新增材质立即套用管理器当前状态
+        //   1. 之前手动写死的 SetFloat/EnableKeyword 与 SetMaterialParameters 行为重复，但只下发开关不传数值参数，
+        //      新增材质的 _PointLightIntensity / _SpotLightIntensity / _SpotTexture 等仍保持材质资产旧值，
+        //      在 OnValidate 的脏检查闸门命中"无变化"路径时尤其明显：targetMaterials 列表变更不会触发 hasDirtyParameter，
+        //      UpdateAllMaterials 会被跳过，新增材质既不拿到开关也不拿到数值。
+        //   2. 现在循环结束后统一调用 SetMaterialParameters / UpdateAllMaterials：
+        //      - 开关（_USEPOINTLIGHT / _USESPOTLIGHT / _USESPOTTEXTURE）按管理器当前 _usePointLight 等下发
+        //      - 强度 / 范围 / 衰减 / 数量 / 纹理 / 对比等数值参数同步下发，避免新增材质与已存在材质参数分叉
+        //      - 单点维护：未来扩展任何下发字段只需修改 SetMaterialParameters 一处
+        //   3. 显式按钮路径不受 v4.3"非显式路径不覆盖用户主动勾选"原则约束：
+        //      OnValidate 的反向同步已被该原则收敛；本路径是用户显式意图，统一刷新即可。
+        foreach (var material in addedMaterials)
+        {
+            _manager.SetMaterialParameters(material);
         }
 
         // 显示结果

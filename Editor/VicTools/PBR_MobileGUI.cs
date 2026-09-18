@@ -14,6 +14,7 @@ public class PBR_MobileGUI : ShaderGUI
     private MaterialEditor m_MaterialEditor;
     private MaterialProperty[] m_Properties;
     private bool isTransShader = false; // 标记是否为 Trans 版本的 Shader
+    private bool isNewShader = false;   // 标记是否为 PBR_Mobile_NEW（其部分参数默认值与另两个 Shader 不同）
 
     // "仅非主纹理"读档选项下要排除的纹理属性名集合（PBR_MobileGUI 专用）。
     // 合并 HeaderStyle.MainTexturePropertyNames（_BaseMap / _MainTex）共用部分，
@@ -70,6 +71,8 @@ public class PBR_MobileGUI : ShaderGUI
     private MaterialProperty sphericalReflectionMap;
     private MaterialProperty reflectionStrength;
     private MaterialProperty reflectionBlur;
+    private MaterialProperty reflectionRotation;  // 仅 PBR_Mobile_NEW 具备，可选
+    private MaterialProperty reflectionMirrorX;   // 仅 PBR_Mobile_NEW 具备，可选
     private MaterialProperty reflectionFresnelPower;
     private MaterialProperty reflectionFresnelBias;
     private MaterialProperty usePointlight;
@@ -106,6 +109,7 @@ public class PBR_MobileGUI : ShaderGUI
         if (material != null && material.shader != null)
         {
             isTransShader = material.shader.name.Contains("PBR_Mobile_Trans");
+            isNewShader   = material.shader.name == "Custom/PBR_Mobile_NEW";
         }
 
         // 查找所有属性
@@ -196,6 +200,8 @@ public class PBR_MobileGUI : ShaderGUI
         sphericalReflectionMap = FindProperty("_SphericalReflectionMap", m_Properties);
         reflectionStrength = FindProperty("_ReflectionStrength", m_Properties);
         reflectionBlur = FindProperty("_ReflectionBlur", m_Properties);
+        reflectionRotation = FindProperty("_ReflectionRotation", m_Properties, false);
+        reflectionMirrorX = FindProperty("_ReflectionMirrorX", m_Properties, false);
         reflectionFresnelPower = FindProperty("_ReflectionFresnelPower", m_Properties);
         reflectionFresnelBias = FindProperty("_ReflectionFresnelBias", m_Properties);
         usePointlight = FindProperty("_UsePointlight", m_Properties, false);
@@ -454,15 +460,21 @@ public class PBR_MobileGUI : ShaderGUI
         }
     }
 
-    /// 还原PBR相关6个数值参数为Shader声明的默认值
-    /// 默认值来源：PBR_Mobile.shader 属性声明
+    /// 还原PBR相关6个数值参数为“各自 Shader”声明的默认值
+    /// <para>三个 Shader 的默认值并不一致，早期版本统一按 NEW 的默认值（金属度 1.0）重置，
+    /// 会把 PBR_Mobile / PBR_Mobile_Trans 的金属度顶到 1：能量守恒下 diffuseColor = albedo × 0.96 × (1-metallic) = 0，
+    /// 漫反射与环境漫反射全部归零 → 材质发黑且不受主光影响。现在按 Shader 分别还原，避免跨 Shader 冲突。</para>
     private void ResetPBRParameters()
     {
-        if (metallic != null) metallic.floatValue = 1.0f;
-        if (roughness != null) roughness.floatValue = 1.0f;
-        if (specularScale != null) specularScale.floatValue = 1.0f;
-        if (halfLambert != null) halfLambert.floatValue = 0.4f;
-        if (shadowScale != null) shadowScale.floatValue = 0.3f;
+        // 金属度：三个 Shader 统一为 0（金属度 1 会让漫反射归零，是发黑的根因）
+        if (metallic != null) metallic.floatValue = 0.0f;
+        // 粗糙度：NEW 声明 1.0，另两个声明 0.5
+        if (roughness != null) roughness.floatValue = isNewShader ? 1.0f : 0.5f;
+        // 高光强度：PBR_Mobile 声明 2（Range 0.1~5），NEW / Trans 声明 1（Range 0.01~1）
+        if (specularScale != null) specularScale.floatValue = isNewShader || isTransShader ? 1.0f : 2.0f;
+        // 半兰伯特 / 自阴影：NEW 为 0.4 / 0.3，另两个为 0.3 / 0.4
+        if (halfLambert != null) halfLambert.floatValue = isNewShader ? 0.4f : 0.3f;
+        if (shadowScale != null) shadowScale.floatValue = isNewShader ? 0.3f : 0.4f;
         if (brightness != null) brightness.floatValue = 1.0f;
     }
 
@@ -519,6 +531,14 @@ public class PBR_MobileGUI : ShaderGUI
         {
             EditorGUI.indentLevel++;
             m_MaterialEditor.TexturePropertySingleLine(new GUIContent("球形反射贴图"),sphericalReflectionMap);
+            if (reflectionMirrorX != null)
+            {
+                m_MaterialEditor.ShaderProperty(reflectionMirrorX, "水平镜像反射图");
+            }
+            if (reflectionRotation != null)
+            {
+                m_MaterialEditor.RangeProperty(reflectionRotation, "反射球水平转动");
+            }
             m_MaterialEditor.RangeProperty(reflectionStrength, "反射强度");
             m_MaterialEditor.RangeProperty(reflectionBlur, "反射模糊");
             m_MaterialEditor.RangeProperty(reflectionFresnelPower, "菲涅尔强度");
@@ -1051,6 +1071,7 @@ public class PBR_MobileGUI : ShaderGUI
         SyncToggle("_UseEmissionMap",     "_USEEMISSIONMAP");
         SyncToggle("_InvertEmisMap",      "_INVERTEMISMAP");
         SyncToggle("_UseReflection",      "_USEREFLECTION");
+        SyncToggle("_ReflectionMirrorX",  "_REFLECTIONMIRRORX");
         SyncToggle("_UsePointlight",      "_USEPOINTLIGHT");
         SyncToggle("_UseSpotlight",       "_USESPOTLIGHT");
         SyncToggle("_UseSpotTexture",     "_USESPOTTEXTURE");

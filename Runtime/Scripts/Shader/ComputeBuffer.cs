@@ -1,3 +1,13 @@
+// ComputeBuffer 4.4 修复合享材质剔除 / 删除场景管理器 后残留 _USEPOINTLIGHT / _USESPOTLIGHT / _USESPOTTEXTURE 关键字 -
+//   1. 抽出 DisableCustomLightKeywords 静态方法，被剔除 / RemoveMaterial API / 启动期自愈清理 / 删除场景管理器 4 处复用
+//   2. RemoveMaterial() 现在会关闭被剔除材质上的三个关键字，避免其被全局缓冲区意外点亮
+//   3. 启动时扫描场景里"使用 PBR_Mobile_NEW Shader 但不在 targetMaterials 中、且关键字已 ON"的材质并强制关闭
+//      兜底：处理 v4.3 引入的存量残留、跨场景共享材质泄漏、用户运行时调 RemoveMaterial 等路径
+//   4. OnDestroy 删除场景管理器时也调用 ReleaseControlledMaterials，关闭 targetMaterials 上残留的关键字；
+//      例外：domain reload（isCompiling / isUpdating）期间不执行，避免干扰用户正在编辑的场景配置
+// ComputeBuffer 4.3 修复合享材质被 OnValidate 反向覆盖 - OnValidate 不再无条件同步 targetMaterials，
+//   改为"首次同步后仅在参数真正变化时才下发"，避免场景加载/撤销重做/资源导入时反向覆盖用户在 PBR_MobileGUI
+//   中对材质做的手动勾选（"莫名被勾选 使用点光源"）。残留勾选场景的渲染安全仍由 Shader 的 _CustomLightSystemActive 守卫兜底。
 // ComputeBuffer 4.2 Inspector 中文化 - 分组标题改为中文；参数标签交由 ComputeBufferLightManagerEditor 映射显示（字段名不变，已有序列化数据不受影响）
 // ComputeBuffer 4.1 跨场景渲染保护 - 修复共享材质在缺少灯光管理器的场景变黑/跳过渲染；对外接口与既有功能保持不变
 //   1. 兜底：新增全局安全位 _CustomLightSystemActive（同步 PBR_Mobile_NEW 8.5 / PBR_Mobile 7.3），未接管时 Shader 跳过自定义光照，杜绝采样已释放 GraphicsBuffer 产生 NaN 变黑
@@ -136,6 +146,9 @@ public class ComputeBufferLightManager : MonoBehaviour
     private const string SPOT_LIGHT_KEYWORD = "_USESPOTLIGHT";
     private const string SPOT_TEXTURE_KEYWORD = "_USESPOTTEXTURE";
 
+    // ● 受控材质对应的 Shader 名：启动期扫描用，避免无关 Shader 的材质被误关关键字
+    private const string PBR_MOBILE_NEW_SHADER_NAME = "Custom/PBR_Mobile_NEW";
+
     // ● 全局灯光系统安全位，与 PBR_Mobile_NEW.shader / PBR_Mobile.shader 中的 _CustomLightSystemActive 一一对应。
     //   缓冲区释放后必须置 0，否则残留的材质关键字会让 Shader 采样已销毁的 StructuredBuffer 而变黑。
     private const string LIGHT_SYSTEM_ACTIVE_PROP = "_CustomLightSystemActive";
@@ -167,6 +180,34 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             ApplyToggleToMaterial(targetMaterials[i], propertyId, keyword, enabled);
         }
+    }
+
+    /// <summary>
+    /// 关闭指定材质上的三个自定义灯光关键字（点光 / 聚光 / 光斑纹理），并把对应的浮点属性写 0。
+    /// 用于：剔除材质、RemoveMaterial API、启动期对非受控材质的自愈清理。
+    /// 关闭关键字后才能阻止 Shader 采样全局缓冲区，避免该材质在未被本管理器接管时被意外点亮。
+    /// </summary>
+    private static void DisableCustomLightKeywords(Material material)
+    {
+        if (material == null) return;
+
+        if (material.HasProperty(ShaderPropertyIDs.UsePointlight))
+        {
+            material.SetFloat(ShaderPropertyIDs.UsePointlight, 0f);
+        }
+        material.DisableKeyword(POINT_LIGHT_KEYWORD);
+
+        if (material.HasProperty(ShaderPropertyIDs.UseSpotlight))
+        {
+            material.SetFloat(ShaderPropertyIDs.UseSpotlight, 0f);
+        }
+        material.DisableKeyword(SPOT_LIGHT_KEYWORD);
+
+        if (material.HasProperty(ShaderPropertyIDs.UseSpotTexture))
+        {
+            material.SetFloat(ShaderPropertyIDs.UseSpotTexture, 0f);
+        }
+        material.DisableKeyword(SPOT_TEXTURE_KEYWORD);
     }
     
     // ● Shader属性ID缓存（性能优化）
@@ -288,6 +329,12 @@ public class ComputeBufferLightManager : MonoBehaviour
     private Vector3 _lastCameraVelocity;
     private float _cameraSpeedThreshold = 5.0f; // 相机速度阈值，超过此值启用自适应更新
 
+    // ● OnValidate 同步闸门：标记"已对 targetMaterials 完成过至少一次下发"。
+    //   首次进入（迁移兼容：把旧材质的开关状态拉到当前管理器的预期值）后会置位，
+    //   之后只在参数或列表实际变化时才重新同步，避免 OnValidate 在场景加载、撤销重做、
+    //   资源导入等时机无条件覆盖用户在 PBR_MobileGUI 中对材质做的手动设置。
+    private bool _hasSyncedOnce = false;
+
     // ● 聚光灯自适应间隔专用的相机运动状态：与点光源相互独立，
     //   否则后计算的聚光灯会读到同帧刚刷新的位置，算出的速度恒为 0
     private Vector3 _lastSpotCameraPosition;
@@ -395,11 +442,74 @@ public class ComputeBufferLightManager : MonoBehaviour
         {
             _controlledMaterials = new List<Material>(targetMaterials);
         }
-        
+
         // ● 应用初始材质参数
         UpdateAllMaterials();
-        
+
+        // ● 自愈清理：关闭场景里使用 PBR_Mobile_NEW 但不在 targetMaterials 中、且关键字仍 ON 的材质
+        //   兜底 v4.3 引入的存量残留、跨场景共享材质泄漏、RemoveMaterial 后的残留路径
+        CleanupUnmanagedSceneMaterials();
+
         Debug.Log($"材质控制器初始化完成，控制 {_controlledMaterials.Count} 个材质");
+    }
+
+    /// <summary>
+    /// 自愈清理：扫描场景里"使用 Custom/PBR_Mobile_NEW Shader、但不在 targetMaterials 中、
+    /// 且任意一个自定义灯光关键字仍为 ON"的材质，强制关闭其关键字 + 对应浮点属性。
+    ///
+    /// 触发时机：Start / OnSceneLoaded 之后随 InitializeMaterialController 一并调用。
+    ///
+    /// 设计取舍：本管理器只对 targetMaterials 中的材质负责。任何带 ON 关键字但不在列表中的 PBR_Mobile_NEW
+    /// 材质一旦本管理器开始向全局缓冲区填充光源数据，就会被错误点亮，因此这里主动清掉。
+    /// 若该材质另有用途（例如被另一个 ComputeBufferLightManager 接管），由那个管理器负责重新下发即可。
+    /// </summary>
+    private void CleanupUnmanagedSceneMaterials()
+    {
+        // ● 用一个 HashSet 加速 Contains 检查；targetMaterials 在路径上可能很长
+        HashSet<Material> controlledSet = new HashSet<Material>(targetMaterials);
+
+#if UNITY_EDITOR
+        // 编辑器下走 EditorSceneManager，能拿到未激活物体的材质；运行时不需要
+        var roots = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene().GetRootGameObjects();
+        var renderers = new List<Renderer>();
+        foreach (var root in roots)
+        {
+            if (root == null) continue;
+            renderers.AddRange(root.GetComponentsInChildren<Renderer>(true));
+        }
+#else
+        Renderer[] renderers = FindObjectsOfType<Renderer>();
+#endif
+
+        int cleanedCount = 0;
+        for (int r = 0; r < renderers.Count; r++)
+        {
+            Renderer renderer = renderers[r];
+            if (renderer == null) continue;
+
+            Material[] shared = renderer.sharedMaterials;
+            for (int m = 0; m < shared.Length; m++)
+            {
+                Material mat = shared[m];
+                if (mat == null) continue;
+                if (mat.shader == null || mat.shader.name != PBR_MOBILE_NEW_SHADER_NAME) continue;
+                if (controlledSet.Contains(mat)) continue;
+
+                // ● 全部关键字都关着就不用动手，避免无谓的脏标记
+                bool anyOn = mat.IsKeywordEnabled(POINT_LIGHT_KEYWORD) ||
+                             mat.IsKeywordEnabled(SPOT_LIGHT_KEYWORD) ||
+                             mat.IsKeywordEnabled(SPOT_TEXTURE_KEYWORD);
+                if (!anyOn) continue;
+
+                DisableCustomLightKeywords(mat);
+                cleanedCount++;
+            }
+        }
+
+        if (cleanedCount > 0)
+        {
+            Debug.Log($"[ComputeBufferLightManager] 自愈清理：关闭 {cleanedCount} 个非受控材质残留的自定义灯光关键字（_USEPOINTLIGHT / _USESPOTLIGHT / _USESPOTTEXTURE）");
+        }
     }
 
     void Update()
@@ -1133,13 +1243,19 @@ public class ComputeBufferLightManager : MonoBehaviour
     }
 
     //● 从控制列表移除材质
+    //关闭被剔除材质上的自定义灯光关键字，避免全局缓冲区填充后该材质被错误点亮
 
     public void RemoveMaterial(Material material)
     {
-        if (_controlledMaterials.Contains(material))
-        {
-            _controlledMaterials.Remove(material);
-        }
+        if (material == null) return;
+
+        // ● 同时从两个列表中清理（_controlledMaterials 是运行时缓存，targetMaterials 是序列化源）
+        _controlledMaterials.Remove(material);
+        targetMaterials.Remove(material);
+
+        // ● 显式剔除 = 显式用户意图：关闭三个关键字及对应浮点属性
+        // 共享材质 / 跨场景的副作用由调用方权衡：若该材质在别处仍需自定义灯光，由调用方再行启用
+        DisableCustomLightKeywords(material);
     }
 
     //● 获取当前控制的材质数量
@@ -2053,9 +2169,21 @@ public class ComputeBufferLightManager : MonoBehaviour
 
         ReleaseBuffers();
 
-        // ● 运行期销毁时关闭受控材质上的自定义灯光开关，避免状态残留在共享材质资产上。
-        //   编辑器下不执行：脚本重编译同样会触发 OnDestroy，此时复位会干扰正在编辑的场景配置。
-        if (Application.isPlaying)
+        // ● 销毁时关闭受控材质上的自定义灯光开关（_USEPOINTLIGHT / _USESPOTLIGHT /
+        //   _USESPOTTEXTURE），避免状态残留在共享材质资产上。
+        //   覆盖两个时机的销毁：
+        //     1. 运行期：Application.isPlaying 为 true 时正常清理
+        //     2. 编辑器：用户在 Hierarchy 里删除场景管理器 GameObject 时也必须清理，
+        //        否则后续全局灯光缓冲区一旦填充数据，这些材质会被错误点亮
+        //   例外：脚本重编译（domain reload）期间 isCompiling / isUpdating 为 true，
+        //        此时 OnDestroy 是被域重载触发的，复位会干扰用户正在编辑的场景配置。
+#if UNITY_EDITOR
+        bool isDomainReload = UnityEditor.EditorApplication.isCompiling ||
+                              UnityEditor.EditorApplication.isUpdating;
+#else
+        bool isDomainReload = false;
+#endif
+        if (Application.isPlaying || !isDomainReload)
         {
             ReleaseControlledMaterials();
         }
@@ -2161,28 +2289,57 @@ public class ComputeBufferLightManager : MonoBehaviour
             
             // ● 检查targetMaterials列表变化，确保_controlledMaterials同步更新
             SyncControlledMaterials();
-            
-            // ● 立即更新材质参数（添加空值检查）
-            try
+
+            // ● 计算"参数或列表是否真的有变化"，仅当真变化时才下发材质参数
+            //   OnValidate 在编辑器中频繁触发（场景加载、撤销重做、资源导入、Inspector 刷新等），
+            //   之前每次都把 targetMaterials 的灯光开关强制同步为管理器当前值，会反向覆盖用户
+            //   在 PBR_MobileGUI 中对材质做的手动勾选 / 取消勾选，导致"莫名被勾选"。
+            //   现在仅当参数变化或首次同步时才下发，共享材质的安全性由 Shader 端的
+            //   _CustomLightSystemActive 安全位兜底（v8.5 + 4.1 已就绪）。
+            bool hasDirtyParameter =
+                _usePointLight  != _lastUsePointLight  ||
+                _useSpotLight  != _lastUseSpotLight  ||
+                _useSpotTexture!= _lastUseSpotTexture ||
+                !Mathf.Approximately(_pointLightIntensity,         _lastPointLightIntensity) ||
+                !Mathf.Approximately(_lightRangeMultiplier,        _lastLightRangeMultiplier) ||
+                !Mathf.Approximately(_lightFalloff,                _lastLightFalloff) ||
+                !Mathf.Approximately(_spotLightIntensity,          _lastSpotLightIntensity) ||
+                !Mathf.Approximately(_spotLightRangeMultiplier,    _lastSpotLightRangeMultiplier) ||
+                !Mathf.Approximately(_spotLightFalloff,            _lastSpotLightFalloff) ||
+                !Mathf.Approximately(_spotTextureContrast,         _lastSpotTextureContrast) ||
+                !Mathf.Approximately(_spotTextureSize,             _lastSpotTextureSize) ||
+                !Mathf.Approximately(_spotTextureIntensity,        _lastSpotTextureIntensity) ||
+                _spotTexture  != _lastSpotTexture ||
+                maxLights     != _lastMaxLights ||
+                _spotLightAmount != _lastSpotLightAmount;
+
+            // ● 首次同步保留（把老旧材质的开关状态对齐到当前管理器的预期值，后续不再覆盖用户手动设置）
+            if (!_hasSyncedOnce || hasDirtyParameter)
             {
-                UpdateAllMaterials();
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning($"在OnValidate中更新材质时出错: {e.Message}");
-            }
-            
-            // ● 立即更新点光灯数据（添加空值检查）
-            try
-            {
-                if (_lightsBuffer != null)
+                // ● 立即更新材质参数（添加空值检查）
+                try
                 {
-                    UpdateLightsBuffer();
+                    UpdateAllMaterials();
                 }
-            }
-            catch (System.Exception e)
-            {
-                Debug.LogWarning($"在OnValidate中更新点光灯数据时出错: {e.Message}");
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"在OnValidate中更新材质时出错: {e.Message}");
+                }
+
+                // ● 立即更新点光灯数据（添加空值检查）
+                try
+                {
+                    if (_lightsBuffer != null)
+                    {
+                        UpdateLightsBuffer();
+                    }
+                }
+                catch (System.Exception e)
+                {
+                    Debug.LogWarning($"在OnValidate中更新点光灯数据时出错: {e.Message}");
+                }
+
+                _hasSyncedOnce = true;
             }
             
             // ● 重置参数缓存，确保下次变化检测正确
@@ -2222,14 +2379,8 @@ public class ComputeBufferLightManager : MonoBehaviour
         foreach (var material in materialsToRemove)
         {
             _controlledMaterials.Remove(material);
-            // ● 对于被移除的材质，禁用所有灯光效果
-            if (material != null)
-            {
-                // 禁用点光源 / 聚光灯 / 光斑纹理
-                ApplyToggleToMaterial(material, ShaderPropertyIDs.UsePointlight, POINT_LIGHT_KEYWORD, false);
-                ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotlight, SPOT_LIGHT_KEYWORD, false);
-                ApplyToggleToMaterial(material, ShaderPropertyIDs.UseSpotTexture, SPOT_TEXTURE_KEYWORD, false);
-            }
+            // ● 对于被移除的材质，禁用所有灯光效果（与 RemoveMaterial / 启动期清理共用同一方法）
+            DisableCustomLightKeywords(material);
         }
         
         // ● 检查是否有新材质被添加到targetMaterials中

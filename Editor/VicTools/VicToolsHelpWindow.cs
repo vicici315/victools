@@ -134,6 +134,12 @@ namespace VicTools
                 });
             }
 
+            Add("v2.12.7",
+                "[Material:URP] PBR_Mobile_NEW8.6 添加反射贴图水平旋转偏移、水平镜像选项参数。",
+                "[Material:URP] Texture 1.6 修复 Cutout + PreZ 环境下透贴像素显示为不透明的 bug。",
+                "[Tools] Compute Buffer Tool v4.4 修复合享材质剔除 / 添加 材质灯光选项不生效。"
+            );
+
             Add("v2.12.6",
                 "[Tools] Compute Buffer Tool 4.0 性能与可维护性重构 - 消除重复逻辑、修复聚光灯自适应间隔失效、清理死代码。",
                 "[Tools] ComputeBuffer 4.1 跨场景渲染保护 - 修复共享材质在缺少灯光管理器的场景变黑/跳过渲染；对外接口与既有功能保持不变。",

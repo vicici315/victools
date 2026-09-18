@@ -44,7 +44,7 @@
 // PBR_Mobile_NEW8.5 跨场景保护：新增全局安全位 _CustomLightSystemActive（由 ComputeBufferLightManager 独占写入），
 //                       缓冲区释放时同步关闭，避免材质残留 _USEPOINTLIGHT/_USESPOTLIGHT 关键字时采样已销毁的
 //                       StructuredBuffer 产生 NaN，导致材质变黑或整块 tile 被丢弃。
-
+// PBR_Mobile_NEW8.6 添加反射贴图水平旋转偏移、水平镜像选项参数。
 Shader "Custom/PBR_Mobile_NEW"
 {
     Properties
@@ -60,7 +60,7 @@ Shader "Custom/PBR_Mobile_NEW"
         
         [Header(2  (Metallic Roughness AO))]
         [Space(5)]
-        _Metallic ("Metallic", Range(0, 1)) = 1.0
+        _Metallic ("Metallic", Range(0, 1)) = 0.0
         _Roughness ("Roughness", Range(0, 2)) = 1.0
         _SpecularScale ("Specular Scale", Range(0.01, 1)) = 1
         _HalfLambert ("Half Lambert", Range(0, 1)) = 0.4
@@ -97,6 +97,8 @@ Shader "Custom/PBR_Mobile_NEW"
         [NoScaleOffset]_SphericalReflectionMap ("Spherical Reflection Map", 2D) = "white" {}
         _ReflectionStrength ("Reflection Strength", Range(0, 10)) = 2.0
         _ReflectionBlur ("Reflection Blur", Range(0, 6)) = 0.0
+        _ReflectionRotation ("Reflection Rotation (反射球水平转动)", Range(-180, 180)) = 0.0
+        [Toggle(_REFLECTIONMIRRORX)] _ReflectionMirrorX("Mirror Reflection X (水平镜像反射图)", Float) = 0
         [Space(5)]
         _ReflectionFresnelPower ("Fresnel Power", Range(0.1, 10)) = 1.6
         _ReflectionFresnelBias ("Fresnel Bias", Range(-0.4, 1)) = 0.3
@@ -181,6 +183,7 @@ Shader "Custom/PBR_Mobile_NEW"
             #pragma shader_feature_local _USEPOINTLIGHT
             #pragma shader_feature_local _USESPOTLIGHT
             #pragma shader_feature_local _USEREFLECTION
+            #pragma shader_feature_local _REFLECTIONMIRRORX
             #pragma shader_feature_local _PREVIEWAO
             #pragma shader_feature_local _DISABLEENVIRONMENT
             #pragma shader_feature_local _DISABLELIGHTCOLOR
@@ -280,6 +283,7 @@ Shader "Custom/PBR_Mobile_NEW"
 
                 float _ReflectionStrength;
                 float _ReflectionBlur;
+                float _ReflectionRotation;
                 float _ReflectionFresnelPower;
                 float _ReflectionFresnelBias;
             CBUFFER_END
@@ -330,11 +334,31 @@ Shader "Custom/PBR_Mobile_NEW"
 
             float2 fastSphericalUV(float3 reflectionVector) {
                 reflectionVector = normalize(reflectionVector);
-                
-                return float2(
-                    reflectionVector.x / 4.01 + 0.5,  
-                    reflectionVector.y / 4.01 + 0.5   
+
+                // _ReflectionRotation：绕世界竖直轴（Y）旋转反射向量，模拟反射球水平转动。
+                // 贴图为球面反射截图，直接平移 uv 只会线性滑动窗口；
+                // 旋转反射向量后 x/z 分量按球面关系联动，转动效果更接近真实转球。
+                // Rotation = 0 时与原算法输出完全一致，不影响存量材质。
+                float rotAngle = radians(_ReflectionRotation);
+                float s, c;
+                sincos(rotAngle, s, c);
+                reflectionVector = float3(
+                    reflectionVector.x * c - reflectionVector.z * s,
+                    reflectionVector.y,
+                    reflectionVector.x * s + reflectionVector.z * c
                 );
+
+                float2 uv = float2(
+                    reflectionVector.x / 4.01 + 0.5,
+                    reflectionVector.y / 4.01 + 0.5
+                );
+
+                // _REFLECTIONMIRRORX：水平镜像反射贴图（uv.x 取反）
+                #ifdef _REFLECTIONMIRRORX
+                    uv.x = 1.0 - uv.x;
+                #endif
+
+                return uv;
             }
 
             half fastAttenuation(float distance, float range) {
